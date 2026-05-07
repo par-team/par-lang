@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
-use crate::frontend_impl::types::{Type, TypeDefs, TypeError, visit};
+use crate::frontend_impl::types::TypeDefs;
 
 use std::sync::OnceLock;
 
@@ -70,28 +70,7 @@ impl<Ext: Clone> Display for Transpiled<Ext> {
 impl Transpiled<Unlinked> {
     pub fn transpile(ic_compiled: IcCompiled, type_defs: TypeDefs<Universal>) -> Self {
         let this: ProgramTranspiler = ProgramTranspiler::transpile_program(&ic_compiled);
-        let mut arena = this.dest;
-        let mut closure = |ty: &Type<Universal>| {
-            fn helper(
-                ty: &Type<Universal>,
-                defs: &TypeDefs<Universal>,
-                arena: &mut Arena<Unlinked>,
-            ) -> Result<(), TypeError<Universal>> {
-                match ty {
-                    Type::Either(_, variants) | Type::Choice(_, variants) => {
-                        for k in variants.keys() {
-                            arena.intern(&k.string);
-                        }
-                    }
-                    _ => {}
-                }
-                visit::continue_deref(&ty, defs, |ty: &Type<Universal>| helper(ty, &defs, arena))
-            }
-            helper(ty, &type_defs, &mut arena)
-        };
-        for (_, _, ty) in type_defs.clone().globals.values() {
-            closure(ty).unwrap();
-        }
+        let arena = this.dest;
 
         Self {
             arena: Arc::new(arena),
@@ -272,8 +251,8 @@ impl ProgramTranspiler {
                 let s = [self.transpile_tree(*a), self.transpile_tree(*b)];
                 Global::Fanout(self.dest.alloc_clone(&s))
             }
-            Tree::Signal(arc_str, tree) => Global::Value(GlobalValue::Either(
-                self.dest.intern(&arc_str),
+            Tree::Signal(atom, tree) => Global::Value(GlobalValue::Either(
+                atom,
                 self.transpile_tree_and_alloc(*tree),
             )),
             Tree::Choice(captures, hash_map, els) => {
@@ -283,7 +262,6 @@ impl ProgramTranspiler {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .chain(els.map(|id| (Atom::default(), id)))
                     .map(|(signal, id)| {
-                        let signal = self.dest.intern(&signal);
                         let package = self.id_to_package.get(&id).unwrap().clone();
                         let (package, length) = self.transpile_casebranch_package(package);
                         maximum_casebranch_length = maximum_casebranch_length.max(length);
@@ -291,7 +269,7 @@ impl ProgramTranspiler {
                     })
                     .collect();
                 self.current_net_mut().num_vars = maximum_casebranch_length;
-                table.sort_by_key(|x| x.0.0);
+                table.sort_by_key(|x| x.0.clone());
                 let tree = self.transpile_tree_and_alloc(*captures);
                 Global::Destruct(GlobalCont::Choice(
                     tree,

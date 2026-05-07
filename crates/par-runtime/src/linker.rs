@@ -77,16 +77,10 @@ pub fn link_arena(arena: &Arena<Unlinked>) -> Result<Arena<Linked>, LinkError> {
             .iter()
             .map(link_global)
             .collect::<Result<_, _>>()?,
-        strings: arena.strings.clone(),
-        string_to_location: arena
-            .string_to_location
-            .iter()
-            .map(|(k, v)| (k.clone(), Index(v.0.clone())))
-            .collect(),
         case_branches: arena
             .case_branches
             .iter()
-            .map(|(index, package)| Ok((Index(index.0.clone()), link_package_body(package)?)))
+            .map(|(atom, package)| Ok((atom.clone(), link_package_body(package)?)))
             .collect::<Result<_, _>>()?,
         packages: arena
             .packages
@@ -141,7 +135,7 @@ fn link_global_value(p0: &GlobalValue<Unlinked>) -> Result<GlobalValue<Linked>, 
     Ok(match p0 {
         GlobalValue::Break => GlobalValue::Break,
         GlobalValue::Pair(a, b) => GlobalValue::Pair(Index(a.0.clone()), Index(b.0.clone())),
-        GlobalValue::Either(s, v) => GlobalValue::Either(Index(s.0.clone()), Index(v.0.clone())),
+        GlobalValue::Either(s, v) => GlobalValue::Either(s.clone(), Index(v.0.clone())),
         GlobalValue::ExternalFn(unlinked) => {
             GlobalValue::ExternalFn(get_external_fn(unlinked).ok_or_else(|| LinkError {
                 missing: unlinked.clone(),

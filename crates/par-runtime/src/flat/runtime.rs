@@ -30,6 +30,7 @@ use core::panic;
 use std::fmt::Debug;
 use std::sync::OnceLock;
 
+use crate::atom::Atom;
 use crate::flat::show::Showable;
 use crate::flat::show::Shower;
 use crate::primitive::Primitive;
@@ -46,7 +47,6 @@ use tokio::sync::oneshot::Sender;
 
 pub type PackagePtr<Ext> = Index<Ext, OnceLock<Package<Ext>>>;
 pub(crate) type GlobalPtr<Ext> = Index<Ext, Global<Ext>>;
-type Str<Ext> = Index<Ext, str>;
 
 #[derive(Debug)]
 struct InstanceInner(Box<[AtomicOptionBox<Node<Linked>>]>);
@@ -214,7 +214,7 @@ pub enum Value<P, Ext: Clone> {
     /// The pair node; created in send commands (`value(a)`)
     Pair(P, P),
     /// The either node; created in signal commands (`value.name`)
-    Either(Str<Ext>, P),
+    Either(Atom, P),
     /// ExternalFns contain `fn` nodes which are called with a handle to value they interact with
     ExternalFn(Ext),
     /// ExternalFns contain `fn` nodes which are called with a handle to value they interact with
@@ -240,7 +240,7 @@ impl<P, Ext: Clone> Value<P, Ext> {
         Some(match self {
             Value::Break => Value::Break,
             Value::Pair(a, b) => Value::Pair(f(a)?, f(b)?),
-            Value::Either(s, v) => Value::Either(*s, f(v)?),
+            Value::Either(s, v) => Value::Either(s.clone(), f(v)?),
             Value::ExternalFn(e) => Value::ExternalFn(e.clone()),
             Value::ExternalArc(e) => Value::ExternalArc(e.clone()),
             Value::Primitive(primitive) => Value::Primitive(primitive.clone()),
@@ -299,7 +299,7 @@ pub enum GlobalCont<Ext: Clone> {
     /// The par node; created in receive commands (`value[a]`)
     Par(GlobalPtr<Ext>, GlobalPtr<Ext>),
     /// The choice node; created in case commands (`value.case { ... }`)
-    Choice(GlobalPtr<Ext>, Index<Ext, [(Str<Ext>, PackageBody<Ext>)]>),
+    Choice(GlobalPtr<Ext>, Index<Ext, [(Atom, PackageBody<Ext>)]>),
 }
 
 #[derive(Debug)]
@@ -676,8 +676,8 @@ impl Runtime {
     }
     fn lookup_case_branch(
         &mut self,
-        options: Index<Linked, [(Str<Linked>, PackageBody<Linked>)]>,
-        variant: Str<Linked>,
+        options: Index<Linked, [(Atom, PackageBody<Linked>)]>,
+        variant: Atom,
     ) -> Option<PackageBody<Linked>> {
         self.arena
             .get(options)
@@ -950,8 +950,7 @@ impl Runtime {
                             let _ = std::mem::replace(b.as_mut(), root);
                             self.link(a, b);
                         } else {
-                            let branch =
-                                self.lookup_case_branch(options, self.arena.empty_string());
+                            let branch = self.lookup_case_branch(options, Atom::default());
                             let root = self.instantiate_package_body_captures(
                                 instance.clone(),
                                 &branch.unwrap(),

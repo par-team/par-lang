@@ -143,12 +143,7 @@ impl<'a, 'b, Ext: Clone> std::fmt::Display for Showable<'a, 'b, &'a Global<Ext>,
                     Choice(captures, branches) => {
                         write!(f, ".{{")?;
                         for (k, v) in self.1.arena.get(branches.clone()).iter() {
-                            write!(
-                                f,
-                                "{} @{} ",
-                                self.1.arena.get(k.clone()),
-                                Showable(v, self.1)
-                            )?;
+                            write!(f, "{} @{} ", k, Showable(v, self.1))?;
                         }
                         write!(f, "}}${}", Showable(captures, self.1))?;
                     }
@@ -184,13 +179,8 @@ where
             Pair(a, b) => {
                 write!(f, "({}) {}", Showable(b, self.1), Showable(a, self.1))?;
             }
-            Either(arc_str, payload) => {
-                write!(
-                    f,
-                    ".{} {}",
-                    self.1.arena.get(arc_str.clone()),
-                    Showable(payload, self.1)
-                )?;
+            Either(signal, payload) => {
+                write!(f, ".{} {}", signal, Showable(payload, self.1))?;
             }
             ExternalFn(_) => {
                 write!(f, "<external fn>")?;

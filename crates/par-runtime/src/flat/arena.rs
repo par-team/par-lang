@@ -1,10 +1,12 @@
 use super::runtime::{Global, Package};
-use crate::flat::{
-    runtime::PackageBody,
-    show::{Showable, Shower},
+use crate::{
+    atom::Atom,
+    flat::{
+        runtime::PackageBody,
+        show::{Showable, Shower},
+    },
 };
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::sync::OnceLock;
 
@@ -14,9 +16,7 @@ use std::sync::OnceLock;
 #[derive(Serialize, Deserialize)]
 pub struct Arena<Ext: Clone> {
     pub(crate) nodes: Vec<Global<Ext>>,
-    pub(crate) strings: String,
-    pub(crate) string_to_location: BTreeMap<String, Index<Ext, str>>,
-    pub(crate) case_branches: Vec<(Index<Ext, str>, PackageBody<Ext>)>,
+    pub(crate) case_branches: Vec<(Atom, PackageBody<Ext>)>,
     #[serde(
         serialize_with = "serialize_packages",
         deserialize_with = "deserialize_packages"
@@ -59,8 +59,6 @@ impl<Ext: Clone> Default for Arena<Ext> {
     fn default() -> Self {
         Self {
             nodes: vec![],
-            strings: String::new(),
-            string_to_location: BTreeMap::new(),
             case_branches: vec![],
             packages: vec![],
             redexes: vec![],
@@ -81,31 +79,9 @@ impl<Ext: Clone> Arena<Ext> {
     }
     pub fn memory_size(&self) -> usize {
         self.nodes.len() * size_of::<Global<Ext>>()
-            + self.strings.len()
             + self.packages.len() * size_of::<OnceLock<Package<Ext>>>()
             + self.redexes.len() * size_of::<(Global<Ext>, Global<Ext>)>()
-            + self.case_branches.len() * size_of::<(Index<Ext, str>, PackageBody<Ext>)>()
-    }
-    pub fn empty_string(&self) -> Index<Ext, str> {
-        Index((0, 0))
-    }
-    pub fn intern(&mut self, s: &str) -> Index<Ext, str> {
-        if s.is_empty() {
-            self.empty_string()
-        } else if let Some(s) = self.string_to_location.get(s) {
-            s.clone()
-        } else {
-            let i = self.alloc_clone(s);
-            self.string_to_location.insert(s.to_string(), i.clone());
-            i
-        }
-    }
-    pub fn interned(&self, s: &str) -> Option<Index<Ext, str>> {
-        if s.is_empty() {
-            Some(self.empty_string())
-        } else {
-            self.string_to_location.get(s).cloned()
-        }
+            + self.case_branches.len() * size_of::<(Atom, PackageBody<Ext>)>()
     }
 }
 
@@ -200,25 +176,13 @@ macro_rules! sized_indexable {
         }
     };
 }
-slice_indexable!(case_branches, (Index<Ext, str>, PackageBody<Ext>));
+slice_indexable!(case_branches, (Atom, PackageBody<Ext>));
 slice_indexable!(nodes, Global<Ext>);
 slice_indexable!(redexes, (Index<Ext, Global<Ext>>, Index<Ext, Global<Ext>>));
 sized_indexable!(redexes, (Index<Ext, Global<Ext>>, Index<Ext, Global<Ext>>));
-sized_indexable!(case_branches, (Index<Ext, str>, PackageBody<Ext>));
+sized_indexable!(case_branches, (Atom, PackageBody<Ext>));
 sized_indexable!(packages, OnceLock<Package<Ext>>);
 sized_indexable!(nodes, Global<Ext>);
-
-impl<Ext: Clone> Indexable<Ext> for str {
-    type Store = (usize, usize);
-    fn get<'s>(store: &'s Arena<Ext>, index: Index<Ext, Self>) -> &'s Self {
-        &store.strings[index.0.0..index.0.0 + index.0.1]
-    }
-    fn alloc_clone<'s>(store: &'s mut Arena<Ext>, data: &Self) -> Index<Ext, Self> {
-        let start = store.strings.len();
-        store.strings.push_str(data);
-        Index((start, data.len()))
-    }
-}
 
 impl<Ext: Clone, T: Indexable<Ext> + ?Sized> Clone for Index<Ext, T>
 where
