@@ -2880,7 +2880,7 @@ def Bad = UseBox(type [!] !)
         assert!(errors.iter().any(|error| matches!(
             error,
             TypeError::TypeDoesNotSatisfyConstraint(_, name, _, TypeConstraint::Box)
-                if name.string.as_str() == "a"
+                if &name.string == "a"
         )));
     }
 
@@ -2935,7 +2935,7 @@ def ExpectBox : [type a: box, a] a = [type a, x: a] x
         assert!(errors.iter().any(|error| matches!(
             error,
             TypeError::TypeParameterConstraintMismatch(_, name, TypeConstraint::Any, TypeConstraint::Box)
-                if name.string.as_str() == "a"
+                if &name.string == "a"
         )));
     }
 
@@ -2997,7 +2997,7 @@ def Main : ! = do {
 
         assert!(errors.iter().any(|error| matches!(
             error,
-            TypeError::VariableDoesNotExist(_, name) if name.string.as_str() == "xyzw"
+            TypeError::VariableDoesNotExist(_, name) if &name.string == "xyzw"
         )));
     }
 

@@ -1,11 +1,11 @@
 //package: core
 use std::f64::consts;
 
-use arcstr::literal;
 use num_bigint::{BigInt, Sign};
 use num_traits::{FromPrimitive, ToPrimitive};
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::atom::sym;
 use par_runtime::primitive::parse_float_text;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
@@ -66,9 +66,9 @@ core_float_external!("Atan2", float_atan2);
 
 fn signal_bool(mut handle: Handle, value: bool) {
     if value {
-        handle.signal(literal!("true"));
+        handle.signal(sym::true_);
     } else {
-        handle.signal(literal!("false"));
+        handle.signal(sym::false_);
     }
     handle.break_();
 }
@@ -155,11 +155,11 @@ async fn float_from_string(mut handle: Handle) {
     let string = handle.receive().string().await;
     match parse_float_text(string.as_str()) {
         Some(value) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             handle.provide_float(value);
         }
         None => {
-            handle.signal(literal!("none"));
+            handle.signal(sym::none);
             handle.break_();
         }
     }

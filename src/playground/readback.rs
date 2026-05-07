@@ -1,4 +1,3 @@
-use arcstr::ArcStr;
 use bytes::Bytes;
 use core::fmt::Debug;
 use eframe::egui::{self, RichText};
@@ -12,6 +11,7 @@ use par_core::{
     runtime::{TypedHandle, TypedReadback},
     workspace::{FileImportScope, render_type_in_scope},
 };
+use par_runtime::atom::Atom;
 use par_runtime::primitive::{format_float, parse_float_text};
 use std::sync::{Arc, Mutex};
 
@@ -23,14 +23,14 @@ enum Request {
     Char(String, Box<dyn Send + FnOnce(char)>),
     Byte(String, Box<dyn Send + FnOnce(u8)>),
     Bytes(String, Box<dyn Send + FnOnce(Bytes)>),
-    Choice(Vec<ArcStr>, Box<dyn Send + FnOnce(ArcStr)>),
+    Choice(Vec<Atom>, Box<dyn Send + FnOnce(Atom)>),
 }
 
 pub enum Event {
     Times(Arc<Mutex<Element>>),
     Par(Arc<Mutex<Element>>),
-    Either(ArcStr),
-    Choice(ArcStr),
+    Either(Atom),
+    Choice(Atom),
     Break,
     Continue,
     Nat(BigUint),

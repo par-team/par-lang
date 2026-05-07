@@ -1,10 +1,10 @@
-use arcstr::literal;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 
 use par_core::frontend::ExternalTypeDef;
 use par_core::frontend::{PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -52,9 +52,9 @@ async fn byte_is(mut handle: Handle) {
     let b = handle.receive().byte().await;
     let class = ByteClass::readback(handle.receive()).await;
     if class.contains(b) {
-        handle.signal(literal!("true"));
+        handle.signal(sym::true_);
     } else {
-        handle.signal(literal!("false"));
+        handle.signal(sym::false_);
     }
     handle.break_();
 }
@@ -68,13 +68,13 @@ pub(super) enum ByteClass {
 
 impl ByteClass {
     pub(super) async fn readback(mut handle: Handle) -> Self {
-        match handle.case().await.as_str() {
-            "any" => {
+        match handle.case().await {
+            sym::any => {
                 handle.continue_();
                 Self::Any
             }
-            "byte" => Self::Byte(handle.byte().await),
-            "range" => {
+            sym::byte => Self::Byte(handle.byte().await),
+            sym::range => {
                 let min = handle.receive().byte().await;
                 let max = handle.receive().byte().await;
                 handle.continue_();

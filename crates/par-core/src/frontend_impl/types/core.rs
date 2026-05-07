@@ -2,9 +2,9 @@ use super::super::language::{GlobalName, LocalName, TypeParameter, Unresolved};
 use crate::frontend_impl::types::visit::Polarity;
 use crate::frontend_impl::types::{TypeDefs, TypeError, visit};
 use crate::location::{Span, Spanning};
-use arcstr::ArcStr;
 use im::HashSet;
 use num_bigint::BigInt;
+use par_runtime::atom::Atom;
 use par_runtime::primitive::Primitive;
 use par_runtime::readback::Number;
 use std::collections::BTreeMap;
@@ -375,7 +375,7 @@ impl<S: Clone> Type<S> {
             Span::None,
             LocalName {
                 span: Span::None,
-                string: ArcStr::from(name),
+                string: Atom::from(name),
             },
         )
     }
@@ -407,7 +407,7 @@ impl<S: Clone> Type<S> {
                 .map(|name| {
                     TypeParameter::any(LocalName {
                         span: Span::None,
-                        string: ArcStr::from(name),
+                        string: Atom::from(name),
                     })
                 })
                 .collect(),
@@ -427,7 +427,7 @@ impl<S: Clone> Type<S> {
                 .map(|name| {
                     TypeParameter::any(LocalName {
                         span: Span::None,
-                        string: ArcStr::from(name),
+                        string: Atom::from(name),
                     })
                 })
                 .collect(),
@@ -473,7 +473,7 @@ impl<S: Clone> Type<S> {
                     (
                         LocalName {
                             span: Span::None,
-                            string: ArcStr::from(name),
+                            string: Atom::from(name),
                         },
                         typ,
                     )
@@ -491,7 +491,7 @@ impl<S: Clone> Type<S> {
                     (
                         LocalName {
                             span: Span::None,
-                            string: ArcStr::from(name),
+                            string: Atom::from(name),
                         },
                         typ,
                     )
@@ -514,7 +514,7 @@ impl<S: Clone> Type<S> {
             asc: HashSet::new(),
             label: label.map(|label| LocalName {
                 span: Span::None,
-                string: ArcStr::from(label),
+                string: Atom::from(label),
             }),
             body: Box::new(body),
             display_hint: Default::default(),
@@ -527,7 +527,7 @@ impl<S: Clone> Type<S> {
             asc: HashSet::new(),
             label: label.map(|label| LocalName {
                 span: Span::None,
-                string: ArcStr::from(label),
+                string: Atom::from(label),
             }),
             body: Box::new(body),
             display_hint: Default::default(),
@@ -546,7 +546,7 @@ impl<S: Clone> Type<S> {
             Span::None,
             label.map(|label| LocalName {
                 span: Span::None,
-                string: ArcStr::from(label),
+                string: Atom::from(label),
             }),
         )
     }
@@ -556,7 +556,7 @@ impl<S: Clone> Type<S> {
             Span::None,
             TypeParameter::any(LocalName {
                 span: Span::None,
-                string: ArcStr::from(var),
+                string: Atom::from(var),
             }),
             Box::new(body),
         )

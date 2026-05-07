@@ -1,4 +1,3 @@
-use arcstr::literal;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::ToPrimitive;
 
@@ -6,6 +5,7 @@ use jiff::civil::{DateTime, Weekday};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
+use par_runtime::atom::{Atom, sym};
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
@@ -96,7 +96,7 @@ fn offset_from_nanos(nanos: &BigInt) -> Offset {
 }
 
 async fn read_instant_nanos(mut instant: Handle) -> i128 {
-    instant.signal(literal!("unixNanos"));
+    instant.signal(sym::unixNanos);
     bigint_to_i128_sat(&instant.int().await)
 }
 
@@ -105,12 +105,12 @@ fn provide_instant(handle: Handle, timestamp: Timestamp) {
         let timestamp = timestamp;
         async move {
             loop {
-                match handle.case().await.as_str() {
-                    "unixNanos" => {
+                match handle.case().await {
+                    sym::unixNanos => {
                         handle.provide_int(BigInt::from(timestamp.as_nanosecond()));
                         return;
                     }
-                    "add" => {
+                    sym::add => {
                         let duration = bigint_to_i128_sat(&handle.receive().int().await);
                         return provide_instant(handle, timestamp_shift(timestamp, duration));
                     }
@@ -132,11 +132,11 @@ fn provide_zone(handle: Handle, tz: TimeZone) {
     handle.provide_box(move |mut handle| {
         let tz = tz.clone();
         async move {
-            match handle.case().await.as_str() {
-                "name" => {
+            match handle.case().await {
+                sym::name => {
                     handle.provide_string(ParString::from(zone_name(&tz)));
                 }
-                "offsetAt" => {
+                sym::offsetAt => {
                     let nanos = read_instant_nanos(handle.receive()).await;
                     let offset = tz.to_offset(timestamp_from_nanos(nanos));
                     let offset_nanos = (offset.seconds() as i128) * NANOS_PER_SEC;
@@ -152,28 +152,28 @@ fn provide_zone(handle: Handle, tz: TimeZone) {
 // DST-aware zone; anything else falls back to the fixed offset at `reference`.
 async fn zone_to_timezone(mut zone: Handle, reference: Timestamp) -> TimeZone {
     let mut zone_offset = zone.duplicate();
-    zone.signal(literal!("name"));
+    zone.signal(sym::name);
     let name = zone.string().await;
     if let Ok(tz) = TimeZone::get(name.as_str()) {
         zone_offset.erase();
         tz
     } else {
-        zone_offset.signal(literal!("offsetAt"));
+        zone_offset.signal(sym::offsetAt);
         provide_instant(zone_offset.send(), reference);
         let offset_nanos = zone_offset.int().await;
         TimeZone::fixed(offset_from_nanos(&offset_nanos))
     }
 }
 
-fn weekday_label(weekday: Weekday) -> arcstr::ArcStr {
+fn weekday_label(weekday: Weekday) -> Atom {
     match weekday {
-        Weekday::Monday => literal!("monday"),
-        Weekday::Tuesday => literal!("tuesday"),
-        Weekday::Wednesday => literal!("wednesday"),
-        Weekday::Thursday => literal!("thursday"),
-        Weekday::Friday => literal!("friday"),
-        Weekday::Saturday => literal!("saturday"),
-        Weekday::Sunday => literal!("sunday"),
+        Weekday::Monday => sym::monday,
+        Weekday::Tuesday => sym::tuesday,
+        Weekday::Wednesday => sym::wednesday,
+        Weekday::Thursday => sym::thursday,
+        Weekday::Friday => sym::friday,
+        Weekday::Saturday => sym::saturday,
+        Weekday::Sunday => sym::sunday,
     }
 }
 
@@ -193,61 +193,61 @@ fn provide_zoned(handle: Handle, zoned: Zoned) {
         let zoned = zoned.clone();
         async move {
             loop {
-                match handle.case().await.as_str() {
-                    "year" => {
+                match handle.case().await {
+                    sym::year => {
                         handle.provide_int(BigInt::from(zoned.year()));
                         return;
                     }
-                    "month" => {
+                    sym::month => {
                         handle.provide_nat(BigUint::from(zoned.month() as u8));
                         return;
                     }
-                    "day" => {
+                    sym::day => {
                         handle.provide_nat(BigUint::from(zoned.day() as u8));
                         return;
                     }
-                    "hour" => {
+                    sym::hour => {
                         handle.provide_nat(BigUint::from(zoned.hour() as u8));
                         return;
                     }
-                    "minute" => {
+                    sym::minute => {
                         handle.provide_nat(BigUint::from(zoned.minute() as u8));
                         return;
                     }
-                    "second" => {
+                    sym::second => {
                         handle.provide_nat(BigUint::from(zoned.second() as u8));
                         return;
                     }
-                    "nanosecond" => {
+                    sym::nanosecond => {
                         handle.provide_nat(BigUint::from(zoned.subsec_nanosecond() as u32));
                         return;
                     }
-                    "weekday" => {
+                    sym::weekday => {
                         handle.signal(weekday_label(zoned.weekday()));
                         handle.break_();
                         return;
                     }
-                    "zone" => {
+                    sym::zone => {
                         return provide_zone(handle, zoned.time_zone().clone());
                     }
-                    "instant" => {
+                    sym::instant => {
                         return provide_instant(handle, zoned.timestamp());
                     }
-                    "format" => {
+                    sym::format => {
                         let layout = handle.receive().string().await;
                         let rendered = zoned.strftime(layout.as_str()).to_string();
                         handle.provide_string(ParString::from(rendered));
                         return;
                     }
-                    "addYears" => {
+                    sym::addYears => {
                         let amount = handle.receive().int().await;
                         return provide_zoned(handle, add_calendar(&zoned, &amount, 'y'));
                     }
-                    "addMonths" => {
+                    sym::addMonths => {
                         let amount = handle.receive().int().await;
                         return provide_zoned(handle, add_calendar(&zoned, &amount, 'm'));
                     }
-                    "addDays" => {
+                    sym::addDays => {
                         let amount = handle.receive().int().await;
                         return provide_zoned(handle, add_calendar(&zoned, &amount, 'd'));
                     }
@@ -316,7 +316,7 @@ async fn zoned_from_civil(mut handle: Handle, zone: Handle, datetime: DateTime) 
     let tz = zone_to_timezone(zone, reference).await;
     match datetime.to_zoned(tz) {
         Ok(zoned) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             provide_zoned(handle, zoned);
         }
         Err(_) => provide_none(handle),
@@ -324,7 +324,7 @@ async fn zoned_from_civil(mut handle: Handle, zone: Handle, datetime: DateTime) 
 }
 
 fn provide_none(mut handle: Handle) {
-    handle.signal(literal!("none"));
+    handle.signal(sym::none);
     handle.break_();
 }
 
@@ -348,7 +348,7 @@ async fn time_from_rfc3339(mut handle: Handle) {
     let text = handle.receive().string().await;
     match text.as_str().parse::<Timestamp>() {
         Ok(timestamp) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             provide_instant(handle, timestamp);
         }
         Err(_) => provide_none(handle),
@@ -378,7 +378,7 @@ async fn time_zone(mut handle: Handle) {
     let name = handle.receive().string().await;
     match TimeZone::get(name.as_str()) {
         Ok(tz) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             provide_zone(handle, tz);
         }
         Err(_) => provide_none(handle),

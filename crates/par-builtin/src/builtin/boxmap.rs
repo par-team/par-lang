@@ -1,10 +1,10 @@
 //package: core
 use std::sync::Arc;
 
+use par_runtime::atom::sym;
 use tokio::sync::Mutex;
 
 use crate::builtin::list::readback_list;
-use arcstr::literal;
 use im::OrdMap;
 use par_runtime::readback::{Data, Handle};
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
@@ -58,48 +58,48 @@ fn provide_boxmap(handle: Handle, map: OrdMap<Data, Arc<Mutex<Handle>>>) {
     handle.provide_box(move |mut handle| {
         let mut map = map.clone();
         async move {
-            match handle.case().await.as_str() {
-                "size" => {
+            match handle.case().await {
+                sym::size => {
                     return handle.provide_nat(map.len().into());
                 }
-                "keys" => {
+                sym::keys => {
                     for key in map.keys() {
-                        handle.signal(literal!("item"));
+                        handle.signal(sym::item);
                         handle.send_data(key);
                     }
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::end);
                     return handle.break_();
                 }
-                "list" => {
+                sym::list => {
                     for (key, value) in map.iter() {
-                        handle.signal(literal!("item"));
+                        handle.signal(sym::item);
                         let mut pair = handle.send();
                         pair.send_data(key);
                         pair.link(value.lock().await.duplicate());
                     }
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::end);
                     return handle.break_();
                 }
-                "get" => {
+                sym::get => {
                     let key = handle.receive_data().await;
                     match map.get(&key) {
                         Some(value) => {
-                            handle.signal(literal!("some"));
+                            handle.signal(sym::some);
                             return handle.link(value.lock().await.duplicate());
                         }
                         None => {
-                            handle.signal(literal!("none"));
+                            handle.signal(sym::none);
                             return handle.break_();
                         }
                     }
                 }
-                "put" => {
+                sym::put => {
                     let key = handle.receive_data().await;
                     let value = handle.receive();
                     map.insert(key, Arc::new(Mutex::new(value)));
                     return provide_boxmap(handle, map);
                 }
-                "delete" => {
+                sym::delete => {
                     let key = handle.receive_data().await;
                     map.remove(&key);
                     return provide_boxmap(handle, map);

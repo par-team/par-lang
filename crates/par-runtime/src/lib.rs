@@ -1,3 +1,4 @@
+pub mod atom;
 pub mod data;
 mod executor;
 pub mod fan_behavior;

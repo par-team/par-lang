@@ -16,14 +16,15 @@ use crate::{
     frontend_impl::types::error::labels_from_span,
     location::{Span, Spanning},
 };
-use arcstr::{ArcStr, literal};
+use arcstr::ArcStr;
+use par_runtime::atom::{Atom, sym};
 use par_runtime::pkgid::PackageId;
 use par_runtime::primitive::{ParString, Primitive};
 
 #[derive(Clone, Debug)]
 pub struct LocalName {
     pub span: Span,
-    pub string: ArcStr,
+    pub string: Atom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -202,8 +203,8 @@ impl<S> GlobalName<S> {
     }
 }
 
-impl From<ArcStr> for LocalName {
-    fn from(value: ArcStr) -> Self {
+impl From<Atom> for LocalName {
+    fn from(value: Atom) -> Self {
         LocalName {
             span: Span::None,
             string: value,
@@ -227,49 +228,49 @@ impl LocalName {
     pub fn result() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#result"),
+            string: sym::_result,
         }
     }
 
     pub fn object() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#object"),
+            string: sym::_object,
         }
     }
 
     pub fn subject() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#subject"),
+            string: sym::_subject,
         }
     }
 
     pub fn error() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#error"),
+            string: sym::_error,
         }
     }
 
     pub fn match_(level: usize) -> Self {
         Self {
             span: Span::None,
-            string: arcstr::format!("#match{}", level),
+            string: format!("#match{}", level).into(),
         }
     }
 
     pub fn temp() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#temp"),
+            string: sym::_temp,
         }
     }
 
     pub fn invalid() -> Self {
         Self {
             span: Span::None,
-            string: literal!("#invalid"),
+            string: sym::_invalid,
         }
     }
 
@@ -814,7 +815,7 @@ pub(crate) struct Passes {
 
 #[derive(Clone, Debug)]
 struct PollPoint {
-    label: Option<ArcStr>,
+    label: Option<Atom>,
     point: LocalName,
 }
 
@@ -874,7 +875,7 @@ impl Context {
     fn fresh_infix_temp(&mut self, span: Span) -> LocalName {
         LocalName {
             span,
-            string: arcstr::format!("#infix{}", self.get_block_index()),
+            string: format!("#infix{}", self.get_block_index()).into(),
         }
     }
 
@@ -889,10 +890,10 @@ impl Context {
         )
     }
 
-    fn operator_local_name(span: &Span, name: &'static str) -> LocalName {
+    fn operator_local_name(span: &Span, name: Atom) -> LocalName {
         LocalName {
             span: span.clone(),
-            string: ArcStr::from(name),
+            string: name,
         }
     }
 
@@ -992,12 +993,12 @@ impl Context {
         right: Expression<Unresolved>,
     ) -> Expression<Unresolved> {
         let (variant, negate) = match op {
-            ComparisonOperator::Less => ("less", false),
-            ComparisonOperator::Greater => ("greater", false),
-            ComparisonOperator::LessOrEqual => ("greater", true),
-            ComparisonOperator::GreaterOrEqual => ("less", true),
-            ComparisonOperator::Equal => ("equal", false),
-            ComparisonOperator::NotEqual => ("equal", true),
+            ComparisonOperator::Less => (sym::less, false),
+            ComparisonOperator::Greater => (sym::greater, false),
+            ComparisonOperator::LessOrEqual => (sym::greater, true),
+            ComparisonOperator::GreaterOrEqual => (sym::less, true),
+            ComparisonOperator::Equal => (sym::equal, false),
+            ComparisonOperator::NotEqual => (sym::equal, true),
         };
 
         let compare = Self::apply_expression(
@@ -1296,13 +1297,13 @@ impl Context {
         let id = self.get_poll_index();
         let point = LocalName {
             span: span.clone(),
-            string: ArcStr::from(format!("@{id}")),
+            string: Atom::from(format!("@{id}")),
         };
 
         let driver = match kind {
             process::PollKind::Poll => LocalName {
                 span: span.clone(),
-                string: ArcStr::from(format!("#pool{id}")),
+                string: Atom::from(format!("#pool{id}")),
             },
             process::PollKind::Repoll => self
                 .current_poll_driver()
@@ -1703,7 +1704,7 @@ impl Context {
                     command: process::Command::Signal(
                         LocalName {
                             span: span.clone(),
-                            string: literal!("end"),
+                            string: sym::end,
                         },
                         Arc::new(process::Process::Do {
                             span: span.clone(),
@@ -1724,7 +1725,7 @@ impl Context {
                         command: process::Command::Signal(
                             LocalName {
                                 span: span.clone(),
-                                string: literal!("item"),
+                                string: sym::item,
                             },
                             Arc::new(process::Process::Do {
                                 span,
@@ -1855,7 +1856,7 @@ impl Context {
                     command: process::Command::Signal(
                         LocalName {
                             span: span.clone(),
-                            string: literal!("true"),
+                            string: sym::true_,
                         },
                         Arc::new(process::Process::Do {
                             span: span.clone(),
@@ -1874,7 +1875,7 @@ impl Context {
                     command: process::Command::Signal(
                         LocalName {
                             span: span.clone(),
-                            string: literal!("false"),
+                            string: sym::false_,
                         },
                         Arc::new(process::Process::Do {
                             span: span.clone(),
@@ -2686,7 +2687,7 @@ impl Context {
                 let span = global_name.span.clone();
                 let local_name = LocalName {
                     span: span.clone(),
-                    string: ArcStr::from(global_name.to_string()),
+                    string: Atom::from(global_name.to_string()),
                 };
                 Arc::new(process::Process::Let {
                     span: span.clone(),
@@ -3056,10 +3057,7 @@ impl Context {
             usage: VariableUsage::Unknown,
             typ: (),
             command: process::Command::Case(
-                Arc::from([
-                    LocalName::from(literal!("err")),
-                    LocalName::from(literal!("ok")),
-                ]),
+                Arc::from([LocalName::from(sym::err), LocalName::from(sym::ok)]),
                 Box::from([
                     Arc::new(process::Process::Let {
                         span: span.clone(),
@@ -3095,10 +3093,7 @@ impl Context {
                 usage: VariableUsage::Unknown,
                 typ: (),
                 command: process::Command::Case(
-                    Arc::from([
-                        LocalName::from(literal!("none")),
-                        LocalName::from(literal!("some")),
-                    ]),
+                    Arc::from([LocalName::from(sym::none), LocalName::from(sym::some)]),
                     Box::from([
                         Arc::new(process::Process::Let {
                             span: span.clone(),
@@ -3222,10 +3217,7 @@ impl Context {
                         usage: VariableUsage::Unknown,
                         typ: (),
                         command: process::Command::Case(
-                            Arc::from([
-                                LocalName::from(literal!("false")),
-                                LocalName::from(literal!("true")),
-                            ]),
+                            Arc::from([LocalName::from(sym::false_), LocalName::from(sym::true_)]),
                             Box::from([failure, success]),
                             None,
                         ),

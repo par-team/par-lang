@@ -1,5 +1,5 @@
 //package: core
-use arcstr::literal;
+use par_runtime::atom::sym;
 use par_runtime::readback::{Data, Handle};
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 use std::future::Future;
@@ -34,12 +34,12 @@ where
 {
     let mut items = Vec::new();
     loop {
-        match handle.case().await.as_str() {
-            "end" => {
+        match handle.case().await {
+            sym::end => {
                 handle.continue_();
                 return items;
             }
-            "item" => {
+            sym::item => {
                 let item = readback_item(handle.receive()).await;
                 items.push(item);
             }
@@ -101,18 +101,18 @@ fn sort_by_key<T>(items: &mut [T], descending: bool, key: impl Fn(&T) -> &Data) 
 
 fn provide_data_list(mut handle: Handle, items: Vec<Data>) {
     for item in items {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         handle.send_data(&item);
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
 fn provide_handle_list(mut handle: Handle, items: impl IntoIterator<Item = Handle>) {
     for item in items {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         handle.send().link(item);
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }

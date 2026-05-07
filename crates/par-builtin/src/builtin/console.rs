@@ -1,7 +1,7 @@
 //package: basic
 use std::io::{Write, stdin, stdout};
 
-use arcstr::literal;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -9,17 +9,17 @@ use par_core::frontend::ParString;
 
 async fn console_open(mut handle: Handle) {
     loop {
-        match handle.case().await.as_str() {
-            "close" => {
+        match handle.case().await {
+            sym::close => {
                 handle.break_();
                 break;
             }
 
-            "print" => {
+            sym::print => {
                 println!("{}", handle.receive().string().await.as_str(),);
             }
 
-            "prompt" => {
+            sym::prompt => {
                 let prompt = handle.receive().string().await;
                 print!("{}", prompt.as_str());
                 let _ = stdout().flush();
@@ -31,11 +31,11 @@ async fn console_open(mut handle: Handle) {
                         Ok(n) if n > 0 => {
                             let string =
                                 ParString::copy_from_slice(buf.trim_end_matches(&['\n', '\r']));
-                            handle.signal(literal!("ok"));
+                            handle.signal(sym::ok);
                             handle.provide_string(string);
                         }
                         _ => {
-                            handle.signal(literal!("err"));
+                            handle.signal(sym::err);
                             handle.break_();
                         }
                     }

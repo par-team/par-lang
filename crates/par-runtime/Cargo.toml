@@ -15,9 +15,13 @@ bytes-utils = { version = "0.1.4", features = ["serde"] }
 inventory = "0.3.22"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 atomicbox = "0.4.0"
+string_cache = "0.9"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "signal", "sync"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { version = "1.49.0", features = ["rt", "macros", "io-util", "sync"] }
+
+[build-dependencies]
+string_cache_codegen = "0.6"

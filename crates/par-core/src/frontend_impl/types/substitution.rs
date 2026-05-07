@@ -21,7 +21,7 @@ impl<S: Clone> Type<S> {
                 Type::Exists(_span, param, body) | Type::Forall(_span, param, body) => {
                     let old_name = param.name.clone();
                     while map.values().any(|t| t.contains_var(&param.name)) {
-                        param.name.string = arcstr::format!("{}'", param.name.string);
+                        param.name.string = format!("{}'", param.name.string).into();
                     }
                     if old_name != param.name {
                         inner(

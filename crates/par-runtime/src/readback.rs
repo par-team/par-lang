@@ -1,8 +1,8 @@
+use crate::atom::Atom;
 pub use crate::data::Data;
 pub use crate::primitive::Number;
 
 use crate::primitive::{ParString, Primitive};
-use arcstr::ArcStr;
 use bytes::Bytes;
 use num_bigint::{BigInt, BigUint};
 
@@ -31,11 +31,11 @@ impl Handle {
         self.handle.continue_()
     }
 
-    pub async fn case(&mut self) -> ArcStr {
+    pub async fn case(&mut self) -> Atom {
         self.handle.case().await
     }
 
-    pub fn signal(&mut self, s: ArcStr) {
+    pub fn signal(&mut self, s: Atom) {
         self.handle.signal(s)
     }
 

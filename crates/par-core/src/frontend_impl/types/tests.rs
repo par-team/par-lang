@@ -4,7 +4,8 @@ mod tests {
     use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs};
     use crate::location::Span;
     use crate::workspace::render_type_in_scope;
-    use arcstr::{ArcStr, literal};
+    use arcstr::literal;
+    use par_runtime::atom::Atom;
     use par_runtime::pkgid::PackageId;
     use std::fmt::{self, Write};
 
@@ -24,11 +25,11 @@ mod tests {
         let span = Span::None;
         let key = LocalName {
             span: Span::None,
-            string: ArcStr::from("k"),
+            string: Atom::from("k"),
         };
         let value = LocalName {
             span: Span::None,
-            string: ArcStr::from("v"),
+            string: Atom::from("v"),
         };
         let map_name = GlobalName::new(
             Span::None,
@@ -79,13 +80,13 @@ mod tests {
                         assert!(branches.contains_key(
                             &crate::frontend_impl::language::LocalName {
                                 span: crate::location::Span::None,
-                                string: arcstr::ArcStr::from("method1"),
+                                string: Atom::from("method1"),
                             }
                         ));
                         assert!(branches.contains_key(
                             &crate::frontend_impl::language::LocalName {
                                 span: crate::location::Span::None,
-                                string: arcstr::ArcStr::from("method2"),
+                                string: Atom::from("method2"),
                             }
                         ));
                     }
@@ -110,7 +111,7 @@ mod tests {
         match typ {
             Type::Iterative { label, body, .. } => {
                 assert!(label.is_some());
-                assert_eq!(label.unwrap().string.as_str(), "my_label");
+                assert_eq!(&label.unwrap().string, "my_label");
 
                 match body.as_ref() {
                     Type::Box(_, inner) => match inner.as_ref() {

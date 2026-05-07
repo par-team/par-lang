@@ -1,7 +1,7 @@
-use arcstr::literal;
 use percent_encoding::percent_decode_str;
 use url::Url as ParsedUrl;
 
+use par_runtime::atom::sym;
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
@@ -26,11 +26,11 @@ async fn url_from_string(mut handle: Handle) {
     let input = handle.receive().string().await;
     match ParsedUrl::parse(input.as_str()) {
         Ok(url) => {
-            handle.signal(literal!("ok"));
+            handle.signal(sym::ok);
             provide_url_value(handle, url);
         }
         Err(err) => {
-            handle.signal(literal!("err"));
+            handle.signal(sym::err);
             handle.provide_string(ParString::from(err.to_string()));
         }
     }
@@ -41,16 +41,16 @@ pub(super) fn provide_url_value(handle: Handle, url: ParsedUrl) {
         let mut url = url.clone();
         async move {
             loop {
-                match handle.case().await.as_str() {
-                    "full" => {
+                match handle.case().await {
+                    sym::full => {
                         handle.provide_string(ParString::copy_from_slice(url.as_str()));
                         return;
                     }
-                    "protocol" => {
+                    sym::protocol => {
                         handle.provide_string(ParString::copy_from_slice(url.scheme()));
                         return;
                     }
-                    "host" => {
+                    sym::host => {
                         let host = match url.port() {
                             Some(port) => format!("{}:{}", url.host_str().unwrap_or(""), port),
                             None => url.host_str().unwrap_or("").to_string(),
@@ -58,14 +58,14 @@ pub(super) fn provide_url_value(handle: Handle, url: ParsedUrl) {
                         handle.provide_string(ParString::from(host));
                         return;
                     }
-                    "path" => {
+                    sym::path => {
                         let decoded = percent_decode_str(url.path()).decode_utf8_lossy();
                         handle.provide_string(decoded.into_owned().into());
                         return;
                     }
-                    "query" => {
+                    sym::query => {
                         for (key, value) in url.query_pairs() {
-                            handle.signal(literal!("item"));
+                            handle.signal(sym::item);
                             let key = key.into_owned();
                             let value = value.into_owned();
                             handle.send().concurrently(|mut pair| async move {
@@ -73,16 +73,16 @@ pub(super) fn provide_url_value(handle: Handle, url: ParsedUrl) {
                                 pair.provide_string(ParString::from(value));
                             });
                         }
-                        handle.signal(literal!("end"));
+                        handle.signal(sym::end);
                         handle.break_();
                         return;
                     }
-                    "appendPath" => {
+                    sym::appendPath => {
                         let segment = handle.receive().string().await;
                         append_path(&mut url, segment.as_str());
                         return provide_url_value(handle, url);
                     }
-                    "addQuery" => {
+                    sym::addQuery => {
                         let key = handle.receive().string().await;
                         let value = handle.receive().string().await;
                         url.query_pairs_mut()

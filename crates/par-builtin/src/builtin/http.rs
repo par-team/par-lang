@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use arcstr::literal;
 use bytes::Bytes;
 use futures::{
     SinkExt, StreamExt,
@@ -30,9 +29,9 @@ use tokio::{net::TcpListener, signal, sync::Notify};
 use url::Url as ParsedUrl;
 
 use crate::builtin::{list::readback_list, url::provide_url_value};
-use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::{atom::sym, primitive::ParString};
 
 macro_rules! basic_http_external {
     ($name:literal, $f:path $(, $arg:expr)*) => {
@@ -59,7 +58,7 @@ async fn http_fetch(mut handle: Handle) {
     let method = request.receive().string().await;
 
     let mut url_handle = request.receive();
-    url_handle.signal(literal!("full"));
+    url_handle.signal(sym::full);
     let url = url_handle.string().await;
 
     let header_pairs = readback_list(request.receive(), |mut handle| async move {
@@ -85,7 +84,7 @@ async fn http_fetch(mut handle: Handle) {
     {
         Ok(c) => c,
         Err(err) => {
-            handle.signal(literal!("err"));
+            handle.signal(sym::err);
             return handle.provide_string(ParString::from(err.to_string()));
         }
     };
@@ -113,13 +112,13 @@ async fn http_fetch(mut handle: Handle) {
     let response = match response_result {
         Ok(response) => {
             if let Err(body_err) = body_result {
-                handle.signal(literal!("err"));
+                handle.signal(sym::err);
                 return handle.provide_string(ParString::from(body_err));
             }
             response
         }
         Err(err) => {
-            handle.signal(literal!("err"));
+            handle.signal(sym::err);
             if let Err(body_err) = body_result {
                 return handle.provide_string(ParString::from(body_err));
             }
@@ -127,7 +126,7 @@ async fn http_fetch(mut handle: Handle) {
         }
     };
 
-    handle.signal(literal!("ok"));
+    handle.signal(sym::ok);
     handle
         .send()
         .provide_nat(BigUint::from(response.status().as_u16()));
@@ -138,25 +137,25 @@ async fn http_fetch(mut handle: Handle) {
 async fn provide_body_reader(mut handle: Handle, response: reqwest::Response) {
     let mut stream = response.bytes_stream();
     loop {
-        match handle.case().await.as_str() {
-            "close" => {
-                handle.signal(literal!("ok"));
+        match handle.case().await {
+            sym::close => {
+                handle.signal(sym::ok);
                 return handle.break_();
             }
-            "read" => match stream.next().await {
+            sym::read => match stream.next().await {
                 Some(Ok(bytes)) => {
-                    handle.signal(literal!("ok"));
-                    handle.signal(literal!("chunk"));
+                    handle.signal(sym::ok);
+                    handle.signal(sym::chunk);
                     handle.send().provide_bytes(bytes);
                     continue;
                 }
                 Some(Err(err)) => {
-                    handle.signal(literal!("err"));
+                    handle.signal(sym::err);
                     return handle.provide_string(ParString::from(err.to_string()));
                 }
                 None => {
-                    handle.signal(literal!("ok"));
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::ok);
+                    handle.signal(sym::end);
                     return handle.break_();
                 }
             },
@@ -167,7 +166,7 @@ async fn provide_body_reader(mut handle: Handle, response: reqwest::Response) {
 
 fn provide_headers_list(mut handle: Handle, headers: &reqwest::header::HeaderMap) {
     for (name, value) in headers {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         let (name, value) = (
             ParString::copy_from_slice(name.as_str()),
             Bytes::copy_from_slice(value.as_bytes()),
@@ -177,7 +176,7 @@ fn provide_headers_list(mut handle: Handle, headers: &reqwest::header::HeaderMap
             handle.provide_bytes(value);
         });
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
@@ -189,10 +188,10 @@ async fn consume_http_reader(
     let mut done = Some(done);
 
     loop {
-        handle.signal(literal!("read"));
-        match handle.case().await.as_str() {
-            "ok" => match handle.case().await.as_str() {
-                "chunk" => {
+        handle.signal(sym::read);
+        match handle.case().await {
+            sym::ok => match handle.case().await {
+                sym::chunk => {
                     let chunk = handle.receive().bytes().await;
                     if chunk.is_empty() {
                         continue;
@@ -205,7 +204,7 @@ async fn consume_http_reader(
                         return;
                     }
                 }
-                "end" => {
+                sym::end => {
                     handle.continue_();
                     tx.disconnect();
                     if let Some(done) = done.take() {
@@ -215,7 +214,7 @@ async fn consume_http_reader(
                 }
                 _ => unreachable!(),
             },
-            "err" => {
+            sym::err => {
                 let err = handle.string().await;
                 let io_err = io::Error::new(io::ErrorKind::Other, err.as_str().to_string());
                 let _ = tx.unbounded_send(Err(io_err));
@@ -230,13 +229,13 @@ async fn consume_http_reader(
 }
 
 async fn close_reader(mut handle: Handle) -> Result<(), ParString> {
-    handle.signal(literal!("close"));
-    match handle.case().await.as_str() {
-        "ok" => {
+    handle.signal(sym::close);
+    match handle.case().await {
+        sym::ok => {
             handle.continue_();
             Ok(())
         }
-        "err" => Err(handle.string().await),
+        sym::err => Err(handle.string().await),
         _ => unreachable!(),
     }
 }
@@ -248,8 +247,8 @@ async fn http_listen(mut handle: Handle) {
     match start_listener(address.as_str().to_string()).await {
         Ok(state) => provide_listener_value(handle, state).await,
         Err(err) => {
-            handle.signal(literal!("shutdown"));
-            handle.signal(literal!("err"));
+            handle.signal(sym::shutdown);
+            handle.signal(sym::err);
             handle.provide_string(err);
         }
     }
@@ -488,7 +487,7 @@ async fn handle_request(
 async fn provide_listener_value(mut handle: Handle, mut state: ListenerState) {
     match state.next_event().await {
         ListenerEvent::Incoming(request) => {
-            handle.signal(literal!("incoming"));
+            handle.signal(sym::incoming);
             let IncomingRequest {
                 method,
                 url,
@@ -507,14 +506,14 @@ async fn provide_listener_value(mut handle: Handle, mut state: ListenerState) {
         }
 
         ListenerEvent::Shutdown(result) => {
-            handle.signal(literal!("shutdown"));
+            handle.signal(sym::shutdown);
             match result {
                 Ok(()) => {
-                    handle.signal(literal!("ok"));
+                    handle.signal(sym::ok);
                     handle.break_();
                 }
                 Err(err) => {
-                    handle.signal(literal!("err"));
+                    handle.signal(sym::err);
                     handle.provide_string(ParString::from(err));
                 }
             }
@@ -537,31 +536,31 @@ async fn provide_http_request_value(
 
 fn provide_header_list_value(mut handle: Handle, headers: Vec<(String, String)>) {
     for (name, value) in headers {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         let mut pair = handle.send();
         pair.send().provide_string(ParString::from(name));
         pair.provide_bytes(Bytes::from(value));
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
 async fn provide_request_body_reader(mut handle: Handle, mut body: Incoming) {
     loop {
-        match handle.case().await.as_str() {
-            "close" => {
-                handle.signal(literal!("ok"));
+        match handle.case().await {
+            sym::close => {
+                handle.signal(sym::ok);
                 return handle.break_();
             }
-            "read" => match body.frame().await {
+            sym::read => match body.frame().await {
                 Some(Ok(frame)) => {
                     match frame.into_data() {
                         Ok(chunk) => {
                             if chunk.is_empty() {
                                 continue;
                             }
-                            handle.signal(literal!("ok"));
-                            handle.signal(literal!("chunk"));
+                            handle.signal(sym::ok);
+                            handle.signal(sym::chunk);
                             handle.send().provide_bytes(chunk);
                         }
                         Err(_) => {
@@ -571,13 +570,13 @@ async fn provide_request_body_reader(mut handle: Handle, mut body: Incoming) {
                     }
                 }
                 Some(Err(err)) => {
-                    handle.signal(literal!("err"));
+                    handle.signal(sym::err);
                     handle.provide_string(ParString::from(err.to_string()));
                     return;
                 }
                 None => {
-                    handle.signal(literal!("ok"));
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::ok);
+                    handle.signal(sym::end);
                     return handle.break_();
                 }
             },
@@ -593,12 +592,12 @@ async fn provide_responder_function(
     match build_response(handle.receive()).await {
         Ok(response) => {
             let _ = responder.send(Ok(response));
-            handle.signal(literal!("ok"));
+            handle.signal(sym::ok);
             handle.break_();
         }
         Err(err) => {
             let _ = responder.send(Err(BodyError(err.clone())));
-            handle.signal(literal!("err"));
+            handle.signal(sym::err);
             handle.provide_string(err);
         }
     }
@@ -646,16 +645,16 @@ fn reader_to_body(reader: Handle) -> StreamBody<mpsc::Receiver<Result<Frame<Byte
 
     reader.concurrently(|mut reader| async move {
         loop {
-            reader.signal(literal!("read"));
-            match reader.case().await.as_str() {
-                "ok" => match reader.case().await.as_str() {
-                    "chunk" => {
+            reader.signal(sym::read);
+            match reader.case().await {
+                sym::ok => match reader.case().await {
+                    sym::chunk => {
                         let bytes = reader.receive().bytes().await;
                         if tx.send(Ok(Frame::data(bytes))).await.is_err() {
-                            reader.signal(literal!("close"));
-                            match reader.case().await.as_str() {
-                                "ok" => reader.continue_(),
-                                "err" => {
+                            reader.signal(sym::close);
+                            match reader.case().await {
+                                sym::ok => reader.continue_(),
+                                sym::err => {
                                     let _ = reader.string();
                                 }
                                 _ => unreachable!(),
@@ -664,13 +663,13 @@ fn reader_to_body(reader: Handle) -> StreamBody<mpsc::Receiver<Result<Frame<Byte
                         }
                         continue;
                     }
-                    "end" => {
+                    sym::end => {
                         reader.continue_();
                         return;
                     }
                     _ => unreachable!(),
                 },
-                "err" => {
+                sym::err => {
                     let err = reader.string().await;
                     let _ = tx.send(Err(BodyError(err))).await;
                     return;

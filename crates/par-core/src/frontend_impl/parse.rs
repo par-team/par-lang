@@ -26,6 +26,7 @@ use core::fmt::Display;
 use miette::{SourceOffset, SourceSpan};
 use num_bigint::BigInt;
 use par_runtime::{
+    atom::{Atom, sym},
     primitive::{ParString, Primitive},
     readback::Number,
 };
@@ -174,7 +175,7 @@ fn local_name(input: &mut Input) -> Result<LocalName> {
     lowercase_identifier
         .map(|(span, string)| LocalName {
             span,
-            string: ArcStr::from(string),
+            string: Atom::from(string),
         })
         .parse_next(input)
 }
@@ -1106,10 +1107,10 @@ fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
     let name = local_name
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
-    match name.string.as_str() {
-        "data" => Ok(TypeConstraint::Data),
-        "number" => Ok(TypeConstraint::Number),
-        "signed" => Ok(TypeConstraint::Signed),
+    match name.string {
+        sym::data => Ok(TypeConstraint::Data),
+        sym::number => Ok(TypeConstraint::Number),
+        sym::signed => Ok(TypeConstraint::Signed),
         _ => Err(ErrMode::Backtrack(ParseContextError::from_input(input))),
     }
 }
@@ -4018,18 +4019,18 @@ def Value = a < b < c
             Expression::ComparisonChain { first, rest, .. } => {
                 assert!(matches!(
                     *first,
-                    Expression::Variable(_, LocalName { ref string, .. }) if string.as_str() == "a"
+                    Expression::Variable(_, LocalName { ref string, .. }) if string == "a"
                 ));
                 assert_eq!(rest.len(), 2);
                 assert_eq!(rest[0].op, ComparisonOperator::Less);
                 assert_eq!(rest[1].op, ComparisonOperator::Less);
                 assert!(matches!(
                     rest[0].expr,
-                    Expression::Variable(_, LocalName { ref string, .. }) if string.as_str() == "b"
+                    Expression::Variable(_, LocalName { ref string, .. }) if string == "b"
                 ));
                 assert!(matches!(
                     rest[1].expr,
-                    Expression::Variable(_, LocalName { ref string, .. }) if string.as_str() == "c"
+                    Expression::Variable(_, LocalName { ref string, .. }) if string == "c"
                 ));
             }
             other => panic!("unexpected AST: {other:#?}"),
@@ -4074,7 +4075,7 @@ def Value = `Hi ${name}, age #{1 + {2}}.`
                 assert!(matches!(
                     &parts[1],
                     TemplatePart::StringExpr(Expression::Variable(_, LocalName { string, .. }))
-                    if string.as_str() == "name"
+                    if string == "name"
                 ));
                 assert!(
                     matches!(&parts[2], TemplatePart::Literal(value) if value.as_str() == ", age ")
@@ -4137,11 +4138,11 @@ def UseNeg = let neg = 2 in neg
                 then,
                 ..
             })
-                if string.as_str() == "not"
+                if string == "not"
                     && matches!(
                         **then,
                         Expression::Variable(_, LocalName { ref string, .. })
-                            if string.as_str() == "not"
+                            if string == "not"
                     )
         ));
         assert!(matches!(
@@ -4151,11 +4152,11 @@ def UseNeg = let neg = 2 in neg
                 then,
                 ..
             })
-                if string.as_str() == "neg"
+                if string == "neg"
                     && matches!(
                         **then,
                         Expression::Variable(_, LocalName { ref string, .. })
-                            if string.as_str() == "neg"
+                            if string == "neg"
                     )
         ));
     }

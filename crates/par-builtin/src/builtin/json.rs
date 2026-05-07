@@ -2,7 +2,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::builtin::list::readback_list;
-use arcstr::literal;
+use par_runtime::atom::sym;
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
@@ -45,11 +45,11 @@ async fn json_decode(mut handle: Handle) {
     let string = handle.receive().string().await;
     match decode_from_string(string.as_str()) {
         Ok(json) => {
-            handle.signal(literal!("ok"));
+            handle.signal(sym::ok);
             provide_json_value(handle, json);
         }
         Err(err) => {
-            handle.signal(literal!("err"));
+            handle.signal(sym::err);
             handle.provide_string(ParString::from(err));
         }
     }
@@ -113,32 +113,32 @@ fn serde_to_json(value: Value) -> Result<JsonValue, String> {
 }
 
 async fn readback_json(mut handle: Handle) -> JsonValue {
-    match handle.case().await.as_str() {
-        "null" => {
+    match handle.case().await {
+        sym::null => {
             handle.continue_();
             JsonValue::Null
         }
-        "bool" => JsonValue::Bool(readback_bool(handle).await),
-        "string" => JsonValue::String(handle.string().await.as_str().to_owned()),
-        "number" => JsonValue::Number(handle.float().await),
-        "list" => {
+        sym::bool => JsonValue::Bool(readback_bool(handle).await),
+        sym::string => JsonValue::String(handle.string().await.as_str().to_owned()),
+        sym::number => JsonValue::Number(handle.float().await),
+        sym::list => {
             JsonValue::List(readback_list(handle, |handle| Box::pin(readback_json(handle))).await)
         }
-        "object" => JsonValue::Object(Box::pin(readback_object(handle)).await),
+        sym::object => JsonValue::Object(Box::pin(readback_object(handle)).await),
         _ => unreachable!(),
     }
 }
 
 async fn readback_object(mut handle: Handle) -> BTreeMap<String, JsonValue> {
-    handle.signal(literal!("list"));
+    handle.signal(sym::list);
     let mut entries = BTreeMap::new();
     loop {
-        match handle.case().await.as_str() {
-            "end" => {
+        match handle.case().await {
+            sym::end => {
                 handle.continue_();
                 return entries;
             }
-            "item" => {
+            sym::item => {
                 let mut pair = handle.receive();
                 let key = pair.receive().string().await.as_str().to_owned();
                 let value = Box::pin(readback_json(pair)).await;
@@ -150,12 +150,12 @@ async fn readback_object(mut handle: Handle) -> BTreeMap<String, JsonValue> {
 }
 
 async fn readback_bool(mut handle: Handle) -> bool {
-    match handle.case().await.as_str() {
-        "true" => {
+    match handle.case().await {
+        sym::true_ => {
             handle.continue_();
             true
         }
-        "false" => {
+        sym::false_ => {
             handle.continue_();
             false
         }
@@ -166,32 +166,32 @@ async fn readback_bool(mut handle: Handle) -> bool {
 fn provide_json_value(mut handle: Handle, value: JsonValue) {
     match value {
         JsonValue::Null => {
-            handle.signal(literal!("null"));
+            handle.signal(sym::null);
             handle.break_();
         }
         JsonValue::Bool(value) => {
-            handle.signal(literal!("bool"));
+            handle.signal(sym::bool);
             provide_bool(handle, value);
         }
         JsonValue::String(value) => {
-            handle.signal(literal!("string"));
+            handle.signal(sym::string);
             handle.provide_string(ParString::from(value));
         }
         JsonValue::Number(value) => {
-            handle.signal(literal!("number"));
+            handle.signal(sym::number);
             handle.provide_float(value);
         }
         JsonValue::List(values) => {
-            handle.signal(literal!("list"));
+            handle.signal(sym::list);
             for value in values {
-                handle.signal(literal!("item"));
+                handle.signal(sym::item);
                 provide_json_value(handle.send(), value);
             }
-            handle.signal(literal!("end"));
+            handle.signal(sym::end);
             handle.break_();
         }
         JsonValue::Object(entries) => {
-            handle.signal(literal!("object"));
+            handle.signal(sym::object);
             provide_object(handle, entries);
         }
     }
@@ -202,35 +202,35 @@ fn provide_object(handle: Handle, entries: BTreeMap<String, JsonValue>) {
     handle.provide_box(move |mut handle| {
         let entries = entries.clone();
         async move {
-            match handle.case().await.as_str() {
-                "size" => handle.provide_nat(entries.len().into()),
-                "keys" => {
+            match handle.case().await {
+                sym::size => handle.provide_nat(entries.len().into()),
+                sym::keys => {
                     for key in entries.keys() {
-                        handle.signal(literal!("item"));
+                        handle.signal(sym::item);
                         handle.send().provide_string(ParString::from(key.clone()));
                     }
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::end);
                     handle.break_();
                 }
-                "list" => {
+                sym::list => {
                     for (key, value) in entries.iter() {
-                        handle.signal(literal!("item"));
+                        handle.signal(sym::item);
                         let mut pair = handle.send();
                         pair.send().provide_string(ParString::from(key.clone()));
                         provide_json_value(pair, value.clone());
                     }
-                    handle.signal(literal!("end"));
+                    handle.signal(sym::end);
                     handle.break_();
                 }
-                "get" => {
+                sym::get => {
                     let key = handle.receive().string().await;
                     match entries.get(key.as_str()) {
                         Some(value) => {
-                            handle.signal(literal!("some"));
+                            handle.signal(sym::some);
                             provide_json_value(handle, value.clone());
                         }
                         None => {
-                            handle.signal(literal!("none"));
+                            handle.signal(sym::none);
                             handle.break_();
                         }
                     }
@@ -243,9 +243,9 @@ fn provide_object(handle: Handle, entries: BTreeMap<String, JsonValue>) {
 
 fn provide_bool(mut handle: Handle, value: bool) {
     if value {
-        handle.signal(literal!("true"));
+        handle.signal(sym::true_);
     } else {
-        handle.signal(literal!("false"));
+        handle.signal(sym::false_);
     }
     handle.break_();
 }

@@ -1,11 +1,11 @@
 //package: core
-use arcstr::literal;
 use num_bigint::{BigInt, BigUint};
 
 use num_integer::Integer;
 use num_traits::Zero;
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -75,10 +75,10 @@ async fn nat_clamp(mut handle: Handle) {
 async fn nat_repeat(mut handle: Handle) {
     let mut n = handle.receive().nat().await;
     while n > BigUint::ZERO {
-        handle.signal(literal!("step"));
+        handle.signal(sym::step);
         n.dec();
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
@@ -89,18 +89,18 @@ async fn nat_repeat_lazy(mut handle: Handle) {
 
 fn nat_repeat_lazy_inner(mut handle: Handle, n: BigUint) {
     if n > BigUint::ZERO {
-        handle.signal(literal!("step"));
+        handle.signal(sym::step);
         handle.provide_box(move |mut handle| {
             let n = &n - 1u32;
             async move {
-                match handle.case().await.as_str() {
-                    "next" => nat_repeat_lazy_inner(handle, n.clone()),
+                match handle.case().await {
+                    sym::next => nat_repeat_lazy_inner(handle, n.clone()),
                     _ => unreachable!(),
                 }
             }
         });
     } else {
-        handle.signal(literal!("end"));
+        handle.signal(sym::end);
         handle.break_();
     }
 }
@@ -111,11 +111,11 @@ async fn nat_range(mut handle: Handle) {
 
     let mut i = lo;
     while i < hi {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         handle.send().provide_nat(i.clone());
         i += 1u32;
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
@@ -123,11 +123,11 @@ async fn nat_from_string(mut handle: Handle) {
     let string = handle.receive().string().await;
     match string.as_str().parse::<BigUint>() {
         Ok(num) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             handle.provide_nat(num);
         }
         Err(_) => {
-            handle.signal(literal!("none"));
+            handle.signal(sym::none);
             handle.break_();
         }
     };

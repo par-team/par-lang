@@ -20,8 +20,8 @@ use crate::{
     },
     location::{Span, Spanning},
 };
-use arcstr::ArcStr;
 use indexmap::{IndexMap, IndexSet};
+use par_runtime::atom::{Atom, sym};
 use par_runtime::fan_behavior::FanBehavior;
 use par_runtime::linker::Unlinked;
 use par_runtime::poll::POLL_TOKEN;
@@ -244,7 +244,7 @@ pub(crate) struct Compiler {
     id_to_package: Vec<Net<Unlinked>>,
     lazy_redexes: Vec<(Tree<Unlinked>, Tree<Unlinked>)>,
     compile_global_stack: IndexSet<GlobalName<Universal>>,
-    package_is_case_branch: IndexMap<usize, ArcStr>,
+    package_is_case_branch: IndexMap<usize, Atom>,
     blocks: IndexMap<usize, Arc<Process<Type<Universal>, Universal>>>,
     poll_packages: IndexMap<LocalName, PollInfo>,
     max_interactions: u32,
@@ -296,10 +296,10 @@ pub(crate) fn demultiplex_trees(mut trees: Vec<Tree<Unlinked>>) -> Tree<Unlinked
 
 impl Compiler {
     fn build_submit_stream(&mut self, items: Vec<TypedTree>) -> Tree<Unlinked> {
-        let mut stream = Tree::Signal(ArcStr::from("#end"), Box::new(Tree::Break));
+        let mut stream = Tree::Signal(sym::_end, Box::new(Tree::Break));
         for item in items.into_iter().rev() {
             stream = Tree::Signal(
-                ArcStr::from("#item"),
+                sym::_item,
                 Box::new(Tree::Times(Box::new(stream), Box::new(item.tree))),
             );
         }
@@ -560,14 +560,14 @@ impl Compiler {
         self.net.link(a.tree, b.tree);
     }
 
-    fn either_instance(&mut self, signal: ArcStr, tree: Tree<Unlinked>) -> Tree<Unlinked> {
+    fn either_instance(&mut self, signal: Atom, tree: Tree<Unlinked>) -> Tree<Unlinked> {
         Tree::Signal(signal, Box::new(tree))
     }
 
     fn choice_instance(
         &mut self,
         ctx_out: Tree<Unlinked>,
-        branches: HashMap<ArcStr, usize>,
+        branches: HashMap<Atom, usize>,
         else_branch: Option<usize>,
     ) -> Tree<Unlinked> {
         Tree::Choice(Box::new(ctx_out), Arc::new(branches), else_branch)
@@ -771,7 +771,7 @@ impl Compiler {
             let (next0, next1) = self.create_typed_wire();
             let stream = self.build_submit_stream(initial_client_trees);
             let payload = Tree::Times(Box::new(next1.tree), Box::new(stream));
-            let request = Tree::Signal(ArcStr::from("#submit"), Box::new(payload));
+            let request = Tree::Signal(sym::_submit, Box::new(payload));
             self.net.link(driver_tree.tree, request);
             self.bind_variable(driver.clone(), next0)?;
         }
@@ -812,7 +812,7 @@ impl Compiler {
                 let (result0, result1) = this.create_typed_wire();
 
                 let payload = Tree::Times(Box::new(next1.tree), Box::new(result1.tree));
-                let request = Tree::Signal(ArcStr::from("#poll"), Box::new(payload));
+                let request = Tree::Signal(sym::_poll, Box::new(payload));
                 this.net.link(driver_tree.tree, request);
                 this.bind_variable(driver.clone(), next0)?;
 
@@ -831,7 +831,7 @@ impl Compiler {
                             this.compile_process(&then)?;
                             Ok((w1, context_out.with_type(Type::Continue(Span::None))))
                         })?;
-                    branches.insert(ArcStr::from("#client"), package_id);
+                    branches.insert(sym::_client, package_id);
                 }
 
                 {
@@ -843,7 +843,7 @@ impl Compiler {
                             {
                                 this.net.link(
                                     driver_tree.tree,
-                                    Tree::Signal(ArcStr::from("#close"), Box::new(Tree::Break)),
+                                    Tree::Signal(sym::_close, Box::new(Tree::Break)),
                                 );
                             }
                             this.compile_process(&else_)?;
@@ -852,7 +852,7 @@ impl Compiler {
                                 context_out.with_type(Type::Continue(Span::None)),
                             ))
                         })?;
-                    branches.insert(ArcStr::from("#empty"), package_id);
+                    branches.insert(sym::_empty, package_id);
                 }
 
                 let (else_branch, _) =
@@ -906,7 +906,7 @@ impl Compiler {
         let (next0, next1) = self.create_typed_wire();
         let stream = self.build_submit_stream(value_trees);
         let payload = Tree::Times(Box::new(next1.tree), Box::new(stream));
-        let request = Tree::Signal(ArcStr::from("#submit"), Box::new(payload));
+        let request = Tree::Signal(sym::_submit, Box::new(payload));
         self.net.link(driver_tree.tree, request);
         self.bind_variable(driver.clone(), next0)?;
 
@@ -1047,7 +1047,7 @@ impl Compiler {
     ) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         let (v0, v1) = self.create_typed_wire();
-        let choosing_tree = self.either_instance(ArcStr::from(&chosen.string), v1.tree);
+        let choosing_tree = self.either_instance(chosen.string.clone(), v1.tree);
         self.net.link(choosing_tree, subject.tree);
         self.bind_variable(name, v0)?;
         self.compile_process(process)
@@ -1071,7 +1071,7 @@ impl Compiler {
         choice_and_process.sort_by_key(|k| k.0);
 
         for (branch_name, process) in choice_and_process {
-            let branch_name = ArcStr::from(&branch_name.string);
+            let branch_name = branch_name.string.clone();
             let (package_id, _) =
                 self.in_package(format!("Branch {branch_name} at {span}"), |this, id| {
                     this.package_is_case_branch.insert(id, branch_name.clone());
@@ -1091,7 +1091,7 @@ impl Compiler {
             Some(process) => {
                 let (package_id, _) =
                     self.in_package(format!("Else branch at {span}"), |this, id| {
-                        this.package_is_case_branch.insert(id, ArcStr::from(""));
+                        this.package_is_case_branch.insert(id, Atom::default());
                         let (w0, w1) = this.create_typed_wire();
                         this.bind_variable(name.clone(), w0)?;
                         let context_out = this.context.unpack(&pack_data, &mut this.net);
@@ -1219,7 +1219,7 @@ impl Compiler {
 pub struct IcCompiled {
     pub(crate) id_to_package: Arc<IndexMap<usize, Net<Unlinked>>>,
     pub(crate) name_to_id: IndexMap<GlobalName<Universal>, usize>,
-    package_is_case_branch: IndexMap<usize, ArcStr>,
+    package_is_case_branch: IndexMap<usize, Atom>,
 }
 
 impl Display for IcCompiled {
@@ -1243,7 +1243,7 @@ impl IcCompiled {
         self.id_to_package.get(id).cloned()
     }
 
-    pub fn get_case_branch_name(&self, id: usize) -> Option<ArcStr> {
+    pub fn get_case_branch_name(&self, id: usize) -> Option<Atom> {
         self.package_is_case_branch.get(&id).cloned()
     }
 

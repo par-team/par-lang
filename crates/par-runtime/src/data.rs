@@ -1,11 +1,11 @@
+use crate::atom::Atom;
 use crate::primitive::Primitive;
-use arcstr::ArcStr;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Data {
     Unit,
-    Either(ArcStr, Box<Data>),
+    Either(Atom, Box<Data>),
     Pair(Box<Data>, Box<Data>),
     Primitive(Primitive),
 }

@@ -1,5 +1,6 @@
 use std::sync::mpsc;
 
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,18 +17,18 @@ fn provide_test_inner(handle: Handle, sender: mpsc::Sender<AssertionResult>) {
     handle.provide_box(move |mut handle| {
         let sender = sender.clone();
         async move {
-            match handle.case().await.as_str() {
-                "assert" => {
+            match handle.case().await {
+                sym::assert => {
                     let description = handle.receive().string().await.as_str().to_string();
                     println!("{}", description);
                     let mut bool_handle = handle.receive();
 
-                    let passed = match bool_handle.case().await.as_str() {
-                        "true" => {
+                    let passed = match bool_handle.case().await {
+                        sym::true_ => {
                             bool_handle.continue_();
                             true
                         }
-                        "false" => {
+                        sym::false_ => {
                             bool_handle.continue_();
                             false
                         }
@@ -47,10 +48,10 @@ fn provide_test_inner(handle: Handle, sender: mpsc::Sender<AssertionResult>) {
 
                     provide_test_inner(handle, sender);
                 }
-                "done" => {
+                sym::done => {
                     handle.break_();
                 }
-                "id" => {
+                sym::id => {
                     let argument = handle.send();
                     argument.provide_box(|mut handle| async move {
                         let arg = handle.receive();
@@ -59,7 +60,7 @@ fn provide_test_inner(handle: Handle, sender: mpsc::Sender<AssertionResult>) {
 
                     provide_test_inner(handle, sender);
                 }
-                "leak" => {
+                sym::leak => {
                     let argument = handle.send();
                     argument.provide_box(|handle| async move {
                         drop(handle);

@@ -7,12 +7,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use arcstr::ArcStr;
 use bytes::Bytes;
 use futures::channel::oneshot;
 use indexmap::IndexMap;
 use num_bigint::BigInt;
 
+use par_runtime::atom::Atom;
 use par_runtime::fan_behavior::FanBehavior;
 use par_runtime::primitive::{ParString, Primitive, format_float};
 use par_runtime::readback::Number;
@@ -41,12 +41,12 @@ pub enum Tree<Ext> {
     Par(Box<Tree<Ext>>, Box<Tree<Ext>>),
     Times(Box<Tree<Ext>>, Box<Tree<Ext>>),
     Dup(Box<Tree<Ext>>, Box<Tree<Ext>>),
-    Signal(ArcStr, Box<Tree<Ext>>),
-    Choice(Box<Tree<Ext>>, Arc<HashMap<ArcStr, usize>>, Option<usize>),
+    Signal(Atom, Box<Tree<Ext>>),
+    Choice(Box<Tree<Ext>>, Arc<HashMap<Atom, usize>>, Option<usize>),
     Var(usize),
     Package(usize, Box<Tree<Ext>>, FanBehavior),
 
-    SignalRequest(oneshot::Sender<(ArcStr, Box<Tree<Ext>>)>),
+    SignalRequest(oneshot::Sender<(Atom, Box<Tree<Ext>>)>),
 
     Primitive(Primitive),
     IntRequest(oneshot::Sender<BigInt>),

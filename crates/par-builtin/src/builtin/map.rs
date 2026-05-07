@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use crate::builtin::list::readback_list;
-use arcstr::literal;
+use par_runtime::atom::sym;
 use par_runtime::readback::{Data, Handle};
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -46,52 +46,52 @@ async fn map_from_list(mut handle: Handle) {
 
 async fn provide_map(mut handle: Handle, mut map: BTreeMap<Data, Handle>) {
     loop {
-        match handle.case().await.as_str() {
-            "size" => {
+        match handle.case().await {
+            sym::size => {
                 handle.send().provide_nat(map.len().into());
                 continue;
             }
-            "keys" => {
+            sym::keys => {
                 let mut keys = handle.send();
                 for key in map.keys() {
-                    keys.signal(literal!("item"));
+                    keys.signal(sym::item);
                     keys.send_data(key);
                 }
-                keys.signal(literal!("end"));
+                keys.signal(sym::end);
                 keys.break_();
                 continue;
             }
-            "list" => {
+            sym::list => {
                 for (key, value) in map.into_iter() {
-                    handle.signal(literal!("item"));
+                    handle.signal(sym::item);
                     let mut pair = handle.send();
                     pair.send_data(&key);
                     pair.link(value);
                 }
-                handle.signal(literal!("end"));
+                handle.signal(sym::end);
                 return handle.break_();
             }
-            "entry" => {
+            sym::entry => {
                 let key = handle.receive_data().await;
                 let removed = map.remove(&key);
                 handle.send().concurrently(|mut handle| async move {
                     match removed {
                         Some(value) => {
-                            handle.signal(literal!("some"));
+                            handle.signal(sym::some);
                             handle.link(value);
                         }
                         None => {
-                            handle.signal(literal!("none"));
+                            handle.signal(sym::none);
                             handle.break_();
                         }
                     }
                 });
-                match handle.case().await.as_str() {
-                    "put" => {
+                match handle.case().await {
+                    sym::put => {
                         let new_value = handle.receive();
                         map.insert(key, new_value);
                     }
-                    "delete" => {}
+                    sym::delete => {}
                     _ => unreachable!(),
                 }
                 continue;

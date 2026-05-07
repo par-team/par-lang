@@ -10,9 +10,9 @@ use crate::builtin::{
 };
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
-use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::{atom::sym, primitive::ParString};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -50,11 +50,11 @@ core_string_external!("ToUpper", string_to_upper);
 async fn string_builder(mut handle: Handle) {
     let mut buf = String::new();
     loop {
-        match handle.case().await.as_str() {
-            "add" => {
+        match handle.case().await {
+            sym::add => {
                 buf += handle.receive().string().await.as_str();
             }
-            "build" => {
+            sym::build => {
                 handle.provide_string(ParString::from(buf));
                 break;
             }
@@ -112,8 +112,8 @@ pub(super) enum StringPattern {
 
 impl StringPattern {
     pub(super) async fn readback(mut handle: Handle) -> Box<Self> {
-        match handle.case().await.as_str() {
-            "and" => {
+        match handle.case().await {
+            sym::and => {
                 // .and List<self>
                 let mut conj = Box::new(Self::All);
                 let patterns =
@@ -123,7 +123,7 @@ impl StringPattern {
                 }
                 conj
             }
-            "concat" => {
+            sym::concat => {
                 // .concat List<self>
                 let mut conc = Box::new(Self::Empty);
                 let patterns =
@@ -133,32 +133,32 @@ impl StringPattern {
                 }
                 conc
             }
-            "empty" => {
+            sym::empty => {
                 // .empty!
                 handle.continue_();
                 Box::new(Self::Empty)
             }
-            "min" => {
+            sym::min => {
                 // .min Nat
                 let n = handle.nat().await;
                 Box::new(Self::Min(n))
             }
-            "max" => {
+            sym::max => {
                 // .max Nat
                 let n = handle.nat().await;
                 Box::new(Self::Max(n))
             }
-            "non" => {
+            sym::non => {
                 // .non Char.Class
                 let class = CharClass::readback(handle).await;
                 Box::new(Self::Non(class))
             }
-            "one" => {
+            sym::one => {
                 // .one Char.Class
                 let class = CharClass::readback(handle).await;
                 Box::new(Self::One(class))
             }
-            "or" => {
+            sym::or => {
                 // .or List<self>,
                 let mut disj = Box::new(Self::Nil);
                 let patterns =
@@ -168,17 +168,17 @@ impl StringPattern {
                 }
                 disj
             }
-            "repeat" => {
+            sym::repeat => {
                 // .repeat self
                 let p = Box::pin(Self::readback(handle)).await;
                 Box::new(Self::Repeat(p))
             }
-            "repeat1" => {
+            sym::repeat1 => {
                 // .repeat1 self
                 let p = Box::pin(Self::readback(handle)).await;
                 Box::new(Self::Repeat1(p))
             }
-            "str" => {
+            sym::str => {
                 // .str String
                 let s = handle.string().await;
                 Box::new(Self::Str(s))

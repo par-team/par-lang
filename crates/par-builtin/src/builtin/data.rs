@@ -1,5 +1,5 @@
 //package: core
-use arcstr::literal;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -30,9 +30,9 @@ async fn data_compare(mut handle: Handle) {
     let left = pair.receive_data().await;
     let right = pair.data().await;
     match left.cmp(&right) {
-        std::cmp::Ordering::Less => handle.signal(literal!("less")),
-        std::cmp::Ordering::Equal => handle.signal(literal!("equal")),
-        std::cmp::Ordering::Greater => handle.signal(literal!("greater")),
+        std::cmp::Ordering::Less => handle.signal(sym::less),
+        std::cmp::Ordering::Equal => handle.signal(sym::equal),
+        std::cmp::Ordering::Greater => handle.signal(sym::greater),
     }
     handle.break_();
 }

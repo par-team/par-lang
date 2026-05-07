@@ -1,9 +1,9 @@
 //package: core
-use arcstr::literal;
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -84,11 +84,11 @@ async fn int_range(mut handle: Handle) {
 
     let mut i = lo;
     while i < hi {
-        handle.signal(literal!("item"));
+        handle.signal(sym::item);
         handle.send().provide_int(i.clone());
         i += 1;
     }
-    handle.signal(literal!("end"));
+    handle.signal(sym::end);
     handle.break_();
 }
 
@@ -96,11 +96,11 @@ async fn int_from_string(mut handle: Handle) {
     let string = handle.receive().string().await;
     match string.as_str().parse::<BigInt>() {
         Ok(num) => {
-            handle.signal(literal!("some"));
+            handle.signal(sym::some);
             handle.provide_int(num);
         }
         Err(_) => {
-            handle.signal(literal!("none"));
+            handle.signal(sym::none);
             handle.break_();
         }
     };

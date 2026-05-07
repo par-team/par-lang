@@ -1,9 +1,9 @@
-use arcstr::literal;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::atom::sym;
 use par_runtime::readback::Handle;
 use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
@@ -66,9 +66,9 @@ async fn char_is(mut handle: Handle) {
     let ch = handle.receive().char().await;
     let class = CharClass::readback(handle.receive()).await;
     if class.contains(ch) {
-        handle.signal(literal!("true"));
+        handle.signal(sym::true_);
     } else {
-        handle.signal(literal!("false"));
+        handle.signal(sym::false_);
     }
     handle.break_();
 }
@@ -86,32 +86,32 @@ pub(super) enum CharClass {
 
 impl CharClass {
     pub(super) async fn readback(mut handle: Handle) -> Self {
-        match handle.case().await.as_str() {
-            "any" => {
+        match handle.case().await {
+            sym::any => {
                 handle.continue_();
                 Self::Any
             }
-            "ascii" => match handle.case().await.as_str() {
-                "alpha" => {
+            sym::ascii => match handle.case().await {
+                sym::alpha => {
                     handle.continue_();
                     Self::AsciiAlpha
                 }
-                "alphanum" => {
+                sym::alphanum => {
                     handle.continue_();
                     Self::AsciiAlphanum
                 }
-                "any" => {
+                sym::any => {
                     handle.continue_();
                     Self::AsciiAny
                 }
-                "digit" => {
+                sym::digit => {
                     handle.continue_();
                     Self::AsciiDigit
                 }
                 _ => unreachable!(),
             },
-            "char" => Self::Char(handle.char().await),
-            "whitespace" => {
+            sym::char => Self::Char(handle.char().await),
+            sym::whitespace => {
                 handle.continue_();
                 Self::Whitespace
             }

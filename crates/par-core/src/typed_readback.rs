@@ -1,9 +1,9 @@
 use crate::frontend::{PrimitiveType, Type, TypeDefs};
 use crate::frontend_impl::language::{LocalName, Universal};
 use crate::location::Span;
-use arcstr::ArcStr;
 use bytes::Bytes;
 use num_bigint::{BigInt, BigUint};
+use par_runtime::atom::Atom;
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
 
@@ -26,8 +26,8 @@ pub enum TypedReadback {
 
     Times(TypedHandle, TypedHandle),
     Par(TypedHandle, TypedHandle),
-    Either(ArcStr, TypedHandle),
-    Choice(Vec<ArcStr>, Box<dyn Send + FnOnce(ArcStr) -> TypedHandle>),
+    Either(Atom, TypedHandle),
+    Choice(Vec<Atom>, Box<dyn Send + FnOnce(Atom) -> TypedHandle>),
 
     Break,
     Continue,

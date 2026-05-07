@@ -1,10 +1,10 @@
 use super::reducer::{NetHandle, ReducerMessage};
 use super::runtime::{ExternalFn, Global, GlobalCont, Linear, Node, PackagePtr, Value};
+use crate::atom::Atom;
 use crate::data::Data;
 use crate::flat::arena::{Arena, Index};
 use crate::flat::runtime::Linker;
 use crate::primitive::{Number, Primitive};
-use arcstr::ArcStr;
 use futures::task::FutureObj;
 use std::future::Future;
 use std::mem;
@@ -216,31 +216,27 @@ impl Handle {
         self.new(right).number().await
     }
 
-    pub fn signal(&mut self, chosen: ArcStr) {
+    pub fn signal(&mut self, chosen: Atom) {
         let (payload, payload_h) = linked_pair();
-        let chosen = self
-            .linker
-            .arena
-            .interned(chosen.as_str())
-            .unwrap_or_else(|| {
-                // This happens when we send a signal that the program doesn't have
-                // and that also isn't present in the types
-                // It might still be handled by an "else" branch then
-                eprintln!(
-                    "Attempted to signal a non-interned string: `{}`
+        let chosen = self.linker.arena.interned(&chosen).unwrap_or_else(|| {
+            // This happens when we send a signal that the program doesn't have
+            // and that also isn't present in the types
+            // It might still be handled by an "else" branch then
+            eprintln!(
+                "Attempted to signal a non-interned string: `{}`
                 This is most likely type error with built in definitions.
                 Sending an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            });
+                chosen
+            );
+            self.linker.arena.empty_string()
+        });
         let either = Node::Linear(Linear::Value(Box::new(Value::Either(chosen, payload))));
         let choice = core::mem::replace(&mut self.node, Box::new(payload_h));
         self.linker.link(choice, Box::new(either));
     }
 
-    pub async fn case(&mut self) -> ArcStr {
+    pub async fn case(&mut self) -> Atom {
         let linker = self.linker.clone();
 
         let Value::Either(name, payload) = (*self).destruct().await else {
@@ -337,20 +333,17 @@ impl Handle {
         }
     }
 
-    fn intern_signal(&self, chosen: &ArcStr) -> Index<Linked, str> {
-        self.linker
-            .arena
-            .interned(chosen.as_str())
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "Attempted to provide non-interned signal data: `{}`
+    fn intern_signal(&self, chosen: &Atom) -> Index<Linked, str> {
+        self.linker.arena.interned(chosen).unwrap_or_else(|| {
+            eprintln!(
+                "Attempted to provide non-interned signal data: `{}`
                 This is most likely a type error with built in definitions.
                 Providing an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            })
+                chosen
+            );
+            self.linker.arena.empty_string()
+        })
     }
 
     async fn data_from_value(&self, value: Value<Node<Linked>, Linked>) -> Result<Data> {
