@@ -215,8 +215,8 @@ to that branch’s expression.</li>
 <p>Par’s “sum type” is <a href="../types/either.html"><code>either</code></a>. If you just want to match an
 <code>either</code> without extra predicates, you can always use <code>.case</code>. <code>if</code> becomes
 useful once you want to match <em>and</em> filter while keeping bindings.</p>
-<p>Two common <code>either</code> types you’ll see everywhere are <code>Result</code> and <code>Option</code>:</p>
-<pre><code class="language-par">type Result&lt;e, a&gt; = either {
+<p>Two common <code>either</code> types you’ll see everywhere are <code>Try</code> and <code>Option</code>:</p>
+<pre><code class="language-par">type Try&lt;e, a&gt; = either {
   .err e,
   .ok a,
 }
@@ -292,7 +292,7 @@ matches any present value and returns <code>"non-zero"</code>.</li>
 <li>If both branches fail, <code>count</code> must be <code>.none!</code>, so <code>else</code> returns <code>"missing"</code>.</li>
 </ul>
 <h3 id="and-with-two-bindings"><a class="header" href="#and-with-two-bindings"><code>and</code> with two bindings</a></h3>
-<pre><code class="language-par">dec AddOk : [Result&lt;String, Int&gt;, Result&lt;String, Int&gt;] Int
+<pre><code class="language-par">dec AddOk : [Try&lt;String, Int&gt;, Try&lt;String, Int&gt;] Int
 def AddOk = [left, right] if {
   left is .ok a and right is .ok b =&gt; a + b,
   else =&gt; 0,
@@ -313,7 +313,7 @@ fails. A good mental model is:</p>
 <p>try the left condition; if it fails, try the right condition</p>
 </blockquote>
 <p>One common use for <code>or</code> is “fallback” matching:</p>
-<pre><code class="language-par">dec PickOk : [Result&lt;String, String&gt;, Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec PickOk : [Try&lt;String, String&gt;, Try&lt;String, String&gt;] String
 def PickOk = [primary, fallback] if {
   primary is .ok value or fallback is .ok value =&gt; value,
   else =&gt; "&lt;missing&gt;",
@@ -331,7 +331,7 @@ guaranteed to exist after the <code>or</code>.</p>
 <h2 id="grouping-conditions-with---"><a class="header" href="#grouping-conditions-with---">Grouping conditions with <code>{ ... }</code></a></h2>
 <p><code>not</code>, <code>and</code>, and <code>or</code> have precedence (<code>not</code> &gt; <code>and</code> &gt; <code>or</code>). To make
 grouping explicit, you can use <code>{ ... }</code> <em>inside a condition</em>:</p>
-<pre><code class="language-par">dec EmptyOrSpace : [Result&lt;String, String&gt;] Bool
+<pre><code class="language-par">dec EmptyOrSpace : [Try&lt;String, String&gt;] Bool
 def EmptyOrSpace = [result] if {
   result is .ok s and { s == "" or s == " " }
     =&gt; .true!,
@@ -344,7 +344,7 @@ def EmptyOrSpace = [result] if {
 <p><code>not</code> is different from most languages here: it flips success and failure, and
 that flip also affects bindings. Any bindings introduced inside the condition
 end up on the <em>failure</em> path of <code>not</code>.</p>
-<pre><code class="language-par">dec UseOrError : [Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec UseOrError : [Try&lt;String, String&gt;] String
 def UseOrError = [result] if {
   not result is .ok value =&gt; "error",
   else =&gt; value,
@@ -359,7 +359,7 @@ def UseOrError = [result] if {
 </ul>
 <p>Because <code>or</code> only evaluates its right side when the left side fails, you can
 combine <code>not</code> and <code>or</code> in a way that “unlocks” bindings on the right:</p>
-<pre><code class="language-par">dec NonEmptyOrError : [Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec NonEmptyOrError : [Try&lt;String, String&gt;] String
 def NonEmptyOrError = [result] if {
   not result is .ok str or str == "" =&gt; "bad input",
   else =&gt; str,
@@ -373,7 +373,7 @@ def NonEmptyOrError = [result] if {
 <li>That is why <code>str</code> is available on the right side and in the <code>else</code> branch.</li>
 </ul>
 <p>This also works with grouped conditions:</p>
-<pre><code class="language-par">dec AddBothOrZero : [Result&lt;String, Int&gt;, Result&lt;String, Int&gt;] Int
+<pre><code class="language-par">dec AddBothOrZero : [Try&lt;String, Int&gt;, Try&lt;String, Int&gt;] Int
 def AddBothOrZero = [left, right] if {
   not { left is .ok x and right is .ok y } =&gt; 0,
   else =&gt; x + y,
@@ -415,7 +415,7 @@ fall through after the <code>if</code>.</p>
 <p>If you haven’t seen process syntax yet, start with <a href="../process_syntax.html">The Process Syntax</a>.
 In short: <code>do { ... } in expr</code> runs the process inside the braces, then
 continues as the expression after <code>in</code>.</p>
-<pre><code class="language-par">dec Show : [Result&lt;String, String&gt;] !
+<pre><code class="language-par">dec Show : [Try&lt;String, String&gt;] !
 def Show = [result] do {
   if {
     result is .ok msg =&gt; { Debug.Log(msg) }
@@ -447,7 +447,7 @@ def DefaultIfEmpty = [text] chan out {
 <p>We use <code>chan</code> here so we can return early: linking <code>out &lt;&gt; "&lt;empty&gt;"</code> ends the
 process immediately.</p>
 <p>A common style is to use a single-condition <code>if</code> as a guard:</p>
-<pre><code class="language-par">dec LogNonEmptyOk : [Result&lt;String, String&gt;] !
+<pre><code class="language-par">dec LogNonEmptyOk : [Try&lt;String, String&gt;] !
 def LogNonEmptyOk = [result] chan exit {
   if not result is .ok str or str == "" =&gt; { exit! }
   Debug.Log(str)

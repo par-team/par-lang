@@ -534,7 +534,7 @@ referenced directly.</p>
 <h3 id="built-in-packages"><a class="header" href="#built-in-packages">Built-in packages</a></h3>
 <p>Every package automatically depends on two built-in packages:</p>
 <ul>
-<li><code>@core</code> for core types and data structures such as <code>String</code>, <code>List</code>, <code>Map</code>, <code>Result</code>, and so on.</li>
+<li><code>@core</code> for core types and data structures such as <code>String</code>, <code>List</code>, <code>Map</code>, <code>Try</code>, and so on.</li>
 <li><code>@basic</code> for simple I/O such as <code>Console</code>, <code>Os</code>, and <code>Http</code>.</li>
 </ul>
 <p>These are <strong>implicit dependencies,</strong> but <strong>not implicit imports.</strong> Their modules are available to import from,
@@ -955,13 +955,13 @@ def Hello = String.Builder
   .add("world!")
   .build
 </code></pre>
-<p>They can also be parsed through <code>String.Parser</code>. The parser is a larger tool, useful when you want
+<p>They can also be parsed through <code>String.Parse</code>. The parser is a larger tool, useful when you want
 to read characters or match patterns:</p>
 <pre><code class="language-par">module Main
 
 import @core/String
 
-def ParserFromText = String.Parser("abc")
+def ParserFromText = String.Parse("abc")
 </code></pre>
 <h3 id="corechar-and-corebyte"><a class="header" href="#corechar-and-corebyte"><code>@core/Char</code> and <code>@core/Byte</code></a></h3>
 <p><code>Char.Is</code> and <code>Byte.Is</code> check membership in character or byte classes:</p>
@@ -3843,14 +3843,14 @@ those foundations. Some bits of syntax, though, exist purely to make common
 patterns less noisy.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h1>
 <p>Programs that interact with the real world must handle errors gracefully. Files don’t exist, networks disconnect, users type unexpected input. Most errors occur at I/O boundaries where your program meets external systems beyond its control.</p>
-<p>Par takes a structured approach to error handling that builds on its linear type system. At its core, Par uses explicit Result types — but adds lightweight syntax sugar that makes working with errors feel natural while keeping the underlying semantics transparent.</p>
+<p>Par takes a structured approach to error handling that builds on its linear type system. At its core, Par uses explicit Try types — but adds lightweight syntax sugar that makes working with errors feel natural while keeping the underlying semantics transparent.</p>
 <h2 id="why-par-needs-unique-error-handling"><a class="header" href="#why-par-needs-unique-error-handling">Why Par Needs Unique Error Handling</a></h2>
 <p>Par’s linear type system together with its concurrent evaluation creates a unique situation for error handling. Traditional approaches don’t work for Par:</p>
-<p><strong>Exceptions</strong> propagate across call stacks, unwinding through multiple function calls automatically. But Par’s concurrent execution model has no call stacks! Instead, it has processes that communicate via channels. Any error must be explicitly passed via a channel, making something like a <code>Result</code> type necessary for error handling.</p>
+<p><strong>Exceptions</strong> propagate across call stacks, unwinding through multiple function calls automatically. But Par’s concurrent execution model has no call stacks! Instead, it has processes that communicate via channels. Any error must be explicitly passed via a channel, making something like a <code>Try</code> type necessary for error handling.</p>
 <p><strong>Rust’s <code>?</code> operator</strong> works by dropping remaining owned values when propagating errors. This implicit cleanup doesn’t translate to Par’s linear types, where each value must be consumed according to its specific type and context.</p>
-<p>Par needs error handling that makes cleanup fully explicit while remaining convenient to use. The <code>try</code>/<code>catch</code>/<code>throw</code> syntax sugar introduced here achieves this balance — borrowing familiar keywords from exception handling while operating very differently. Unlike traditional exceptions, Par’s error handling is purely local syntax sugar over <code>Result</code> types, with no hidden control flow or stack unwinding.</p>
+<p>Par needs error handling that makes cleanup fully explicit while remaining convenient to use. The <code>try</code>/<code>catch</code>/<code>throw</code> syntax sugar introduced here achieves this balance — borrowing familiar keywords from exception handling while operating very differently. Unlike traditional exceptions, Par’s error handling is purely local syntax sugar over <code>Try</code> types, with no hidden control flow or stack unwinding.</p>
 <h2 id="working-with-files-error-handling-without-sugar"><a class="header" href="#working-with-files-error-handling-without-sugar">Working with Files: Error Handling Without Sugar</a></h2>
-<p>Let’s start with a concrete example using Par’s file system operations through the built-in <code>@basic/Os</code> module. The <code>Os.Path</code> type provides methods for working with the filesystem — creating files, reading directories, and so on. Most of these operations can fail, so they return <code>Result</code> values.</p>
+<p>Let’s start with a concrete example using Par’s file system operations through the built-in <code>@basic/Os</code> module. The <code>Os.Path</code> type provides methods for working with the filesystem — creating files, reading directories, and so on. Most of these operations can fail, so they return <code>Try</code> values.</p>
 <p>Here’s what error handling looks like without any syntax sugar. We’ll write a program that creates a log file and writes some entries to it:</p>
 <pre><code class="language-par">module Main
 
@@ -3991,7 +3991,7 @@ def Main: ! = chan exit {
 </code></pre>
 <p>Significantly shorter and more readable! The error handling is declared once and applies to all subsequent operations.</p>
 <h2 id="how-trycatchthrow-work-in-process-syntax"><a class="header" href="#how-trycatchthrow-work-in-process-syntax">How <code>try</code>/<code>catch</code>/<code>throw</code> Work in Process Syntax</a></h2>
-<p>Par’s error handling sugar is built around small, local keywords that desugar to explicit <code>Result</code> handling. Let’s understand how they work.</p>
+<p>Par’s error handling sugar is built around small, local keywords that desugar to explicit <code>Try</code> handling. Let’s understand how they work.</p>
 <h3 id="the-catch-statement"><a class="header" href="#the-catch-statement">The <code>catch</code> Statement</a></h3>
 <p>Before you can use <code>try</code> or <code>throw</code>, you must define a <code>catch</code> block in the same process. This restriction is crucial — the corresponding <code>try</code> and <code>throw</code> commands must be in the same sequential process as their <code>catch</code>, not in nested processes or expressions.</p>
 <pre><code class="language-par">catch &lt;pattern&gt; =&gt; {
@@ -4029,15 +4029,15 @@ exit!
 </code></pre>
 <p><code>throw</code> is useful for creating custom error conditions in your logic.</p>
 <h2 id="the-try-patterns-and-commands"><a class="header" href="#the-try-patterns-and-commands">The <code>try</code> Patterns and Commands</a></h2>
-<p>The real power comes from <code>try</code>, which provides conditional error handling based on <code>Result</code> values:</p>
-<pre><code class="language-par">type Result&lt;e, a&gt; = either {
+<p>The real power comes from <code>try</code>, which provides conditional error handling based on <code>Try</code> values:</p>
+<pre><code class="language-par">type Try&lt;e, a&gt; = either {
   .err e,
   .ok a,
 }
 </code></pre>
 <p><code>try</code> appears in two contexts: <em>patterns</em> and <em>commands.</em></p>
 <h3 id="try-in-commands"><a class="header" href="#try-in-commands"><code>.try</code> in Commands</a></h3>
-<p>The <code>.try</code> postfix transforms verbose <code>Result</code> case analysis into clean linear code. Remember our original verbose version:</p>
+<p>The <code>.try</code> postfix transforms verbose <code>Try</code> case analysis into clean linear code. Remember our original verbose version:</p>
 <pre><code class="language-par">writer.write("[INFO] First new log\n").case {
   .err e =&gt; {
     console.print(e)
@@ -4050,7 +4050,7 @@ exit!
 <p>With <code>.try</code>, this becomes:</p>
 <pre><code class="language-par">writer.write("[INFO] First new log\n").try
 </code></pre>
-<p>The <code>.try</code> postfix desugars any command or expression returning a <code>Result</code>:</p>
+<p>The <code>.try</code> postfix desugars any command or expression returning a <code>Try</code>:</p>
 <pre><code class="language-par">variable.try
 </code></pre>
 <p>becomes:</p>
@@ -4063,8 +4063,8 @@ exit!
 </code></pre>
 <p>This works for more complex command chains too. Consider this type for polling data with possible errors:</p>
 <pre><code class="language-par">type Poll&lt;e, a&gt; = iterative choice {
-  .close =&gt; Result&lt;e, !&gt;,
-  .next =&gt; Result&lt;e, (a) self&gt;,
+  .close =&gt; Try&lt;e, !&gt;,
+  .next =&gt; Try&lt;e, (a) self&gt;,
 }
 </code></pre>
 <p>You can poll an element and handle errors seamlessly:</p>
@@ -4106,10 +4106,10 @@ writer.case {
 <pre><code class="language-par">type Console = iterative choice {
   .close =&gt; !,
   .print(String) =&gt; self,
-  .prompt(String) =&gt; (Result&lt;!, String&gt;) self,
+  .prompt(String) =&gt; (Try&lt;!, String&gt;) self,
 }
 </code></pre>
-<p>The <code>.prompt</code> method returns a <code>Result</code> while keeping the console alive for more operations:</p>
+<p>The <code>.prompt</code> method returns a <code>Try</code> while keeping the console alive for more operations:</p>
 <pre><code class="language-par">let console = Console.Open
 
 catch ! =&gt; {
@@ -4127,7 +4127,7 @@ console.prompt("What's your address?")[try address]
 </code></pre>
 <p>The same concurrent evaluation restrictions apply, with an additional constraint: <code>try</code>/<code>throw</code> can only be used before any part of the result is constructed.</p>
 <p>This is invalid because <code>result.try</code> appears in a nested expression, which runs as a separate concurrent process:</p>
-<pre><code class="language-par">// result : Result&lt;String, Int&gt;
+<pre><code class="language-par">// result : Try&lt;String, Int&gt;
 catch e =&gt; .err e in
 .ok {result.try + 1}
 </code></pre>
@@ -4236,22 +4236,25 @@ ProcessTogether(resource, otherData)
 import {
   @basic/Os
   @core/Bytes
-  @core/Result
+  @core/Try
 }
 
-dec ReadAll : [Os.Path] Result&lt;Os.Error, Bytes&gt;
+dec ReadAll : [Os.Path] Try&lt;Os.Error, Bytes&gt;
 def ReadAll = [path] chan return {
   catch e =&gt; { return &lt;&gt; .err e }
   let try reader = Os.OpenFile(path)
-  let parser = Bytes.ParserFromReader(reader)
-  let try contents = parser.remainder
+  let parser = Bytes.ParseReader(reader)
+  let try contents = parser.begin.case {
+    .empty! =&gt; .ok &lt;&lt;&gt;&gt;,
+    .some parser =&gt; parser.remainder,
+  }
   return &lt;&gt; .ok contents
 }
 </code></pre>
-<p>This function uses <code>Bytes.ParserFromReader</code> to convert the chunked <code>Bytes.Reader</code> from <code>path.openFile</code> into a parser that provides a convenient <code>.remainder</code> method for reading all contents at once. The <code>catch</code> block propagates any errors by linking them into an <code>.err</code> result, while success links the contents into an <code>.ok</code> result.</p>
+<p>This function uses <code>Bytes.ParseReader</code> to convert the chunked <code>Bytes.Reader</code> from <code>path.openFile</code> into a parser, then reads the remaining contents from the non-empty parser branch. The <code>catch</code> block propagates any errors by linking them into an <code>.err</code> result, while success links the contents into an <code>.ok</code> result.</p>
 <h2 id="providing-defaults-with-default"><a class="header" href="#providing-defaults-with-default">Providing defaults with <code>default</code></a></h2>
 <p>Sometimes you don’t want to branch on a missing optional value — you want to replace it with a fallback and keep going. The <code>default</code> sugar does exactly that for <code>Option</code> values.</p>
-<p>This is separate from <code>try</code>/<code>catch</code>: <code>try</code> unwraps <code>Result</code> values and propagates <code>.err</code>, while <code>default</code> unwraps <code>Option</code> values and replaces <code>.none!</code>. If you have a <code>Result</code> and want to ignore the error, convert it first with <code>Result.ToOption</code>.</p>
+<p>This is separate from <code>try</code>/<code>catch</code>: <code>try</code> unwraps <code>Try</code> values and propagates <code>.err</code>, while <code>default</code> unwraps <code>Option</code> values and replaces <code>.none!</code>. If you have a <code>Try</code> and want to ignore the error, convert it first with <code>Try.ToOption</code>.</p>
 <ul>
 <li>
 <p>Postfix form (expressions/commands):</p>
@@ -4261,8 +4264,8 @@ let r2: Option&lt;Int&gt; = .none!
 let x = r1.default(0)   // x = 7
 let y = r2.default(0)   // y = 0
 
-let result: Result&lt;String, Int&gt; = .err "not a number"
-let option = Result.ToOption(result)
+let result: Try&lt;String, Int&gt; = .err "not a number"
+let option = Try.ToOption(result)
 let z = option.default(0)  // z = 0
 </code></pre>
 <p>This desugars to a <code>.case</code> on the subject: on <code>.some</code> it continues with the unwrapped value, on <code>.none</code> it evaluates the fallback expression and uses that value instead. Because it is a local rewrite, it can be used directly in <code>let</code> bindings and other expression contexts.</p>
@@ -4344,8 +4347,8 @@ to that branch’s expression.</li>
 <p>Par’s “sum type” is <a href="quality_of_life/../types/either.html"><code>either</code></a>. If you just want to match an
 <code>either</code> without extra predicates, you can always use <code>.case</code>. <code>if</code> becomes
 useful once you want to match <em>and</em> filter while keeping bindings.</p>
-<p>Two common <code>either</code> types you’ll see everywhere are <code>Result</code> and <code>Option</code>:</p>
-<pre><code class="language-par">type Result&lt;e, a&gt; = either {
+<p>Two common <code>either</code> types you’ll see everywhere are <code>Try</code> and <code>Option</code>:</p>
+<pre><code class="language-par">type Try&lt;e, a&gt; = either {
   .err e,
   .ok a,
 }
@@ -4421,7 +4424,7 @@ matches any present value and returns <code>"non-zero"</code>.</li>
 <li>If both branches fail, <code>count</code> must be <code>.none!</code>, so <code>else</code> returns <code>"missing"</code>.</li>
 </ul>
 <h3 id="and-with-two-bindings"><a class="header" href="#and-with-two-bindings"><code>and</code> with two bindings</a></h3>
-<pre><code class="language-par">dec AddOk : [Result&lt;String, Int&gt;, Result&lt;String, Int&gt;] Int
+<pre><code class="language-par">dec AddOk : [Try&lt;String, Int&gt;, Try&lt;String, Int&gt;] Int
 def AddOk = [left, right] if {
   left is .ok a and right is .ok b =&gt; a + b,
   else =&gt; 0,
@@ -4442,7 +4445,7 @@ fails. A good mental model is:</p>
 <p>try the left condition; if it fails, try the right condition</p>
 </blockquote>
 <p>One common use for <code>or</code> is “fallback” matching:</p>
-<pre><code class="language-par">dec PickOk : [Result&lt;String, String&gt;, Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec PickOk : [Try&lt;String, String&gt;, Try&lt;String, String&gt;] String
 def PickOk = [primary, fallback] if {
   primary is .ok value or fallback is .ok value =&gt; value,
   else =&gt; "&lt;missing&gt;",
@@ -4460,7 +4463,7 @@ guaranteed to exist after the <code>or</code>.</p>
 <h2 id="grouping-conditions-with---"><a class="header" href="#grouping-conditions-with---">Grouping conditions with <code>{ ... }</code></a></h2>
 <p><code>not</code>, <code>and</code>, and <code>or</code> have precedence (<code>not</code> &gt; <code>and</code> &gt; <code>or</code>). To make
 grouping explicit, you can use <code>{ ... }</code> <em>inside a condition</em>:</p>
-<pre><code class="language-par">dec EmptyOrSpace : [Result&lt;String, String&gt;] Bool
+<pre><code class="language-par">dec EmptyOrSpace : [Try&lt;String, String&gt;] Bool
 def EmptyOrSpace = [result] if {
   result is .ok s and { s == "" or s == " " }
     =&gt; .true!,
@@ -4473,7 +4476,7 @@ def EmptyOrSpace = [result] if {
 <p><code>not</code> is different from most languages here: it flips success and failure, and
 that flip also affects bindings. Any bindings introduced inside the condition
 end up on the <em>failure</em> path of <code>not</code>.</p>
-<pre><code class="language-par">dec UseOrError : [Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec UseOrError : [Try&lt;String, String&gt;] String
 def UseOrError = [result] if {
   not result is .ok value =&gt; "error",
   else =&gt; value,
@@ -4488,7 +4491,7 @@ def UseOrError = [result] if {
 </ul>
 <p>Because <code>or</code> only evaluates its right side when the left side fails, you can
 combine <code>not</code> and <code>or</code> in a way that “unlocks” bindings on the right:</p>
-<pre><code class="language-par">dec NonEmptyOrError : [Result&lt;String, String&gt;] String
+<pre><code class="language-par">dec NonEmptyOrError : [Try&lt;String, String&gt;] String
 def NonEmptyOrError = [result] if {
   not result is .ok str or str == "" =&gt; "bad input",
   else =&gt; str,
@@ -4502,7 +4505,7 @@ def NonEmptyOrError = [result] if {
 <li>That is why <code>str</code> is available on the right side and in the <code>else</code> branch.</li>
 </ul>
 <p>This also works with grouped conditions:</p>
-<pre><code class="language-par">dec AddBothOrZero : [Result&lt;String, Int&gt;, Result&lt;String, Int&gt;] Int
+<pre><code class="language-par">dec AddBothOrZero : [Try&lt;String, Int&gt;, Try&lt;String, Int&gt;] Int
 def AddBothOrZero = [left, right] if {
   not { left is .ok x and right is .ok y } =&gt; 0,
   else =&gt; x + y,
@@ -4544,7 +4547,7 @@ fall through after the <code>if</code>.</p>
 <p>If you haven’t seen process syntax yet, start with <a href="quality_of_life/../process_syntax.html">The Process Syntax</a>.
 In short: <code>do { ... } in expr</code> runs the process inside the braces, then
 continues as the expression after <code>in</code>.</p>
-<pre><code class="language-par">dec Show : [Result&lt;String, String&gt;] !
+<pre><code class="language-par">dec Show : [Try&lt;String, String&gt;] !
 def Show = [result] do {
   if {
     result is .ok msg =&gt; { Debug.Log(msg) }
@@ -4576,7 +4579,7 @@ def DefaultIfEmpty = [text] chan out {
 <p>We use <code>chan</code> here so we can return early: linking <code>out &lt;&gt; "&lt;empty&gt;"</code> ends the
 process immediately.</p>
 <p>A common style is to use a single-condition <code>if</code> as a guard:</p>
-<pre><code class="language-par">dec LogNonEmptyOk : [Result&lt;String, String&gt;] !
+<pre><code class="language-par">dec LogNonEmptyOk : [Try&lt;String, String&gt;] !
 def LogNonEmptyOk = [result] chan exit {
   if not result is .ok str or str == "" =&gt; { exit! }
   Debug.Log(str)

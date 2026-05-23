@@ -350,13 +350,13 @@ def Hello = String.Builder
   .add("world!")
   .build
 </code></pre>
-<p>They can also be parsed through <code>String.Parser</code>. The parser is a larger tool, useful when you want
+<p>They can also be parsed through <code>String.Parse</code>. The parser is a larger tool, useful when you want
 to read characters or match patterns:</p>
 <pre><code class="language-par">module Main
 
 import @core/String
 
-def ParserFromText = String.Parser("abc")
+def ParserFromText = String.Parse("abc")
 </code></pre>
 <h3 id="corechar-and-corebyte"><a class="header" href="#corechar-and-corebyte"><code>@core/Char</code> and <code>@core/Byte</code></a></h3>
 <p><code>Char.Is</code> and <code>Byte.Is</code> check membership in character or byte classes:</p>
