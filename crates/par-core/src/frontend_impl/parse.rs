@@ -20,7 +20,6 @@ use crate::frontend_impl::{
     types::Type,
 };
 use crate::location::{FileName, Point, Span, Spanning};
-use arcstr::ArcStr;
 use bytes::Bytes;
 use core::fmt::Display;
 use miette::{SourceOffset, SourceSpan};
@@ -1963,7 +1962,7 @@ fn template_part(input: &mut Input) -> Result<TemplatePart<Unresolved>> {
     alt((
         t(TokenKind::TemplateText).map(|token| {
             // validated in lexer
-            TemplatePart::Literal(ArcStr::from(unescape_template_text(token.raw).unwrap()))
+            TemplatePart::Literal(ParString::from(unescape_template_text(token.raw).unwrap()))
         }),
         (
             t(TokenKind::TemplateStringStart),

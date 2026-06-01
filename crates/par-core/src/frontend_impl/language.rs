@@ -16,7 +16,6 @@ use crate::{
     frontend_impl::types::error::labels_from_span,
     location::{Span, Spanning},
 };
-use arcstr::ArcStr;
 use par_runtime::atom::{Atom, sym};
 use par_runtime::pkgid::PackageId;
 use par_runtime::primitive::{ParString, Primitive};
@@ -331,7 +330,7 @@ pub struct ComparisonStep<S> {
 
 #[derive(Clone, Debug)]
 pub enum TemplatePart<S> {
-    Literal(ArcStr),
+    Literal(ParString),
     StringExpr(Expression<S>),
     DataExpr(Expression<S>),
 }
@@ -1083,16 +1082,16 @@ impl Context {
     }
 
     fn desugar_template_expression(parts: &[TemplatePart<Unresolved>]) -> Expression<Unresolved> {
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(parts.len());
         let mut has_interpolation = false;
 
         for part in parts {
             match part {
-                TemplatePart::Literal(value) if value.is_empty() => {}
+                TemplatePart::Literal(value) if value.as_str().is_empty() => {}
                 TemplatePart::Literal(value) => {
                     items.push(Expression::Primitive(
                         Span::None,
-                        Primitive::String(ParString::from_owner(value.clone())),
+                        Primitive::String(value.clone()),
                     ));
                 }
                 TemplatePart::StringExpr(expr) => {
