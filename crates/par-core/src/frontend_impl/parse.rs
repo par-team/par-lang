@@ -1456,6 +1456,9 @@ fn pattern_payload_receive(input: &mut Input) -> Result<Pattern<Unresolved>> {
 fn expression_to_condition(expr: Expression<Unresolved>) -> Condition<Unresolved> {
     match expr {
         Expression::Condition(_, cond) => *cond,
+        // Brace grouping is transparent for conditions: `not { x is .ok y }`
+        // must export the same bindings as `not x is .ok y` (issue #203).
+        Expression::Grouped(_, inner) => expression_to_condition(*inner),
         other => Condition::Bool(other.span(), Box::new(other)),
     }
 }
@@ -4051,6 +4054,52 @@ def Value = {a < b} < c
                         if matches!(*inner, Expression::ComparisonChain { .. })
                 ));
             }
+            other => panic!("unexpected AST: {other:#?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_grouped_not_condition_is_transparent() {
+        // Issue #203: `not { r is .ok x }` must desugar to the same
+        // condition as `not r is .ok x`, so `x` binds in the else branch.
+        let expr = parse_single_definition_expression(
+            "\
+module Main
+
+def Value = not {r is .ok x}
+",
+        );
+        match expr {
+            Expression::Condition(_, cond) => match *cond {
+                Condition::Not(_, inner) => {
+                    assert!(
+                        matches!(*inner, Condition::Is { .. }),
+                        "grouped condition should unwrap to Is, got: {inner:#?}"
+                    );
+                }
+                other => panic!("expected Not condition, got: {other:#?}"),
+            },
+            other => panic!("unexpected AST: {other:#?}"),
+        }
+
+        // Nested grouping unwraps recursively.
+        let expr = parse_single_definition_expression(
+            "\
+module Main
+
+def Value = not {{r is .ok x}}
+",
+        );
+        match expr {
+            Expression::Condition(_, cond) => match *cond {
+                Condition::Not(_, inner) => {
+                    assert!(
+                        matches!(*inner, Condition::Is { .. }),
+                        "nested grouped condition should unwrap to Is, got: {inner:#?}"
+                    );
+                }
+                other => panic!("expected Not condition, got: {other:#?}"),
+            },
             other => panic!("unexpected AST: {other:#?}"),
         }
     }
