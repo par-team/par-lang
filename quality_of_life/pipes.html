@@ -176,7 +176,7 @@ def Double = [n: Nat] n + n
 def Square = [n: Nat] n * n
 </code></pre>
 <p>Without pipes you call them inside one another:</p>
-<pre><code class="language-par">let result = Square(Add(3, Double(4)))  // = 196
+<pre><code class="language-par">let result = Square(Add(3, Double(4)))  // = 121
 </code></pre>
 <p>With pipes you can say the same thing in the order you want to read it:</p>
 <pre><code class="language-par">let result = {3}

@@ -385,7 +385,7 @@ followed by an upper-case name, an <code>=</code> sign, and an expression comput
 
 def MyNumber = 7
 </code></pre>
-<p>In this case, Par is able to infer the type of <code>MyNumber</code> as <a href="structure/./primitive_types.html#nat"><code>Nat</code></a>
+<p>In this case, Par is able to infer the type of <code>MyNumber</code> as <a href="structure/./primitive_types.html"><code>Nat</code></a>
 (a natural number), so no type annotation is needed. Often, a type annotation is needed, or wanted.
 In those cases, we can add it using a colon after the name:</p>
 <pre><code class="language-par">def MyName: String = "Michal"
@@ -4634,7 +4634,7 @@ def Double = [n: Nat] n + n
 def Square = [n: Nat] n * n
 </code></pre>
 <p>Without pipes you call them inside one another:</p>
-<pre><code class="language-par">let result = Square(Add(3, Double(4)))  // = 196
+<pre><code class="language-par">let result = Square(Add(3, Double(4)))  // = 121
 </code></pre>
 <p>With pipes you can say the same thing in the order you want to read it:</p>
 <pre><code class="language-par">let result = {3}
