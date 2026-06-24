@@ -68,7 +68,7 @@ async fn nat_clamp(mut handle: Handle) {
     let min = handle.receive().nat().await;
     let max = handle.receive().nat().await;
     // int clamped to two nats is always nat, so we can ignore the sign.
-    let (_sign, clamped) = int.clamp(min.into(), max.into()).into_parts();
+    let (_sign, clamped) = int.min(max.into()).max(min.into()).into_parts();
     handle.provide_nat(clamped);
 }
 
