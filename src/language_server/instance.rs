@@ -283,6 +283,38 @@ impl Instance {
         )
     }
 
+    pub fn provide_completion(
+        &self,
+        params: &lsp::CompletionParams,
+    ) -> Option<lsp::CompletionResponse> {
+        tracing::debug!("Handling completion request with params: {:?}", params);
+
+        let checked = self.checked.as_ref()?;
+        let source = self.io.read(&self.uri)?;
+        let pos = params.text_document_position.position;
+        let items = checked
+            .dot_completions_at(&self.file, &source, pos.line, pos.character)
+            .into_iter()
+            .map(|candidate| {
+                let kind = if candidate.is_keyword {
+                    lsp::CompletionItemKind::KEYWORD
+                } else {
+                    lsp::CompletionItemKind::ENUM_MEMBER
+                };
+                lsp::CompletionItem {
+                    label: candidate.label,
+                    kind: Some(kind),
+                    detail: Some(candidate.detail),
+                    insert_text: Some(candidate.insert_text),
+                    insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+                    ..lsp::CompletionItem::default()
+                }
+            })
+            .collect();
+
+        Some(lsp::CompletionResponse::Array(items))
+    }
+
     pub fn handle_goto_declaration(
         &self,
         params: &lsp::GotoDefinitionParams,
@@ -410,7 +442,6 @@ impl Instance {
                 self.errors = errors;
             }
             Err(error) => {
-                self.checked = None;
                 self.errors = vec![error];
             }
         }
@@ -561,5 +592,74 @@ mod tests {
         let (diagnostic_uri, diagnostic) = diagnostic_for_error(&errors[0], &main_uri);
         assert_eq!(diagnostic_uri, other_uri);
         assert_eq!(diagnostic.range.start.line, 2);
+    }
+
+    #[test]
+    fn completion_uses_last_good_checked_workspace() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let valid_source = "\
+module Main
+
+type Client = choice {
+  .close => !,
+  .next => !,
+}
+
+def ClientValue : Client = external
+def Main : Client = ClientValue
+";
+                let (root, uris) = temp_package(&[("src/Main.par", valid_source)]);
+                let main_uri = uris["src/Main.par"].clone();
+
+                let mut io = IO::new();
+                io.update_file(&main_uri, valid_source.to_string());
+
+                let mut instance = Instance::new(main_uri.clone(), io.clone());
+                instance.compile();
+                assert!(instance.checked.is_some(), "valid source should compile");
+
+                for (live_replacement, marker) in [
+                    ("ClientValue.\n", "ClientValue."),
+                    ("ClientValue.cl\n", "ClientValue.cl"),
+                ] {
+                    let live_source = valid_source.replace("ClientValue\n", live_replacement);
+                    io.update_file(&main_uri, live_source.clone());
+                    instance.mark_dirty();
+                    instance.compile();
+                    assert!(!instance.last_errors().is_empty());
+                    assert!(instance.checked.is_some());
+
+                    let response = instance
+                        .provide_completion(&lsp::CompletionParams {
+                            text_document_position: lsp::TextDocumentPositionParams {
+                                text_document: lsp::TextDocumentIdentifier {
+                                    uri: main_uri.clone(),
+                                },
+                                position: lsp::Position {
+                                    line: 8,
+                                    character: "def Main : Client = ".len() as u32
+                                        + marker.len() as u32,
+                                },
+                            },
+                            work_done_progress_params: Default::default(),
+                            partial_result_params: Default::default(),
+                            context: None,
+                        })
+                        .expect("completion response");
+                    let lsp::CompletionResponse::Array(items) = response else {
+                        panic!("expected completion array");
+                    };
+
+                    assert!(items.iter().any(|item| item.label == "close"));
+                    assert!(items.iter().any(|item| item.label == "next"));
+                }
+
+                fs::remove_dir_all(root).ok();
+            })
+            .expect("failed to spawn large-stack test thread")
+            .join()
+            .expect("completion test panicked");
     }
 }
