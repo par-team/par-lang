@@ -9,32 +9,15 @@ pub struct CompletionCandidate {
     pub label: String,
     pub insert_text: String,
     pub detail: String,
-    pub is_keyword: bool,
+    pub kind: CompletionCandidateKind,
 }
 
-impl CompletionCandidate {
-    fn branch(label: impl Into<String>, detail: impl Into<String>) -> Self {
-        let label = label.into();
-        Self {
-            insert_text: label.clone(),
-            label,
-            detail: detail.into(),
-            is_keyword: false,
-        }
-    }
-
-    fn keyword(
-        label: impl Into<String>,
-        insert_text: impl Into<String>,
-        detail: impl Into<String>,
-    ) -> Self {
-        Self {
-            label: label.into(),
-            insert_text: insert_text.into(),
-            detail: detail.into(),
-            is_keyword: true,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionCandidateKind {
+    Keyword,
+    Branch,
+    ModuleType,
+    ModuleDeclaration,
 }
 
 impl CheckedWorkspace {
@@ -53,11 +36,18 @@ impl CheckedWorkspace {
         };
 
         let mut candidates = Vec::new();
-        self.push_module_alias_completion_candidates(file, source, dot, &mut candidates);
+        let completed_module_alias =
+            self.push_module_alias_completion_candidates(file, source, dot, &mut candidates);
 
-        if let Some(hover) = self.hover_at(file, hover_row, hover_column) {
-            if let Some(typ) = hover.typ() {
-                self.push_type_completion_candidates(typ, completion_context, &mut candidates);
+        // `push_module_alias_completion_candidates` returns true only for `Alias.` receivers
+        // that resolve through imports (for example `Console.` or `raw->Os.`).
+        // In that case alias-member completion is authoritative: if we also ran hover/type-based
+        // completion, we'd incorrectly mix in value-type items like `begin`/branch labels.
+        if !completed_module_alias {
+            if let Some(hover) = self.hover_at(file, hover_row, hover_column) {
+                if let Some(typ) = hover.typ() {
+                    self.push_type_completion_candidates(typ, completion_context, &mut candidates);
+                }
             }
         }
 
@@ -76,15 +66,15 @@ impl CheckedWorkspace {
         source: &str,
         dot: usize,
         candidates: &mut Vec<CompletionCandidate>,
-    ) {
+    ) -> bool {
         let Some(alias) = module_alias_before_dot(source, dot) else {
-            return;
+            return false;
         };
         let Some(scope) = self.workspace.import_scope(file) else {
-            return;
+            return false;
         };
         let Some(module) = scope.aliases.get(alias) else {
-            return;
+            return false;
         };
 
         let vis = &self.workspace.visibility;
@@ -95,10 +85,13 @@ impl CheckedWorkspace {
                 && !name.is_primary_export()
                 && vis.type_visible_from(from, name)
             {
-                candidates.push(CompletionCandidate::branch(
-                    name.primary.clone(),
-                    "module type",
-                ));
+                let label = name.primary.clone();
+                candidates.push(CompletionCandidate {
+                    insert_text: label.clone(),
+                    label,
+                    detail: "module type".to_string(),
+                    kind: CompletionCandidateKind::ModuleType,
+                });
             }
         }
 
@@ -112,12 +105,17 @@ impl CheckedWorkspace {
                 && !name.is_primary_export()
                 && vis.declaration_visible_from(from, name)
             {
-                candidates.push(CompletionCandidate::branch(
-                    name.primary.clone(),
-                    "module declaration",
-                ));
+                let label = name.primary.clone();
+                candidates.push(CompletionCandidate {
+                    insert_text: label.clone(),
+                    label,
+                    detail: "module declaration".to_string(),
+                    kind: CompletionCandidateKind::ModuleDeclaration,
+                });
             }
         }
+
+        true
     }
 
     fn push_type_completion_candidates(
@@ -134,7 +132,12 @@ impl CheckedWorkspace {
                 push_branch_completion_candidates(branches, "construct either branch", candidates);
             }
             Type::Either(_, branches) => {
-                push_branch_completion_candidates(branches, "either branch", candidates);
+                // Inside a recursive body's pre-`begin` phase, offering either-branch actions
+                // (`case`, branch labels, `try`/`default`) is invalid: the user must first
+                // establish the recursion point with `begin`/`unfounded`.
+                if context == DotCompletionContext::RecursiveBody {
+                    return;
+                }
                 let mut branch_names = branches.keys().map(|branch| branch.string.as_str());
                 match (
                     branch_names.next(),
@@ -142,58 +145,78 @@ impl CheckedWorkspace {
                     branch_names.next(),
                 ) {
                     (Some("err"), Some("ok"), None) => {
-                        candidates.push(CompletionCandidate::keyword(
-                            "try",
-                            "try",
-                            "propagate .err to the active catch and continue with .ok",
-                        ));
+                        candidates.push(CompletionCandidate {
+                            label: "try".to_string(),
+                            insert_text: "try".to_string(),
+                            detail: "propagate .err to the active catch and continue with .ok"
+                                .to_string(),
+                            kind: CompletionCandidateKind::Keyword,
+                        });
                     }
                     (Some("none"), Some("some"), None) => {
-                        candidates.push(CompletionCandidate::keyword(
-                            "default",
-                            "default(",
-                            "use a default value for .none and continue with .some",
-                        ));
+                        candidates.push(CompletionCandidate {
+                            label: "default".to_string(),
+                            insert_text: "default(".to_string(),
+                            detail: "use a default value for .none and continue with .some"
+                                .to_string(),
+                            kind: CompletionCandidateKind::Keyword,
+                        });
                     }
                     _ => {}
                 }
-                candidates.push(CompletionCandidate::keyword(
-                    "case",
-                    "case {\n  ",
-                    "case on either branches",
-                ));
+                candidates.push(CompletionCandidate {
+                    label: "case".to_string(),
+                    insert_text: "case {\n  ".to_string(),
+                    detail: "case on either branches".to_string(),
+                    kind: CompletionCandidateKind::Keyword,
+                });
             }
             Type::Recursive {
                 asc, label, body, ..
             } => {
                 if context == DotCompletionContext::Normal {
-                    candidates.push(recursive_keyword_completion(
-                        label.as_ref(),
-                        "begin",
-                        "begin recursive session",
-                    ));
-                    candidates.push(recursive_keyword_completion(
-                        label.as_ref(),
-                        "unfounded",
-                        "begin recursive session without totality checking",
-                    ));
+                    candidates.push(CompletionCandidate {
+                        label: "begin".to_string(),
+                        insert_text: label
+                            .as_ref()
+                            .map_or_else(|| "begin".to_string(), |label| format!("begin@{label}")),
+                        detail: "begin recursive session".to_string(),
+                        kind: CompletionCandidateKind::Keyword,
+                    });
+                    candidates.push(CompletionCandidate {
+                        label: "unfounded".to_string(),
+                        insert_text: label.as_ref().map_or_else(
+                            || "unfounded".to_string(),
+                            |label| format!("unfounded@{label}"),
+                        ),
+                        detail: "begin recursive session without totality checking".to_string(),
+                        kind: CompletionCandidateKind::Keyword,
+                    });
                     // If there is a begin in the current context, then we can offer a loop to it.
                     if !asc.is_empty() {
-                        candidates.push(recursive_keyword_completion(
-                            label.as_ref(),
-                            "loop",
-                            "loop to the matching begin",
-                        ));
+                        candidates.push(CompletionCandidate {
+                            label: "loop".to_string(),
+                            insert_text: label.as_ref().map_or_else(
+                                || "loop".to_string(),
+                                |label| format!("loop@{label}"),
+                            ),
+                            detail: "loop to the matching begin".to_string(),
+                            kind: CompletionCandidateKind::Keyword,
+                        });
                     }
                 }
+                // Expand the recursive node and continue completion on its body shape.
+                // When entering from `Normal`, switch to `RecursiveBody` so nested `either`
+                // completions require `begin`/`unfounded` before offering `case` branches.
                 if let Ok(expanded) =
                     Type::expand_recursive(&Default::default(), label, body, typ.display_hint())
                 {
-                    self.push_type_completion_candidates(
-                        &expanded,
-                        context.descend_into_body(),
-                        candidates,
-                    );
+                    let next_context = if context == DotCompletionContext::Normal {
+                        DotCompletionContext::RecursiveBody
+                    } else {
+                        context.descend_into_body()
+                    };
+                    self.push_type_completion_candidates(&expanded, next_context, candidates);
                 }
             }
             Type::Iterative { body, .. } => {
@@ -232,7 +255,13 @@ fn push_branch_completion_candidates(
     candidates: &mut Vec<CompletionCandidate>,
 ) {
     for branch in branches.keys() {
-        candidates.push(CompletionCandidate::branch(branch.to_string(), detail));
+        let label = branch.to_string();
+        candidates.push(CompletionCandidate {
+            insert_text: label.clone(),
+            label,
+            detail: detail.to_string(),
+            kind: CompletionCandidateKind::Branch,
+        });
     }
 }
 
@@ -255,11 +284,13 @@ fn module_alias_before_dot(source: &str, dot: usize) -> Option<&str> {
 /// - `Normal`: receiver/member completion, e.g. `value.`
 /// - `AfterBegin`: completion right after `begin`/`begin@label`, e.g. `list.begin.`
 /// - `Construction`: constructor-style completion, e.g. `.`, or `.repeat.`
+/// - `RecursiveBody`: completion inside a recursive body before `begin`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DotCompletionContext {
     Normal,
-    AfterBegin,
+    AfterBeginOrUnfounded,
     Construction,
+    RecursiveBody,
 }
 
 impl DotCompletionContext {
@@ -276,33 +307,26 @@ impl DotCompletionContext {
         }
 
         let last = tail.rsplit_once('.').map_or(tail, |(_, seg)| seg);
-        Some(if last == "begin" || last.starts_with("begin@") {
-            Self::AfterBegin
-        } else {
-            Self::Normal
-        })
+        Some(
+            if last == "begin"
+                || last.starts_with("begin@")
+                || last == "unfounded"
+                || last.starts_with("unfounded@")
+            {
+                Self::AfterBeginOrUnfounded
+            } else {
+                Self::Normal
+            },
+        )
     }
 
     fn descend_into_body(self) -> Self {
         match self {
             Self::Construction => Self::Construction,
-            Self::Normal | Self::AfterBegin => Self::Normal,
+            Self::AfterBeginOrUnfounded => Self::AfterBeginOrUnfounded,
+            Self::Normal | Self::RecursiveBody => Self::Normal,
         }
     }
-}
-
-// Build a keyword completion where displayed text stays the keyword,
-// but inserted text includes the recursion label when present.
-// Example: keyword "begin" + label "items" inserts "begin@items".
-// Example: keyword "begin" + no label inserts "begin".
-fn recursive_keyword_completion(
-    recursion_label: Option<&LocalName>,
-    keyword: &'static str,
-    detail: &'static str,
-) -> CompletionCandidate {
-    let insert_text =
-        recursion_label.map_or_else(|| keyword.to_string(), |label| format!("{keyword}@{label}"));
-    CompletionCandidate::keyword(keyword, insert_text, detail)
 }
 
 /// Finds the `.` that starts a completion receiver before `(row, column)`.
@@ -369,8 +393,8 @@ fn row_and_column_for_offset(source: &str, offset: usize) -> Option<(u32, u32)> 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        CheckedWorkspace, LoadedPackageFile, ParsedPackage, WorkspacePackage, WorkspacePackages,
-        assemble_workspace, parse_loaded_files,
+        assemble_workspace, parse_loaded_files, CheckedWorkspace, LoadedPackageFile, ParsedPackage,
+        WorkspacePackage, WorkspacePackages,
     };
     use super::*;
     use arcstr::literal;
@@ -514,8 +538,8 @@ def Main : Client = ClientValue
             source,
             &live_source,
             "ClientValue.",
-            &["begin", "unfounded", "case"],
-            &["loop"],
+            &["begin", "unfounded"],
+            &["case", "close", "next", "loop"],
         );
     }
 
@@ -629,8 +653,8 @@ def Main : ! = Repeat(!).begin.case {
             (
                 "Repeat(!).",
                 "Repeat(!).",
-                &["begin", "unfounded", "case"][..],
-                &["loop"][..],
+                &["begin", "unfounded"][..],
+                &["loop", "case", "end", "step"][..],
             ),
             (
                 "Repeat(!).begin.",
@@ -642,6 +666,84 @@ def Main : ! = Repeat(!).begin.case {
             let live_source = source.replace("Repeat(!).begin.case", replacement);
             assert_source_dot_completion_labels(source, &live_source, marker, expected, unexpected);
         }
+    }
+
+    #[test]
+    fn dot_completion_for_recursive_either_value_omits_case_branches_before_begin() {
+        let source = "\
+module Main
+
+type Server = recursive either {
+    .shutdown!,
+    .incoming self,
+}
+
+def Listen : Server = external
+def Main : ! = Listen.begin.case {
+    .shutdown! => !,
+    .incoming next => next.loop,
+}
+";
+        let live_source = source.replace("Listen.begin.case", "Listen.");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "Listen.",
+            &["begin", "unfounded"],
+            &["case", "shutdown", "incoming", "loop"],
+        );
+
+        let live_source = source.replace("Listen.begin.case", "Listen.begin.");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "Listen.begin.",
+            &["case"],
+            &["begin", "unfounded", "shutdown", "incoming", "loop"],
+        );
+
+        let live_source = source.replace("Listen.begin.case", "Listen.unfounded.");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "Listen.unfounded.",
+            &["case"],
+            &["begin", "unfounded", "shutdown", "incoming", "loop"],
+        );
+    }
+
+    #[test]
+    fn dot_completion_after_unfounded_omits_either_branch_labels() {
+        let source = "\
+module Main
+
+type Items = recursive either {
+    .end!,
+    .item self,
+}
+
+def Work : [Items] ! = [input] chan exit {
+    input.unfounded@outer
+    input.case {
+        .end! => {
+            exit!
+        }
+        .item next => {
+            next.loop@outer
+        }
+    }
+}
+
+def Main : ! = Work(.end!)
+";
+        let live_source = source.replace("input.case", "input.");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "input.",
+            &["case"],
+            &["begin", "unfounded", "end", "item", "loop"],
+        );
     }
 
     #[test]
@@ -701,7 +803,7 @@ def Main : Result = ResultValue
                 "ResultValue\n",
                 "ResultValue.\n",
                 "ResultValue.",
-                &["ok", "err", "case"][..],
+                &["try", "case"][..],
                 &[][..],
             ),
             (
@@ -910,6 +1012,84 @@ def Open = external
                 .any(|candidate| candidate.label == "Open"),
             "missing completion label \"Open\""
         );
+    }
+    #[test]
+    fn dot_completion_for_import_alias_omits_receiver_type_members() {
+        let main = "\
+module Main
+
+import Os
+
+dec ServePath : [Os.Path] !
+def ServePath = external
+dec Use : [!] Os.Path
+def Use = [raw] raw->Os.Path
+def Main = 0
+";
+        let parsed = parse_loaded_files(vec![
+            LoadedPackageFile {
+                name: FileName::from("local/Os.par"),
+                relative_path_from_src: PathBuf::from("Os.par"),
+                source: "\
+export module Os
+
+export {
+    type Option<a> = either {
+        .none!,
+        .some a,
+    }
+
+    type Path = iterative@append recursive@parent box choice {
+        .name => !,
+        .absolute => !,
+        .parent => Option<self@parent>,
+        .append(!) => self@append,
+    }
+
+    dec Path : [!] Path
+}
+
+def Path = external
+"
+                .to_owned(),
+            },
+            LoadedPackageFile {
+                name: FileName::from("local/Main.par"),
+                relative_path_from_src: PathBuf::from("Main.par"),
+                source: main.to_owned(),
+            },
+        ])
+        .unwrap();
+        let (checked, type_errors) = assemble_workspace(WorkspacePackages {
+            root_package: test_package_id(),
+            packages: vec![WorkspacePackage::new(test_package_id(), parsed)],
+        })
+        .unwrap()
+        .type_check();
+        assert!(type_errors.is_empty(), "type errors: {:?}", type_errors);
+        let file = FileName::from("local/Main.par");
+        for (before, after, marker) in [
+            ("Os.Path", "Os.", "Os."),
+            ("raw->Os.Path", "raw->Os.", "raw->Os."),
+        ] {
+            let live_source = main.replace(before, after);
+            let completions =
+                dot_completions_at_marker_in_file(&checked, &file, &live_source, marker);
+
+            for label in ["Path"] {
+                assert!(
+                    completions.iter().any(|candidate| candidate.label == label),
+                    "missing completion label {label:?}"
+                );
+            }
+
+            for label in ["unfounded", "absolute", "append", "begin", "name", "parent"] {
+                assert!(
+                    completions.iter().all(|candidate| candidate.label != label),
+                    "unexpected completion label {label:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -1,16 +1,17 @@
 use super::io::IO;
 use crate::language_server::data::ToLspPosition;
-use crate::package_utils::{SourceLookup, root_module_slash_path};
+use crate::package_utils::{root_module_slash_path, SourceLookup};
 use crate::workspace_support::{
-    ScopedTypeError, WorkspaceBuildError, checked_workspace_from_path,
-    checked_workspace_from_single_file,
+    checked_workspace_from_path, checked_workspace_from_single_file, ScopedTypeError,
+    WorkspaceBuildError,
 };
 use indexmap::IndexMap;
 use lsp_types::{self as lsp, Uri};
-use par_core::frontend::{Type, language::GlobalName};
+use par_core::frontend::{language::GlobalName, Type};
 use par_core::source::{FileName, Span};
 use par_core::workspace::{
-    CheckedWorkspace, SourceOverrides, WorkspaceDiscoveryError, WorkspaceError,
+    CheckedWorkspace, CompletionCandidateKind, SourceOverrides, WorkspaceDiscoveryError,
+    WorkspaceError,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -296,10 +297,11 @@ impl Instance {
             .dot_completions_at(&self.file, &source, pos.line, pos.character)
             .into_iter()
             .map(|candidate| {
-                let kind = if candidate.is_keyword {
-                    lsp::CompletionItemKind::KEYWORD
-                } else {
-                    lsp::CompletionItemKind::ENUM_MEMBER
+                let kind = match candidate.kind {
+                    CompletionCandidateKind::Keyword => lsp::CompletionItemKind::KEYWORD,
+                    CompletionCandidateKind::Branch => lsp::CompletionItemKind::ENUM_MEMBER,
+                    CompletionCandidateKind::ModuleType => lsp::CompletionItemKind::INTERFACE,
+                    CompletionCandidateKind::ModuleDeclaration => lsp::CompletionItemKind::FUNCTION,
                 };
                 lsp::CompletionItem {
                     label: candidate.label,

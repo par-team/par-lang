@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 mod completion;
 
-pub use completion::CompletionCandidate;
+pub use completion::{CompletionCandidate, CompletionCandidateKind};
 
 pub type ExternalModule = Module<Arc<process::Expression<(), Unresolved>>, Unresolved>;
 
