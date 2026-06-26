@@ -363,6 +363,12 @@ impl DotCompletionContext {
     fn before_dot(source: &str, dot: usize) -> Option<Self> {
         let receiver = source.get(..dot)?.trim_end();
         let tail = receiver.split_whitespace().next_back()?;
+        // If the token starts with a constructor-like segment (e.g. `.ok!`) but is followed by
+        // a closed call and receiver chain/end (e.g. `Make(!, .ok!)` / `...)->Try.Ok`),
+        // completion should use receiver/member semantics rather than constructor semantics.
+        let has_postfix_receiver_after_closed_call =
+            tail.rsplit_once(')')
+                .is_some_and(|(_, after)| after.is_empty() || after.starts_with("->") || after.starts_with('.'));
         let separator_tail = tail
             .char_indices()
             .rev()
@@ -372,11 +378,15 @@ impl DotCompletionContext {
 
         // Inside argument lists, completions like `f(.` / `f(.repeat.` should stay in
         // constructor context instead of falling back to receiver/member context.
-        if separator_tail.is_empty() || separator_tail.starts_with('.') {
+        if (separator_tail.is_empty() || separator_tail.starts_with('.'))
+            && !has_postfix_receiver_after_closed_call
+        {
             return Some(Self::Construction);
         }
 
-        if tail.starts_with('.') || !tail.chars().any(is_completion_suffix_char) {
+        if (tail.starts_with('.') && !has_postfix_receiver_after_closed_call)
+            || !tail.chars().any(is_completion_suffix_char)
+        {
             return Some(Self::Construction);
         }
 
@@ -1199,6 +1209,31 @@ def Main : ! = Use(.repeat.one.empty!, .empty!)
                 completions
             );
         }
+    }
+
+    #[test]
+    fn dot_completion_after_call_with_constructor_argument_offers_either_keywords() {
+        let source = "\
+module Main
+
+type E = either {
+    .ok!,
+    .err!,
+}
+
+dec Make : [!, E] E
+def Make = external
+
+def Main : E = Make(!, .ok!)
+";
+        let live_source = source.replace("Make(!, .ok!)", "Make(!, .ok!).");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "Make(!, .ok!).",
+            &["try", "case"],
+            &["ok", "err"],
+        );
     }
 
     #[test]
