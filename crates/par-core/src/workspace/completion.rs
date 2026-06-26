@@ -127,28 +127,35 @@ impl CheckedWorkspace {
         candidates: &mut Vec<CompletionCandidate>,
     ) {
         match typ {
-            Type::Either(_, branches) if context == DotCompletionContext::Construction => {
-                push_branch_completion_candidates(branches, "construct either branch", candidates);
-            }
             Type::Choice(_, branches) => {
                 push_branch_completion_candidates(branches, "signal choice branch", candidates);
             }
+            Type::Either(_, branches) if context == DotCompletionContext::Construction => {
+                push_branch_completion_candidates(branches, "construct either branch", candidates);
+            }
             Type::Either(_, branches) => {
                 push_branch_completion_candidates(branches, "either branch", candidates);
-                let branch_names = || branches.keys().map(|branch| branch.string.as_str());
-                if branch_names().eq(["err", "ok"]) {
-                    candidates.push(CompletionCandidate::keyword(
-                        "try",
-                        "try",
-                        "propagate .err to the active catch and continue with .ok",
-                    ));
-                }
-                if branch_names().eq(["none", "some"]) {
-                    candidates.push(CompletionCandidate::keyword(
-                        "default",
-                        "default(",
-                        "use a default value for .none and continue with .some",
-                    ));
+                let mut branch_names = branches.keys().map(|branch| branch.string.as_str());
+                match (
+                    branch_names.next(),
+                    branch_names.next(),
+                    branch_names.next(),
+                ) {
+                    (Some("err"), Some("ok"), None) => {
+                        candidates.push(CompletionCandidate::keyword(
+                            "try",
+                            "try",
+                            "propagate .err to the active catch and continue with .ok",
+                        ));
+                    }
+                    (Some("none"), Some("some"), None) => {
+                        candidates.push(CompletionCandidate::keyword(
+                            "default",
+                            "default(",
+                            "use a default value for .none and continue with .some",
+                        ));
+                    }
+                    _ => {}
                 }
                 candidates.push(CompletionCandidate::keyword(
                     "case",
@@ -170,6 +177,7 @@ impl CheckedWorkspace {
                         "unfounded",
                         "begin recursive session without totality checking",
                     ));
+                    // If there is a begin in the current context, then we can offer a loop to it.
                     if !asc.is_empty() {
                         candidates.push(recursive_keyword_completion(
                             label.as_ref(),
@@ -191,7 +199,6 @@ impl CheckedWorkspace {
             Type::Iterative { body, .. } => {
                 self.push_type_completion_candidates(body, context.descend_into_body(), candidates);
             }
-            Type::Forall(..) | Type::Exists(..) => {}
             Type::Box(_, inner) | Type::DualBox(_, inner) => {
                 self.push_type_completion_candidates(inner, context, candidates);
             }
@@ -212,7 +219,9 @@ impl CheckedWorkspace {
             | Type::DualHole(..)
             | Type::Fail(..)
             | Type::Function(..)
-            | Type::Pair(..) => {}
+            | Type::Pair(..)
+            | Type::Forall(..)
+            | Type::Exists(..) => {}
         }
     }
 }
@@ -282,6 +291,10 @@ impl DotCompletionContext {
     }
 }
 
+// Build a keyword completion where displayed text stays the keyword,
+// but inserted text includes the recursion label when present.
+// Example: keyword "begin" + label "items" inserts "begin@items".
+// Example: keyword "begin" + no label inserts "begin".
 fn recursive_keyword_completion(
     recursion_label: Option<&LocalName>,
     keyword: &'static str,
