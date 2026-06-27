@@ -2,7 +2,7 @@ use super::CheckedWorkspace;
 use crate::frontend_impl::language::{LocalName, Universal};
 use crate::frontend_impl::types::Type;
 use crate::location::FileName;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionCandidate {
@@ -128,7 +128,7 @@ impl CheckedWorkspace {
         &self,
         typ: &Type<Universal>,
         context: DotCompletionContext,
-        active_loop_labels: &HashSet<String>,
+        active_loop_labels: &BTreeSet<String>,
         candidates: &mut Vec<CompletionCandidate>,
     ) {
         match typ {
@@ -182,47 +182,51 @@ impl CheckedWorkspace {
                 asc, label, body, ..
             } => {
                 if context == DotCompletionContext::Normal {
-                    candidates.push(CompletionCandidate {
-                        label: "begin".to_string(),
-                        insert_text: label
-                            .as_ref()
-                            .map_or_else(|| "begin".to_string(), |label| format!("begin@{label}")),
-                        detail: "begin recursive session".to_string(),
-                        kind: CompletionCandidateKind::Keyword,
-                    });
-                    candidates.push(CompletionCandidate {
-                        label: "unfounded".to_string(),
-                        insert_text: label.as_ref().map_or_else(
-                            || "unfounded".to_string(),
-                            |label| format!("unfounded@{label}"),
+                    for (keyword, detail) in [
+                        ("begin", "begin recursive session"),
+                        (
+                            "unfounded",
+                            "begin recursive session without totality checking",
                         ),
-                        detail: "begin recursive session without totality checking".to_string(),
-                        kind: CompletionCandidateKind::Keyword,
-                    });
+                    ] {
+                        let insert_text = label.as_ref().map_or_else(
+                            || keyword.to_string(),
+                            |label| format!("{keyword}@{label}"),
+                        );
+                        candidates.push(CompletionCandidate {
+                            label: keyword.to_string(),
+                            insert_text,
+                            detail: detail.to_string(),
+                            kind: CompletionCandidateKind::Keyword,
+                        });
+                    }
+
                     // Offer `loop` when a typed ascendant exists (well-founded `begin`) or when
                     // source text before the cursor contains a matching labeled loop point
                     // (`begin@label`/`unfounded@label`), which can be valid even with empty `asc`.
-                    let has_active_labeled_loop = label
-                        .as_ref()
-                        .is_some_and(|label| active_loop_labels.contains(label.string.as_str()));
                     let has_unlabeled_loop_point = active_loop_labels.contains("");
                     let has_any_labeled_loop_point =
                         active_loop_labels.iter().any(|label| !label.is_empty());
-                    let can_offer_bare_loop = if label.is_some() {
-                        !asc.is_empty() || has_active_labeled_loop
-                    } else {
-                        // In mixed contexts (an outer unlabeled begin plus an inner labeled
-                        // begin/unfounded), bare `loop` is often illegal for the current value.
-                        // Prefer explicit labeled loops whenever any labeled loop point is active.
-                        has_unlabeled_loop_point && !has_any_labeled_loop_point
+                    let bare_loop_insert_text = match label.as_ref() {
+                        Some(label)
+                            if !asc.is_empty()
+                                || active_loop_labels.contains(label.string.as_str()) =>
+                        {
+                            Some(format!("loop@{label}"))
+                        }
+                        None => {
+                            // In mixed contexts (an outer unlabeled begin plus an inner labeled
+                            // begin/unfounded), bare `loop` is often illegal for the current value.
+                            // Prefer explicit labeled loops whenever any labeled loop point is active.
+                            (has_unlabeled_loop_point && !has_any_labeled_loop_point)
+                                .then(|| "loop".to_string())
+                        }
+                        _ => None,
                     };
-                    if can_offer_bare_loop {
+                    if let Some(insert_text) = bare_loop_insert_text {
                         candidates.push(CompletionCandidate {
                             label: "loop".to_string(),
-                            insert_text: label.as_ref().map_or_else(
-                                || "loop".to_string(),
-                                |label| format!("loop@{label}"),
-                            ),
+                            insert_text,
                             detail: "loop to the matching begin".to_string(),
                             kind: CompletionCandidateKind::Keyword,
                         });
@@ -232,15 +236,13 @@ impl CheckedWorkspace {
                     // If the type is unlabeled, still surface explicit `loop@label` variants that
                     // are active in the source before the cursor.
                     if label.is_none() {
-                        let mut labels: Vec<_> = active_loop_labels.iter().collect();
-                        labels.sort();
-                        for active_label in labels {
-                            if active_label.is_empty() {
-                                continue;
-                            }
+                        for active_label in
+                            active_loop_labels.iter().filter(|label| !label.is_empty())
+                        {
+                            let loop_label = format!("loop@{active_label}");
                             candidates.push(CompletionCandidate {
-                                label: format!("loop@{active_label}"),
-                                insert_text: format!("loop@{active_label}"),
+                                label: loop_label.clone(),
+                                insert_text: loop_label,
                                 detail: "loop to an active labeled begin/unfounded".to_string(),
                                 kind: CompletionCandidateKind::Keyword,
                             });
@@ -367,8 +369,9 @@ impl DotCompletionContext {
         // a closed call and receiver chain/end (e.g. `Make(!, .ok!)` / `...)->Try.Ok`),
         // completion should use receiver/member semantics rather than constructor semantics.
         let has_postfix_receiver_after_closed_call =
-            tail.rsplit_once(')')
-                .is_some_and(|(_, after)| after.is_empty() || after.starts_with("->") || after.starts_with('.'));
+            tail.rsplit_once(')').is_some_and(|(_, after)| {
+                after.is_empty() || after.starts_with("->") || after.starts_with('.')
+            });
         let separator_tail = tail
             .char_indices()
             .rev()
@@ -437,8 +440,8 @@ fn is_completion_suffix_char(ch: char) -> bool {
 /// Uses `""` as a sentinel for an unlabeled loop point.
 /// Example: `loop_labels_before_dot("x.begin y.unfounded@outer z.", dot)`
 /// returns `{ "", "outer" }`.
-fn loop_labels_before_dot(source: &str, dot: usize) -> HashSet<String> {
-    let mut labels = HashSet::new();
+fn loop_labels_before_dot(source: &str, dot: usize) -> BTreeSet<String> {
+    let mut labels = BTreeSet::new();
     let Some(prefix) = source.get(..dot) else {
         return labels;
     };
@@ -526,8 +529,8 @@ fn row_and_column_for_offset(source: &str, offset: usize) -> Option<(u32, u32)> 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        assemble_workspace, parse_loaded_files, CheckedWorkspace, LoadedPackageFile, ParsedPackage,
-        WorkspacePackage, WorkspacePackages,
+        CheckedWorkspace, LoadedPackageFile, ParsedPackage, WorkspacePackage, WorkspacePackages,
+        assemble_workspace, parse_loaded_files,
     };
     use super::*;
     use arcstr::literal;
@@ -987,9 +990,9 @@ def Work : [Items] ! = [outer] chan exit {
 
 def Main : ! = Work(.item .end!)
 ";
-    let live_source = source.replace("next.loop@file", "next.");
+        let live_source = source.replace("next.loop@file", "next.");
         let checked = checked_workspace_from_source(source);
-    let completions = dot_completions_at_marker(&checked, &live_source, "next.");
+        let completions = dot_completions_at_marker(&checked, &live_source, "next.");
 
         assert!(
             completions.iter().any(|candidate| {
@@ -1196,15 +1199,19 @@ def Main : ! = Use(.repeat.one.empty!, .empty!)
 
             assert!(
                 completions.iter().all(|candidate| {
-                    !matches!(candidate.label.as_str(), "begin" | "unfounded" | "loop" | "case")
+                    !matches!(
+                        candidate.label.as_str(),
+                        "begin" | "unfounded" | "loop" | "case"
+                    )
                 }),
                 "unexpected recursive/member completions for {marker:?}: {:?}",
                 completions
             );
             assert!(
-                completions
-                    .iter()
-                    .any(|candidate| matches!(candidate.label.as_str(), "empty" | "one" | "repeat")),
+                completions.iter().any(|candidate| matches!(
+                    candidate.label.as_str(),
+                    "empty" | "one" | "repeat"
+                )),
                 "missing constructor-like completions for {marker:?}: {:?}",
                 completions
             );

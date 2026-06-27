@@ -1,13 +1,13 @@
 use super::io::IO;
 use crate::language_server::data::ToLspPosition;
-use crate::package_utils::{root_module_slash_path, SourceLookup};
+use crate::package_utils::{SourceLookup, root_module_slash_path};
 use crate::workspace_support::{
-    checked_workspace_from_path, checked_workspace_from_single_file, ScopedTypeError,
-    WorkspaceBuildError,
+    ScopedTypeError, WorkspaceBuildError, checked_workspace_from_path,
+    checked_workspace_from_single_file,
 };
 use indexmap::IndexMap;
 use lsp_types::{self as lsp, Uri};
-use par_core::frontend::{language::GlobalName, Type};
+use par_core::frontend::{Type, language::GlobalName};
 use par_core::source::{FileName, Span};
 use par_core::workspace::{
     CheckedWorkspace, CompletionCandidateKind, SourceOverrides, WorkspaceDiscoveryError,
