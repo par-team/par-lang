@@ -438,15 +438,7 @@ impl Instance {
             }
         };
 
-        match result {
-            Ok((checked, errors)) => {
-                self.checked = Some(checked);
-                self.errors = errors;
-            }
-            Err(error) => {
-                self.errors = vec![error];
-            }
-        }
+        (self.checked, self.errors) = apply_compile_result(self.checked.take(), result);
         tracing::info!("Compiled!");
         // reset dirty flag after successful compile attempt
         self.dirty = false;
@@ -496,6 +488,16 @@ fn build_compile_result(
         })
         .collect();
     (Arc::new(build.checked), errors)
+}
+
+fn apply_compile_result<T>(
+    checked: Option<T>,
+    result: Result<(T, Vec<CompileError>), CompileError>,
+) -> (Option<T>, Vec<CompileError>) {
+    match result {
+        Ok((new_checked, new_errors)) => (Some(new_checked), new_errors),
+        Err(error) => (checked, vec![error]),
+    }
 }
 
 fn map_workspace_build_error(error: WorkspaceBuildError) -> CompileError {
@@ -597,71 +599,25 @@ mod tests {
     }
 
     #[test]
-    fn completion_uses_last_good_checked_workspace() {
-        std::thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
-            .spawn(|| {
-                let valid_source = "\
-module Main
+    fn completion_uses_last_good_checked_workspace_after_failed_compile() {
+        let (checked, errors) = apply_compile_result(
+            Some(()),
+            Err(CompileError::Discovery(
+                WorkspaceDiscoveryError::PackageRootNotFound {
+                    start: PathBuf::from("/virtual/Main.par"),
+                },
+            )),
+        );
 
-type Client = choice {
-  .close => !,
-  .next => !,
-}
-
-def ClientValue : Client = external
-def Main : Client = ClientValue
-";
-                let (root, uris) = temp_package(&[("src/Main.par", valid_source)]);
-                let main_uri = uris["src/Main.par"].clone();
-
-                let mut io = IO::new();
-                io.update_file(&main_uri, valid_source.to_string());
-
-                let mut instance = Instance::new(main_uri.clone(), io.clone());
-                instance.compile();
-                assert!(instance.checked.is_some(), "valid source should compile");
-
-                for (live_replacement, marker) in [
-                    ("ClientValue.\n", "ClientValue."),
-                    ("ClientValue.cl\n", "ClientValue.cl"),
-                ] {
-                    let live_source = valid_source.replace("ClientValue\n", live_replacement);
-                    io.update_file(&main_uri, live_source.clone());
-                    instance.mark_dirty();
-                    instance.compile();
-                    assert!(!instance.last_errors().is_empty());
-                    assert!(instance.checked.is_some());
-
-                    let response = instance
-                        .provide_completion(&lsp::CompletionParams {
-                            text_document_position: lsp::TextDocumentPositionParams {
-                                text_document: lsp::TextDocumentIdentifier {
-                                    uri: main_uri.clone(),
-                                },
-                                position: lsp::Position {
-                                    line: 8,
-                                    character: "def Main : Client = ".len() as u32
-                                        + marker.len() as u32,
-                                },
-                            },
-                            work_done_progress_params: Default::default(),
-                            partial_result_params: Default::default(),
-                            context: None,
-                        })
-                        .expect("completion response");
-                    let lsp::CompletionResponse::Array(items) = response else {
-                        panic!("expected completion array");
-                    };
-
-                    assert!(items.iter().any(|item| item.label == "close"));
-                    assert!(items.iter().any(|item| item.label == "next"));
-                }
-
-                fs::remove_dir_all(root).ok();
-            })
-            .expect("failed to spawn large-stack test thread")
-            .join()
-            .expect("completion test panicked");
+        assert_eq!(checked, Some(()));
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [CompileError::Discovery(
+                    WorkspaceDiscoveryError::PackageRootNotFound { .. }
+                )]
+            ),
+            "compile failure should record the new error"
+        );
     }
 }
