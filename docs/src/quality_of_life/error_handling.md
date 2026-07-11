@@ -355,8 +355,8 @@ Since `try` is part of the pattern, it works in nested patterns too:
 
 ```par
 let (try leftReader, try rightReader)! = (
-  leftPath.openFile,
-  rightPath.openFile,
+  Os.OpenFile(leftPath),
+  Os.OpenFile(rightPath),
 )!
 ```
 
@@ -554,19 +554,13 @@ import {
 }
 
 dec ReadAll : [Os.Path] Try<Os.Error, Bytes>
-def ReadAll = [path] chan return {
-  catch e => { return <> .err e }
-  let try reader = Os.OpenFile(path)
-  let parser = Bytes.ParseReader(reader)
-  let try contents = parser.begin.case {
-    .empty! => .ok <<>>,
-    .some parser => parser.remainder,
-  }
-  return <> .ok contents
-}
+def ReadAll = [path]
+  catch e => .err e in
+  let try reader = Os.OpenFile(path) in
+  Bytes.ReadAll(reader)
 ```
 
-This function uses `Bytes.ParseReader` to convert the chunked `Bytes.Reader` from `path.openFile` into a parser, then reads the remaining contents from the non-empty parser branch. The `catch` block propagates any errors by linking them into an `.err` result, while success links the contents into an `.ok` result.
+This function opens a file with `Os.OpenFile(path)`, then uses `Bytes.ReadAll` to collect the chunked `Bytes.Reader` into a single `Bytes` value. The `catch` block propagates any errors as an `.err` result, while success returns the contents as `.ok`.
 
 ## Providing defaults with `default`
 
