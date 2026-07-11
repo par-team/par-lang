@@ -1456,6 +1456,7 @@ fn pattern_payload_receive(input: &mut Input) -> Result<Pattern<Unresolved>> {
 fn expression_to_condition(expr: Expression<Unresolved>) -> Condition<Unresolved> {
     match expr {
         Expression::Condition(_, cond) => *cond,
+        Expression::Grouped(_, inner) => expression_to_condition(*inner),
         other => Condition::Bool(other.span(), Box::new(other)),
     }
 }

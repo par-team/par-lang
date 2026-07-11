@@ -899,6 +899,7 @@ impl Context {
     fn expression_to_condition(expr: Expression<Unresolved>) -> Condition<Unresolved> {
         match expr {
             Expression::Condition(_, condition) => *condition,
+            Expression::Grouped(_, inner) => Self::expression_to_condition(*inner),
             other => {
                 let span = other.span();
                 Condition::Bool(span, Box::new(other))
