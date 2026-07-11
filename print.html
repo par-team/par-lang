@@ -4098,8 +4098,8 @@ writer.case {
 </code></pre>
 <p>Since <code>try</code> is part of the pattern, it works in nested patterns too:</p>
 <pre><code class="language-par">let (try leftReader, try rightReader)! = (
-  leftPath.openFile,
-  rightPath.openFile,
+  Os.OpenFile(leftPath),
+  Os.OpenFile(rightPath),
 )!
 </code></pre>
 <p>And it works in receive commands, too. The <code>Console</code> type demonstrates this well:</p>
@@ -4240,18 +4240,12 @@ import {
 }
 
 dec ReadAll : [Os.Path] Try&lt;Os.Error, Bytes&gt;
-def ReadAll = [path] chan return {
-  catch e =&gt; { return &lt;&gt; .err e }
-  let try reader = Os.OpenFile(path)
-  let parser = Bytes.ParseReader(reader)
-  let try contents = parser.begin.case {
-    .empty! =&gt; .ok &lt;&lt;&gt;&gt;,
-    .some parser =&gt; parser.remainder,
-  }
-  return &lt;&gt; .ok contents
-}
+def ReadAll = [path]
+  catch e =&gt; .err e in
+  let try reader = Os.OpenFile(path) in
+  Bytes.ReadAll(reader)
 </code></pre>
-<p>This function uses <code>Bytes.ParseReader</code> to convert the chunked <code>Bytes.Reader</code> from <code>path.openFile</code> into a parser, then reads the remaining contents from the non-empty parser branch. The <code>catch</code> block propagates any errors by linking them into an <code>.err</code> result, while success links the contents into an <code>.ok</code> result.</p>
+<p>This function opens a file with <code>Os.OpenFile(path)</code>, then uses <code>Bytes.ReadAll</code> to collect the chunked <code>Bytes.Reader</code> into a single <code>Bytes</code> value. The <code>catch</code> block propagates any errors as an <code>.err</code> result, while success returns the contents as <code>.ok</code>.</p>
 <h2 id="providing-defaults-with-default"><a class="header" href="#providing-defaults-with-default">Providing defaults with <code>default</code></a></h2>
 <p>Sometimes you don’t want to branch on a missing optional value — you want to replace it with a fallback and keep going. The <code>default</code> sugar does exactly that for <code>Option</code> values.</p>
 <p>This is separate from <code>try</code>/<code>catch</code>: <code>try</code> unwraps <code>Try</code> values and propagates <code>.err</code>, while <code>default</code> unwraps <code>Option</code> values and replaces <code>.none!</code>. If you have a <code>Try</code> and want to ignore the error, convert it first with <code>Try.ToOption</code>.</p>
