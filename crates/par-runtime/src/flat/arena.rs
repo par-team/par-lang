@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 #[derive(Serialize, Deserialize)]
 pub struct Arena<Ext: Clone> {
     pub(crate) nodes: Vec<Global<Ext>>,
-    pub(crate) strings: String,
+    pub(crate) strings: Vec<String>,
     pub(crate) string_to_location: BTreeMap<String, Index<Ext, str>>,
     pub(crate) case_branches: Vec<(Index<Ext, str>, PackageBody<Ext>)>,
     #[serde(
@@ -59,7 +59,7 @@ impl<Ext: Clone> Default for Arena<Ext> {
     fn default() -> Self {
         Self {
             nodes: vec![],
-            strings: String::new(),
+            strings: vec![],
             string_to_location: BTreeMap::new(),
             case_branches: vec![],
             packages: vec![],
@@ -87,7 +87,7 @@ impl<Ext: Clone> Arena<Ext> {
             + self.case_branches.len() * size_of::<(Index<Ext, str>, PackageBody<Ext>)>()
     }
     pub fn empty_string(&self) -> Index<Ext, str> {
-        Index((0, 0))
+        Index(0)
     }
     pub fn intern(&mut self, s: &str) -> Index<Ext, str> {
         if s.is_empty() {
@@ -209,14 +209,14 @@ sized_indexable!(packages, OnceLock<Package<Ext>>);
 sized_indexable!(nodes, Global<Ext>);
 
 impl<Ext: Clone> Indexable<Ext> for str {
-    type Store = (usize, usize);
+    type Store = usize;
     fn get<'s>(store: &'s Arena<Ext>, index: Index<Ext, Self>) -> &'s Self {
-        &store.strings[index.0.0..index.0.0 + index.0.1]
+        &store.strings[index.0]
     }
     fn alloc_clone<'s>(store: &'s mut Arena<Ext>, data: &Self) -> Index<Ext, Self> {
-        let start = store.strings.len();
-        store.strings.push_str(data);
-        Index((start, data.len()))
+        let index = store.strings.len();
+        store.strings.push(data.into());
+        Index(index)
     }
 }
 
