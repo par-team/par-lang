@@ -211,23 +211,19 @@ impl Handle {
 
     pub fn signal(&mut self, chosen: ArcStr) {
         let (payload, payload_h) = linked_pair();
-        let chosen = self
-            .linker
-            .arena
-            .interned(&chosen)
-            .unwrap_or_else(|| {
-                // This happens when we send a signal that the program doesn't have
-                // and that also isn't present in the types
-                // It might still be handled by an "else" branch then
-                eprintln!(
-                    "Attempted to signal a non-interned string: `{}`
+        let chosen = self.linker.arena.interned(&chosen).unwrap_or_else(|| {
+            // This happens when we send a signal that the program doesn't have
+            // and that also isn't present in the types
+            // It might still be handled by an "else" branch then
+            eprintln!(
+                "Attempted to signal a non-interned string: `{}`
                 This is most likely type error with built in definitions.
                 Sending an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            });
+                chosen
+            );
+            self.linker.arena.empty_string()
+        });
         let either = Node::Linear(Linear::Value(Box::new(Value::Either(chosen, payload))));
         let choice = core::mem::replace(&mut self.node, payload_h);
         self.linker.link(choice, either);
@@ -327,19 +323,16 @@ impl Handle {
     }
 
     fn intern_signal(&self, chosen: &ArcStr) -> Index<Linked, str> {
-        self.linker
-            .arena
-            .interned(&chosen)
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "Attempted to provide non-interned signal data: `{}`
+        self.linker.arena.interned(&chosen).unwrap_or_else(|| {
+            eprintln!(
+                "Attempted to provide non-interned signal data: `{}`
                 This is most likely a type error with built in definitions.
                 Providing an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            })
+                chosen
+            );
+            self.linker.arena.empty_string()
+        })
     }
 
     async fn data_from_value(&self, value: Value<Node<Linked>, Linked>) -> Result<Data> {
