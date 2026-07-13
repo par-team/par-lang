@@ -214,7 +214,7 @@ impl Handle {
         let chosen = self
             .linker
             .arena
-            .interned(chosen.as_str())
+            .interned(&chosen)
             .unwrap_or_else(|| {
                 // This happens when we send a signal that the program doesn't have
                 // and that also isn't present in the types
@@ -243,7 +243,7 @@ impl Handle {
             linker,
             node: payload,
         };
-        self.linker.arena.get(name).into()
+        self.linker.arena.get_arcstr(name).clone()
     }
 
     pub fn break_(mut self) {
@@ -329,7 +329,7 @@ impl Handle {
     fn intern_signal(&self, chosen: &ArcStr) -> Index<Linked, str> {
         self.linker
             .arena
-            .interned(chosen.as_str())
+            .interned(&chosen)
             .unwrap_or_else(|| {
                 eprintln!(
                     "Attempted to provide non-interned signal data: `{}`

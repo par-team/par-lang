@@ -3,6 +3,7 @@ use crate::flat::{
     runtime::PackageBody,
     show::{Showable, Shower},
 };
+use arcstr::ArcStr;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -14,7 +15,7 @@ use std::sync::OnceLock;
 #[derive(Serialize, Deserialize)]
 pub struct Arena<Ext: Clone> {
     pub(crate) nodes: Vec<Global<Ext>>,
-    pub(crate) strings: Vec<String>,
+    pub(crate) strings: Vec<ArcStr>,
     pub(crate) string_to_location: BTreeMap<String, Index<Ext, str>>,
     pub(crate) case_branches: Vec<(Index<Ext, str>, PackageBody<Ext>)>,
     #[serde(
@@ -89,23 +90,27 @@ impl<Ext: Clone> Arena<Ext> {
     pub fn empty_string(&self) -> Index<Ext, str> {
         Index(0)
     }
-    pub fn intern(&mut self, s: &str) -> Index<Ext, str> {
+    pub fn intern(&mut self, s: &ArcStr) -> Index<Ext, str> {
         if s.is_empty() {
             self.empty_string()
-        } else if let Some(s) = self.string_to_location.get(s) {
+        } else if let Some(s) = self.string_to_location.get(s.as_str()) {
             s.clone()
         } else {
-            let i = self.alloc_clone(s);
+            let i = Index(self.strings.len());
+            self.strings.push(s.clone());
             self.string_to_location.insert(s.to_string(), i.clone());
             i
         }
     }
-    pub fn interned(&self, s: &str) -> Option<Index<Ext, str>> {
+    pub fn interned(&self, s: &ArcStr) -> Option<Index<Ext, str>> {
         if s.is_empty() {
             Some(self.empty_string())
         } else {
-            self.string_to_location.get(s).cloned()
+            self.string_to_location.get(s.as_str()).cloned()
         }
+    }
+    pub fn get_arcstr<'s>(&'s self, index: Index<Ext, str>) -> &'s ArcStr {
+        &self.strings[index.0]
     }
 }
 
