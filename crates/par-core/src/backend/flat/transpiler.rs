@@ -80,7 +80,7 @@ impl Transpiled<Unlinked> {
                 match ty {
                     Type::Either(_, variants) | Type::Choice(_, variants) => {
                         for k in variants.keys() {
-                            arena.intern(k.string.as_str());
+                            arena.intern(&k.string);
                         }
                     }
                     _ => {}
@@ -273,7 +273,7 @@ impl ProgramTranspiler {
                 Global::Fanout(self.dest.alloc_clone(&s))
             }
             Tree::Signal(arc_str, tree) => Global::Value(GlobalValue::Either(
-                self.dest.intern(arc_str.as_str()),
+                self.dest.intern(&arc_str),
                 self.transpile_tree_and_alloc(*tree),
             )),
             Tree::Choice(captures, hash_map, els) => {
@@ -283,7 +283,7 @@ impl ProgramTranspiler {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .chain(els.map(|id| (ArcStr::from(""), id)))
                     .map(|(signal, id)| {
-                        let signal = self.dest.intern(signal.as_str());
+                        let signal = self.dest.intern(&signal);
                         let package = self.id_to_package.get(&id).unwrap().clone();
                         let (package, length) = self.transpile_casebranch_package(package);
                         maximum_casebranch_length = maximum_casebranch_length.max(length);
