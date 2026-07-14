@@ -27,6 +27,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod completion;
+
+pub use completion::{CompletionCandidate, CompletionCandidateKind};
+
 pub type ExternalModule = Module<Arc<process::Expression<(), Unresolved>>, Unresolved>;
 
 const MANIFEST_FILE: &str = "Par.toml";

@@ -10,7 +10,8 @@ use lsp_types::{self as lsp, Uri};
 use par_core::frontend::{Type, language::GlobalName};
 use par_core::source::{FileName, Span};
 use par_core::workspace::{
-    CheckedWorkspace, SourceOverrides, WorkspaceDiscoveryError, WorkspaceError,
+    CheckedWorkspace, CompletionCandidateKind, SourceOverrides, WorkspaceDiscoveryError,
+    WorkspaceError,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -283,6 +284,39 @@ impl Instance {
         )
     }
 
+    pub fn provide_completion(
+        &self,
+        params: &lsp::CompletionParams,
+    ) -> Option<lsp::CompletionResponse> {
+        tracing::debug!("Handling completion request with params: {:?}", params);
+
+        let checked = self.checked.as_ref()?;
+        let source = self.io.read(&self.uri)?;
+        let pos = params.text_document_position.position;
+        let items = checked
+            .dot_completions_at(&self.file, &source, pos.line, pos.character)
+            .into_iter()
+            .map(|candidate| {
+                let kind = match candidate.kind {
+                    CompletionCandidateKind::Keyword => lsp::CompletionItemKind::KEYWORD,
+                    CompletionCandidateKind::Branch => lsp::CompletionItemKind::ENUM_MEMBER,
+                    CompletionCandidateKind::ModuleType => lsp::CompletionItemKind::INTERFACE,
+                    CompletionCandidateKind::ModuleDeclaration => lsp::CompletionItemKind::FUNCTION,
+                };
+                lsp::CompletionItem {
+                    label: candidate.label,
+                    kind: Some(kind),
+                    detail: Some(candidate.detail),
+                    insert_text: Some(candidate.insert_text),
+                    insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+                    ..lsp::CompletionItem::default()
+                }
+            })
+            .collect();
+
+        Some(lsp::CompletionResponse::Array(items))
+    }
+
     pub fn handle_goto_declaration(
         &self,
         params: &lsp::GotoDefinitionParams,
@@ -404,16 +438,7 @@ impl Instance {
             }
         };
 
-        match result {
-            Ok((checked, errors)) => {
-                self.checked = Some(checked);
-                self.errors = errors;
-            }
-            Err(error) => {
-                self.checked = None;
-                self.errors = vec![error];
-            }
-        }
+        (self.checked, self.errors) = apply_compile_result(self.checked.take(), result);
         tracing::info!("Compiled!");
         // reset dirty flag after successful compile attempt
         self.dirty = false;
@@ -463,6 +488,16 @@ fn build_compile_result(
         })
         .collect();
     (Arc::new(build.checked), errors)
+}
+
+fn apply_compile_result<T>(
+    checked: Option<T>,
+    result: Result<(T, Vec<CompileError>), CompileError>,
+) -> (Option<T>, Vec<CompileError>) {
+    match result {
+        Ok((new_checked, new_errors)) => (Some(new_checked), new_errors),
+        Err(error) => (checked, vec![error]),
+    }
 }
 
 fn map_workspace_build_error(error: WorkspaceBuildError) -> CompileError {
@@ -561,5 +596,28 @@ mod tests {
         let (diagnostic_uri, diagnostic) = diagnostic_for_error(&errors[0], &main_uri);
         assert_eq!(diagnostic_uri, other_uri);
         assert_eq!(diagnostic.range.start.line, 2);
+    }
+
+    #[test]
+    fn completion_uses_last_good_checked_workspace_after_failed_compile() {
+        let (checked, errors) = apply_compile_result(
+            Some(()),
+            Err(CompileError::Discovery(
+                WorkspaceDiscoveryError::PackageRootNotFound {
+                    start: PathBuf::from("/virtual/Main.par"),
+                },
+            )),
+        );
+
+        assert_eq!(checked, Some(()));
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [CompileError::Discovery(
+                    WorkspaceDiscoveryError::PackageRootNotFound { .. }
+                )]
+            ),
+            "compile failure should record the new error"
+        );
     }
 }
