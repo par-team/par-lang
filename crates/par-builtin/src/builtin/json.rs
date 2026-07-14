@@ -3,27 +3,17 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use crate::builtin::list::readback_list;
 use arcstr::literal;
+use par_runtime::external_def;
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 use serde_json::{Map, Number, Value};
 
-macro_rules! core_json_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Json",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Json.{
+        Encode => json_encode,
+        Decode => json_decode,
+    }
 }
-
-core_json_external!("Encode", json_encode);
-core_json_external!("Decode", json_decode);
 
 #[derive(Clone, Debug)]
 enum JsonValue {

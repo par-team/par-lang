@@ -1,29 +1,19 @@
 //package: core
 use num_bigint::BigInt;
+use par_runtime::external_def;
 use par_runtime::primitive::Number;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
-macro_rules! core_number_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Number",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Number.{
+        Zero_ => number_zero,
+        Add => number_add,
+        Sub => number_sub,
+        Mul => number_mul,
+        Div => number_div,
+        Neg => number_neg,
+    }
 }
-
-core_number_external!("Zero_", number_zero);
-core_number_external!("Add", number_add);
-core_number_external!("Sub", number_sub);
-core_number_external!("Mul", number_mul);
-core_number_external!("Div", number_div);
-core_number_external!("Neg", number_neg);
 
 async fn number_zero(mut handle: Handle) {
     handle.receive().continue_();

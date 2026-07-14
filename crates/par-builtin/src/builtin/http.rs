@@ -30,26 +30,15 @@ use tokio::{net::TcpListener, signal, sync::Notify};
 use url::Url as ParsedUrl;
 
 use crate::builtin::{list::readback_list, url::provide_url_value};
-use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::{external_def, primitive::ParString};
 
-macro_rules! basic_http_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::BASIC,
-                path: &[],
-                module: "Http",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @basic/Http.{
+        Fetch => http_fetch,
+        Listen => http_listen,
+    }
 }
-
-basic_http_external!("Fetch", http_fetch);
-basic_http_external!("Listen", http_listen);
 
 // ----------
 

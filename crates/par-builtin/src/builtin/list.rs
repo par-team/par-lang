@@ -1,29 +1,19 @@
 //package: core
 use arcstr::literal;
+use par_runtime::external_def;
 use par_runtime::readback::{Data, Handle};
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 use std::future::Future;
 
-macro_rules! core_list_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "List",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/List.{
+        Sort => list_sort(false),
+        SortDesc => list_sort(true),
+        SortBy => list_sort_by(false),
+        SortDescBy => list_sort_by(true),
+        SortLinearBy => list_sort_linear_by(false),
+        SortLinearDescBy => list_sort_linear_by(true),
+    }
 }
-
-core_list_external!("Sort", list_sort, false);
-core_list_external!("SortDesc", list_sort, true);
-core_list_external!("SortBy", list_sort_by, false);
-core_list_external!("SortDescBy", list_sort_by, true);
-core_list_external!("SortLinearBy", list_sort_linear_by, false);
-core_list_external!("SortLinearDescBy", list_sort_linear_by, true);
 
 pub(super) async fn readback_list<T, F>(
     mut handle: Handle,

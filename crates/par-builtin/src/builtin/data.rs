@@ -1,24 +1,14 @@
 //package: core
 use arcstr::literal;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
-macro_rules! core_data_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Data",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Data.{
+        ToString => data_to_string,
+        Compare => data_compare,
+    }
 }
-
-core_data_external!("ToString", data_to_string);
-core_data_external!("Compare", data_compare);
 
 async fn data_to_string(mut handle: Handle) {
     let value = handle.receive().data().await;

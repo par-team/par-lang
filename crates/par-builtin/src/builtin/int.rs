@@ -4,8 +4,9 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -18,27 +19,17 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::Int)
 });
 
-macro_rules! core_int_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Int",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Int.{
+        Mod => int_mod,
+        Min => int_min,
+        Max => int_max,
+        Abs => int_abs,
+        Clamp => int_clamp,
+        Range => int_range,
+        FromString => int_from_string,
+    }
 }
-
-core_int_external!("Mod", int_mod);
-core_int_external!("Min", int_min);
-core_int_external!("Max", int_max);
-core_int_external!("Abs", int_abs);
-core_int_external!("Clamp", int_clamp);
-core_int_external!("Range", int_range);
-core_int_external!("FromString", int_from_string);
 
 async fn int_mod(mut handle: Handle) {
     let x = handle.receive().int().await;

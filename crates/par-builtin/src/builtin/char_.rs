@@ -4,8 +4,9 @@ use num_traits::ToPrimitive;
 
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -18,25 +19,15 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::Char)
 });
 
-macro_rules! core_char_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Char",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Char.{
+        Code => char_code,
+        FromCode => char_from_code,
+        Is => char_is,
+        ToLower => char_to_lower,
+        ToUpper => char_to_upper,
+    }
 }
-
-core_char_external!("Code", char_code);
-core_char_external!("FromCode", char_from_code);
-core_char_external!("Is", char_is);
-core_char_external!("ToLower", char_to_lower);
-core_char_external!("ToUpper", char_to_upper);
 
 async fn char_code(mut handle: Handle) {
     let c = handle.receive().char().await;
