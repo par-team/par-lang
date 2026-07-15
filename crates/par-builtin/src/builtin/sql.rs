@@ -27,6 +27,7 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
+use par_runtime::external_def;
 use tokio::time::timeout;
 
 use sqlx::any::{AnyArguments, AnyPoolOptions, AnyRow};
@@ -34,25 +35,12 @@ use sqlx::{Any, AnyPool, Column, Row as _, Transaction, TypeInfo, ValueRef};
 
 use par_runtime::primitive::{Number, ParString, Primitive};
 use par_runtime::readback::{Data, Handle};
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
 use crate::builtin::list::readback_list;
 
-macro_rules! basic_sql_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::BASIC,
-                path: &[],
-                module: "Sql",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @basic/Sql.Open => sql_open
 }
-
-basic_sql_external!("Open", sql_open);
 
 // All external waits are bounded by these defaults. A future `OpenWith(config)`
 // could expose them without changing the resource model.

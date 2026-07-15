@@ -5,8 +5,9 @@ use num_traits::ToPrimitive;
 use par_core::frontend::ExternalTypeDef;
 use par_core::frontend::{PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -19,23 +20,13 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::Byte)
 });
 
-macro_rules! core_byte_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Byte",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Byte.{
+        Code => byte_code,
+        FromCode => byte_from_code,
+        Is => byte_is,
+    }
 }
-
-core_byte_external!("Code", byte_code);
-core_byte_external!("FromCode", byte_from_code);
-core_byte_external!("Is", byte_is);
 
 async fn byte_code(mut handle: Handle) {
     let c = handle.receive().byte().await;

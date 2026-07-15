@@ -6,36 +6,26 @@ use jiff::civil::{DateTime, Weekday};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
+use par_runtime::external_def;
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
-macro_rules! core_time_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Time",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Time.{
+        Now_ => time_now,
+        FromUnixNanos_ => time_from_unix_nanos,
+        Show => time_show,
+        FromRFC3339 => time_from_rfc3339,
+        ToRFC3339 => time_to_rfc3339,
+        UTC => time_utc,
+        Local => time_local,
+        Offset => time_offset,
+        Zone => time_zone,
+        InZone => time_in_zone,
+        At => time_at,
+        Parse => time_parse,
+    }
 }
-
-core_time_external!("Now_", time_now);
-core_time_external!("FromUnixNanos_", time_from_unix_nanos);
-core_time_external!("Show", time_show);
-core_time_external!("FromRFC3339", time_from_rfc3339);
-core_time_external!("ToRFC3339", time_to_rfc3339);
-core_time_external!("UTC", time_utc);
-core_time_external!("Local", time_local);
-core_time_external!("Offset", time_offset);
-core_time_external!("Zone", time_zone);
-core_time_external!("InZone", time_in_zone);
-core_time_external!("At", time_at);
-core_time_external!("Parse", time_parse);
 
 const NANOS_PER_SEC: i128 = 1_000_000_000;
 

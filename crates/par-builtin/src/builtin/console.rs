@@ -2,8 +2,8 @@
 use std::io::{Write, stdin, stdout};
 
 use arcstr::literal;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
 use par_core::frontend::ParString;
 
@@ -46,18 +46,6 @@ async fn console_open(mut handle: Handle) {
     }
 }
 
-macro_rules! basic_console_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::BASIC,
-                path: &[],
-                module: "Console",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @basic/Console.Open => console_open
 }
-
-basic_console_external!("Open", console_open);

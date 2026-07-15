@@ -10,9 +10,9 @@ use crate::builtin::{
 };
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
-use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
+use par_runtime::{external_def, primitive::ParString};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -25,27 +25,17 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::String)
 });
 
-macro_rules! core_string_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "String",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/String.{
+        Builder => string_builder,
+        Parse => string_parser,
+        ParseReader => string_parser_from_reader,
+        Quote => string_quote,
+        FromBytes => string_from_bytes,
+        ToLower => string_to_lower,
+        ToUpper => string_to_upper,
+    }
 }
-
-core_string_external!("Builder", string_builder);
-core_string_external!("Parse", string_parser);
-core_string_external!("ParseReader", string_parser_from_reader);
-core_string_external!("Quote", string_quote);
-core_string_external!("FromBytes", string_from_bytes);
-core_string_external!("ToLower", string_to_lower);
-core_string_external!("ToUpper", string_to_upper);
 
 async fn string_builder(mut handle: Handle) {
     let mut buf = String::new();

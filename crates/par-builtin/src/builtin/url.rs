@@ -1,26 +1,14 @@
 use arcstr::literal;
+use par_runtime::external_def;
 use percent_encoding::percent_decode_str;
 use url::Url as ParsedUrl;
 
 use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
-macro_rules! core_url_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Url",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Url.FromString => url_from_string
 }
-
-core_url_external!("FromString", url_from_string);
 
 async fn url_from_string(mut handle: Handle) {
     let input = handle.receive().string().await;
