@@ -16,7 +16,8 @@ async fn console_open(mut handle: Handle) {
             }
 
             "print" => {
-                println!("{}", handle.receive().string().await.as_str(),);
+                let string = handle.receive().string().await;
+                let _ = writeln!(stdout(), "{}", string.as_str());
             }
 
             "prompt" => {
