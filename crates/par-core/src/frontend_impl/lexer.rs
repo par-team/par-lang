@@ -805,9 +805,9 @@ pub(crate) fn lex_with_comments<'s>(input: &'s str, file: &FileName) -> Lexed<'s
 
 fn end_point_for_raw(start: Point, raw: &str) -> Point {
     let newline_count = raw.bytes().filter(|&byte| byte == b'\n').count() as u32;
-    let end_column = match raw.as_bytes().iter().rposition(|&byte| byte == b'\n') {
-        Some(last_newline) => (raw.len() - last_newline - 1) as u32,
-        None => start.column + raw.len() as u32,
+    let end_column = match raw.rsplit_once('\n') {
+        Some((_, last_line)) => last_line.encode_utf16().count() as u32,
+        None => start.column + raw.encode_utf16().count() as u32,
     };
     Point {
         offset: start.offset + raw.len() as u32,
@@ -821,6 +821,31 @@ mod lexer_test {
     use super::*;
 
     const FILE: FileName = FileName(arcstr::literal!("Test.par"));
+
+    #[test]
+    fn columns_count_utf16_code_units() {
+        let start = Point {
+            offset: 4,
+            row: 2,
+            column: 3,
+        };
+        assert_eq!(
+            end_point_for_raw(start, "é😀"),
+            Point {
+                offset: 10,
+                row: 2,
+                column: 6,
+            }
+        );
+        assert_eq!(
+            end_point_for_raw(start, "é\n😀"),
+            Point {
+                offset: 11,
+                row: 3,
+                column: 2,
+            }
+        );
+    }
 
     #[test]
     fn tok() {

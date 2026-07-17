@@ -268,6 +268,7 @@ impl<'c> LanguageServer<'c> {
 
 fn initialize_lsp(connection: &Connection) -> InitializeParams {
     let server_capabilities = lsp::ServerCapabilities {
+        position_encoding: Some(lsp::PositionEncodingKind::UTF16),
         text_document_sync: Some(lsp::TextDocumentSyncCapability::Kind(
             lsp::TextDocumentSyncKind::FULL,
         )),
