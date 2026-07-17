@@ -52,6 +52,10 @@ pub mod frontend {
         parse_source_file_impl(source, file)
     }
 
+    pub fn is_lowercase_identifier(identifier: &str) -> bool {
+        crate::frontend_impl::lexer::is_lowercase_identifier(identifier)
+    }
+
     pub fn lower(module: HighLevelModule) -> Result<LowLevelUnresolvedModule, CompileError> {
         let compiled_definitions = module
             .definitions
