@@ -645,7 +645,7 @@ fn reader_to_body(reader: Handle) -> StreamBody<mpsc::Receiver<Result<Frame<Byte
                             match reader.case().await.as_str() {
                                 "ok" => reader.continue_(),
                                 "err" => {
-                                    let _ = reader.string();
+                                    let _ = reader.string().await;
                                 }
                                 _ => unreachable!(),
                             }
