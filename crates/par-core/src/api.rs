@@ -67,8 +67,7 @@ pub mod frontend {
                     body: match body {
                         DefinitionBody::Par(expr) => {
                             let compiled = Context::new().compile_expression(&expr)?;
-                            let compiled =
-                                compiled.optimize().fix_captures().0.optimize_subject(None);
+                            let compiled = compiled.optimize().fix_captures().0;
                             DefinitionBody::Par(compiled)
                         }
                         DefinitionBody::External(span) => DefinitionBody::External(span),
