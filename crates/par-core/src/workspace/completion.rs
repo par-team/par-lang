@@ -485,7 +485,7 @@ fn loop_labels_before_dot(source: &str, dot: usize) -> BTreeSet<String> {
     labels
 }
 
-/// Converts a zero-based `(row, column)` position in `source` to a byte `offset`.
+/// Converts a zero-based `(row, UTF-16 column)` position in `source` to a byte `offset`.
 ///
 /// Returns `None` when the position is out of bounds or not on a UTF-8 boundary.
 /// Example: `offset_for_position("a\nb", 1, 0) == Some(2)`.
@@ -500,13 +500,13 @@ fn offset_for_position(source: &str, row: u32, column: u32) -> Option<usize> {
             current_row += 1;
             current_column = 0;
         } else {
-            current_column += 1;
+            current_column += ch.len_utf16() as u32;
         }
     }
     (current_row == row && current_column == column).then_some(source.len())
 }
 
-/// Converts a byte `offset` in `source` to zero-based `(row, column)`.
+/// Converts a byte `offset` in `source` to zero-based `(row, UTF-16 column)`.
 ///
 /// Returns `None` when `offset` is out of bounds or not on a UTF-8 boundary.
 /// Example: `row_and_column_for_offset("a\nb", 2) == Some((1, 0))`.
@@ -520,7 +520,7 @@ fn row_and_column_for_offset(source: &str, offset: usize) -> Option<(u32, u32)> 
             row += 1;
             column = 0;
         } else {
-            column += 1;
+            column += ch.len_utf16() as u32;
         }
     }
     Some((row, column))
@@ -539,6 +539,16 @@ mod tests {
 
     fn test_package_id() -> PackageId {
         PackageId::Special(literal!("__test__"))
+    }
+
+    #[test]
+    fn position_conversions_use_utf16_columns() {
+        let source = "aé😀\nb";
+
+        assert_eq!(row_and_column_for_offset(source, 7), Some((0, 4)));
+        assert_eq!(offset_for_position(source, 0, 4), Some(7));
+        assert_eq!(offset_for_position(source, 0, 3), None);
+        assert_eq!(row_and_column_for_offset(source, 8), Some((1, 0)));
     }
 
     fn parsed_package_from_source(source: &str) -> ParsedPackage {

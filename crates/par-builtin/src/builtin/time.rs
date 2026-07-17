@@ -3,6 +3,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::ToPrimitive;
 
 use jiff::civil::{DateTime, Weekday};
+use jiff::fmt::strtime::{BrokenDownTime, Config};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
@@ -225,7 +226,9 @@ fn provide_zoned(handle: Handle, zoned: Zoned) {
                     }
                     "format" => {
                         let layout = handle.receive().string().await;
-                        let rendered = zoned.strftime(layout.as_str()).to_string();
+                        let rendered = BrokenDownTime::from(&zoned)
+                            .to_string_with_config(&Config::new().lenient(true), layout.as_str())
+                            .unwrap_or_else(|_| layout.as_str().to_owned());
                         handle.provide_string(ParString::from(rendered));
                         return;
                     }

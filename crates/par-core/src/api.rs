@@ -52,6 +52,10 @@ pub mod frontend {
         parse_source_file_impl(source, file)
     }
 
+    pub fn is_lowercase_identifier(identifier: &str) -> bool {
+        crate::frontend_impl::lexer::is_lowercase_identifier(identifier)
+    }
+
     pub fn lower(module: HighLevelModule) -> Result<LowLevelUnresolvedModule, CompileError> {
         let compiled_definitions = module
             .definitions
@@ -63,8 +67,7 @@ pub mod frontend {
                     body: match body {
                         DefinitionBody::Par(expr) => {
                             let compiled = Context::new().compile_expression(&expr)?;
-                            let compiled =
-                                compiled.optimize().fix_captures().0.optimize_subject(None);
+                            let compiled = compiled.optimize().fix_captures().0;
                             DefinitionBody::Par(compiled)
                         }
                         DefinitionBody::External(span) => DefinitionBody::External(span),

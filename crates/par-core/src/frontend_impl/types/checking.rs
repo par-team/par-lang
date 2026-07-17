@@ -1999,6 +1999,28 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+        if let Expression::Variable(variable_span, variable, (), usage) = expression.as_ref()
+            && variable == inference_subject
+            && matches!(usage, VariableUsage::Move)
+        {
+            let (process, typ) = self.infer_process(process, name, emit);
+            return (
+                Arc::new(Process::Let {
+                    span: span.clone(),
+                    name: name.clone(),
+                    annotation: annotation.clone(),
+                    typ: typ.clone(),
+                    value: Arc::new(Expression::Variable(
+                        variable_span.clone(),
+                        variable.clone(),
+                        typ.clone(),
+                        usage.clone(),
+                    )),
+                    then: process,
+                }),
+                typ,
+            );
+        }
         let (expression, typ) = self.infer_expression(Some(inference_subject), expression, emit);
         self.finish_infer_process_let(
             span,

@@ -55,7 +55,7 @@ async fn string_builder(mut handle: Handle) {
 
 async fn string_quote(mut handle: Handle) {
     let s = handle.receive().string().await;
-    handle.provide_string(ParString::from(format!("{:?}", s)));
+    handle.provide_string(ParString::from(format!("{:?}", s.as_str())));
 }
 
 async fn string_parser(mut handle: Handle) {
