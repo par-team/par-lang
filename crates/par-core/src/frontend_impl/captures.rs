@@ -1,6 +1,6 @@
 use super::{
     language::{LocalName, Unresolved},
-    process::{Command, Expression, Process},
+    process::{Command, Expression, Process, Step, TerminalCommand, Terminator},
 };
 use crate::location::Span;
 use indexmap::IndexMap;
@@ -142,39 +142,72 @@ impl CaptureAnalysis {
         process: &Process<(), Unresolved>,
         env: &LoopEnv,
     ) -> (Arc<Process<(), Unresolved>>, Captures) {
-        match process {
-            Process::Let {
-                span,
-                name,
-                annotation,
-                typ,
-                value,
-                then,
-            } => {
-                let (then, mut caps) = self.fix_process(then, env);
-                caps.remove(name);
-                let (value, caps1) = self.fix_expression(value, env, &caps);
-                caps.extend(caps1);
-                (
-                    Arc::new(Process::Let {
+        let (terminator, mut caps) = self.fix_terminator(&process.terminator, env);
+        let mut steps = Vec::with_capacity(process.steps.len());
+
+        for step in process.steps.iter().rev() {
+            match step {
+                Step::Let {
+                    span,
+                    name,
+                    annotation,
+                    typ,
+                    value,
+                } => {
+                    caps.remove(name);
+                    let (value, value_caps) = self.fix_expression(value, env, &caps);
+                    caps.extend(value_caps);
+                    steps.push(Step::Let {
                         span: span.clone(),
                         name: name.clone(),
                         annotation: annotation.clone(),
-                        typ: typ.clone(),
+                        typ: *typ,
                         value,
-                        then,
-                    }),
-                    caps,
-                )
+                    });
+                }
+                Step::Do {
+                    span,
+                    name,
+                    typ,
+                    command,
+                    ..
+                } => {
+                    let (command, mut command_caps) = self.fix_command(command, env, caps);
+                    let usage = if command_caps.contains(name) {
+                        VariableUsage::Copy
+                    } else {
+                        VariableUsage::Move
+                    };
+                    command_caps.add(name.clone(), span.clone(), VariableUsage::Unknown);
+                    caps = command_caps;
+                    steps.push(Step::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage,
+                        typ: *typ,
+                        command,
+                    });
+                }
             }
-            Process::Do {
+        }
+        steps.reverse();
+        (Arc::new(Process::new(steps, terminator)), caps)
+    }
+
+    fn fix_terminator(
+        &self,
+        terminator: &Terminator<(), Unresolved>,
+        env: &LoopEnv,
+    ) -> (Terminator<(), Unresolved>, Captures) {
+        match terminator {
+            Terminator::Do {
                 span,
                 name,
-                usage: _usage,
                 typ,
                 command,
+                ..
             } => {
-                let (command, mut caps) = self.fix_command(command, span, env);
+                let (command, mut caps) = self.fix_terminal_command(command, span, env);
                 let usage = if caps.contains(name) {
                     VariableUsage::Copy
                 } else {
@@ -182,17 +215,17 @@ impl CaptureAnalysis {
                 };
                 caps.add(name.clone(), span.clone(), VariableUsage::Unknown);
                 (
-                    Arc::new(Process::Do {
+                    Terminator::Do {
                         span: span.clone(),
                         name: name.clone(),
                         usage,
-                        typ: typ.clone(),
+                        typ: *typ,
                         command,
-                    }),
+                    },
                     caps,
                 )
             }
-            Process::Poll {
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -225,7 +258,7 @@ impl CaptureAnalysis {
 
                 let poll_caps = self.poll_caps.get(point).cloned().unwrap_or_default();
                 (
-                    Arc::new(Process::Poll {
+                    Terminator::Poll {
                         span: span.clone(),
                         kind: kind.clone(),
                         driver: driver.clone(),
@@ -236,11 +269,11 @@ impl CaptureAnalysis {
                         captures: poll_caps,
                         then,
                         else_,
-                    }),
+                    },
                     caps,
                 )
             }
-            Process::Submit {
+            Terminator::Submit {
                 span,
                 driver,
                 point,
@@ -259,79 +292,71 @@ impl CaptureAnalysis {
                 }
 
                 (
-                    Arc::new(Process::Submit {
+                    Terminator::Submit {
                         span: span.clone(),
                         driver: driver.clone(),
                         point: point.clone(),
                         values: fixed_values,
                         captures: poll_caps,
-                    }),
+                    },
                     caps,
                 )
             }
-            Process::Block(span, index, body, process) => {
+            Terminator::Block(span, index, body, process) => {
                 let (process, caps) = self.fix_process(process, env);
                 let body_env = self.block_envs.get(index).cloned().unwrap_or_default();
                 let (body, _body_caps) = self.fix_process(body, &body_env);
-                (
-                    Arc::new(Process::Block(span.clone(), *index, body, process)),
-                    caps,
-                )
+                (Terminator::Block(span.clone(), *index, body, process), caps)
             }
-            Process::Goto(span, index, _) => {
+            Terminator::Goto(span, index, _) => {
                 let caps = self.block_caps.get(index).cloned().unwrap_or_default();
-                (
-                    Arc::new(Process::Goto(span.clone(), *index, caps.clone())),
-                    caps,
-                )
+                (Terminator::Goto(span.clone(), *index, caps.clone()), caps)
             }
-            Process::Unreachable(span) => (
-                Arc::new(Process::Unreachable(span.clone())),
-                Captures::new(),
-            ),
+            Terminator::Unreachable(span) => {
+                (Terminator::Unreachable(span.clone()), Captures::new())
+            }
         }
     }
 
     fn fix_command(
         &self,
         command: &Command<(), Unresolved>,
-        span: &Span,
         env: &LoopEnv,
+        mut caps: Captures,
     ) -> (Command<(), Unresolved>, Captures) {
         match command {
-            Command::Noop(process) => {
-                let (process, caps) = self.fix_process(process, env);
-                (Command::Noop(process), caps)
-            }
-            Command::Link(expression) => {
-                let (expression, caps) = self.fix_expression(expression, env, &Captures::new());
-                (Command::Link(expression), caps)
-            }
-            Command::Send(argument, process) => {
-                let (process, mut caps) = self.fix_process(process, env);
+            Command::Noop => (Command::Noop, caps),
+            Command::Send(argument) => {
                 let (argument, caps1) = self.fix_expression(argument, env, &caps);
                 caps.extend(caps1);
-                (Command::Send(argument, process), caps)
+                (Command::Send(argument), caps)
             }
-            Command::Receive(parameter, annotation, typ, process, vars) => {
-                let (process, mut caps) = self.fix_process(process, env);
+            Command::Receive(parameter, annotation, typ, vars) => {
                 caps.remove(parameter);
                 (
-                    Command::Receive(
-                        parameter.clone(),
-                        annotation.clone(),
-                        typ.clone(),
-                        process,
-                        vars.clone(),
-                    ),
+                    Command::Receive(parameter.clone(), annotation.clone(), *typ, vars.clone()),
                     caps,
                 )
             }
-            Command::Signal(chosen, process) => {
-                let (process, caps) = self.fix_process(process, env);
-                (Command::Signal(chosen.clone(), process), caps)
+            Command::Signal(chosen) => (Command::Signal(chosen.clone()), caps),
+            Command::Continue => (Command::Continue, caps),
+            Command::SendType(argument) => (Command::SendType(argument.clone()), caps),
+            Command::ReceiveType(parameter) => (Command::ReceiveType(parameter.clone()), caps),
+        }
+    }
+
+    fn fix_terminal_command(
+        &self,
+        command: &TerminalCommand<(), Unresolved>,
+        span: &Span,
+        env: &LoopEnv,
+    ) -> (TerminalCommand<(), Unresolved>, Captures) {
+        match command {
+            TerminalCommand::Link(expression) => {
+                let (expression, caps) = self.fix_expression(expression, env, &Captures::new());
+                (TerminalCommand::Link(expression), caps)
             }
-            Command::Case(branches, processes, else_process) => {
+            TerminalCommand::Case(branches, processes, else_process) => {
                 let mut fixed_processes = Vec::new();
                 let mut caps = Captures::new();
                 for process in processes {
@@ -345,7 +370,7 @@ impl CaptureAnalysis {
                     process
                 });
                 (
-                    Command::Case(
+                    TerminalCommand::Case(
                         branches.clone(),
                         fixed_processes.into_boxed_slice(),
                         fixed_else,
@@ -353,12 +378,8 @@ impl CaptureAnalysis {
                     caps,
                 )
             }
-            Command::Break => (Command::Break, Captures::new()),
-            Command::Continue(process) => {
-                let (process, caps) = self.fix_process(process, env);
-                (Command::Continue(process), caps)
-            }
-            Command::Begin {
+            TerminalCommand::Break => (TerminalCommand::Break, Captures::new()),
+            TerminalCommand::Begin {
                 unfounded,
                 label,
                 captures: _,
@@ -369,7 +390,7 @@ impl CaptureAnalysis {
                 let (process, caps) = self.fix_process(body, &env);
                 let loop_caps = self.begin_caps.get(&begin_id).cloned().unwrap_or_default();
                 (
-                    Command::Begin {
+                    TerminalCommand::Begin {
                         unfounded: *unfounded,
                         label: label.clone(),
                         captures: loop_caps,
@@ -378,7 +399,7 @@ impl CaptureAnalysis {
                     caps,
                 )
             }
-            Command::Loop(label, _, _) => match env.resolve(label) {
+            TerminalCommand::Loop(label, _, _) => match env.resolve(label) {
                 Some(begin_id) => {
                     let driver = self
                         .begin_drivers
@@ -387,23 +408,15 @@ impl CaptureAnalysis {
                         .unwrap_or_else(LocalName::invalid);
                     let loop_caps = self.begin_caps.get(&begin_id).cloned().unwrap_or_default();
                     (
-                        Command::Loop(label.clone(), driver, loop_caps.clone()),
+                        TerminalCommand::Loop(label.clone(), driver, loop_caps.clone()),
                         loop_caps,
                     )
                 }
                 _ => (
-                    Command::Loop(label.clone(), LocalName::invalid(), Captures::new()),
+                    TerminalCommand::Loop(label.clone(), LocalName::invalid(), Captures::new()),
                     Captures::new(),
                 ),
             },
-            Command::SendType(argument, process) => {
-                let (process, caps) = self.fix_process(process, env);
-                (Command::SendType(argument.clone(), process), caps)
-            }
-            Command::ReceiveType(parameter, process) => {
-                let (process, caps) = self.fix_process(process, env);
-                (Command::ReceiveType(parameter.clone(), process), caps)
-            }
         }
     }
 
@@ -553,20 +566,21 @@ impl BlockEnvAnalyzer {
     }
 
     fn visit_process(&mut self, process: &Process<(), Unresolved>, env: &LoopEnv) {
-        match process {
-            Process::Let { value, then, .. } => {
-                self.visit_expression(value, env);
-                self.visit_process(then, env);
+        for step in &process.steps {
+            match step {
+                Step::Let { value, .. } => self.visit_expression(value, env),
+                Step::Do { command, .. } => self.visit_command(command, env),
             }
-            Process::Do {
+        }
+
+        match &process.terminator {
+            Terminator::Do {
                 span,
                 name,
                 command,
                 ..
-            } => {
-                self.visit_command(command, span, name, env);
-            }
-            Process::Poll {
+            } => self.visit_terminal_command(command, span, name, env),
+            Terminator::Poll {
                 clients,
                 then,
                 else_,
@@ -578,47 +592,46 @@ impl BlockEnvAnalyzer {
                 self.visit_process(then, env);
                 self.visit_process(else_, env);
             }
-            Process::Submit { values, .. } => {
+            Terminator::Submit { values, .. } => {
                 for value in values {
                     self.visit_expression(value, env);
                 }
             }
-            Process::Block(_, index, body, process) => {
+            Terminator::Block(_, index, body, process) => {
                 self.blocks
                     .entry(*index)
                     .or_insert_with(|| Arc::clone(body));
                 self.visit_process(process, env);
             }
-            Process::Goto(_, index, _) => {
+            Terminator::Goto(_, index, _) => {
                 self.schedule_block(*index, env);
             }
-            Process::Unreachable(_) => {}
+            Terminator::Unreachable(_) => {}
         }
     }
 
-    fn visit_command(
+    fn visit_command(&mut self, command: &Command<(), Unresolved>, env: &LoopEnv) {
+        match command {
+            Command::Send(argument) => self.visit_expression(argument, env),
+            Command::Noop
+            | Command::Receive(..)
+            | Command::Signal(_)
+            | Command::Continue
+            | Command::SendType(_)
+            | Command::ReceiveType(_) => {}
+        }
+    }
+
+    fn visit_terminal_command(
         &mut self,
-        command: &Command<(), Unresolved>,
+        command: &TerminalCommand<(), Unresolved>,
         span: &Span,
         subject: &LocalName,
         env: &LoopEnv,
     ) {
         match command {
-            Command::Noop(process) => {
-                self.visit_process(process, env);
-            }
-            Command::Link(expression) => self.visit_expression(expression, env),
-            Command::Send(argument, process) => {
-                self.visit_expression(argument, env);
-                self.visit_process(process, env);
-            }
-            Command::Receive(_, _annotation, _typ, process, _vars) => {
-                self.visit_process(process, env);
-            }
-            Command::Signal(_, process) => {
-                self.visit_process(process, env);
-            }
-            Command::Case(_, processes, else_process) => {
+            TerminalCommand::Link(expression) => self.visit_expression(expression, env),
+            TerminalCommand::Case(_, processes, else_process) => {
                 for process in processes {
                     self.visit_process(process, env);
                 }
@@ -626,24 +639,14 @@ impl BlockEnvAnalyzer {
                     self.visit_process(process, env);
                 }
             }
-            Command::Break => {}
-            Command::Continue(process) => {
-                self.visit_process(process, env);
-            }
-            Command::Begin { label, body, .. } => {
+            TerminalCommand::Break | TerminalCommand::Loop(..) => {}
+            TerminalCommand::Begin { label, body, .. } => {
                 let begin_id = span.clone();
                 self.begin_drivers
                     .entry(begin_id.clone())
                     .or_insert_with(|| subject.clone());
                 let env = env.with_begin(label, begin_id);
                 self.visit_process(body, &env);
-            }
-            Command::Loop(_, _, _) => {}
-            Command::SendType(_, process) => {
-                self.visit_process(process, env);
-            }
-            Command::ReceiveType(_, process) => {
-                self.visit_process(process, env);
             }
         }
     }
@@ -771,27 +774,45 @@ impl<'a> CaptureCollector<'a> {
     }
 
     fn process_captures(&mut self, process: &Process<(), Unresolved>, env: &LoopEnv) -> Captures {
-        match process {
-            Process::Let {
-                name, value, then, ..
-            } => {
-                let mut caps = self.process_captures(then, env);
-                caps.remove(name);
-                let expr_caps = self.expression_captures(value, env);
-                caps.merge_missing(&expr_caps);
-                caps
+        let mut caps = self.terminator_captures(&process.terminator, env);
+        for step in process.steps.iter().rev() {
+            match step {
+                Step::Let { name, value, .. } => {
+                    caps.remove(name);
+                    let expr_caps = self.expression_captures(value, env);
+                    caps.merge_missing(&expr_caps);
+                }
+                Step::Do {
+                    span,
+                    name,
+                    command,
+                    ..
+                } => {
+                    caps = self.command_captures(command, env, caps);
+                    caps.add(name.clone(), span.clone(), VariableUsage::Unknown);
+                }
             }
-            Process::Do {
+        }
+        caps
+    }
+
+    fn terminator_captures(
+        &mut self,
+        terminator: &Terminator<(), Unresolved>,
+        env: &LoopEnv,
+    ) -> Captures {
+        match terminator {
+            Terminator::Do {
                 span,
                 name,
                 command,
                 ..
             } => {
-                let mut caps = self.command_captures(command, span, name, env);
+                let mut caps = self.terminal_command_captures(command, span, name, env);
                 caps.add(name.clone(), span.clone(), VariableUsage::Unknown);
                 caps
             }
-            Process::Poll {
+            Terminator::Poll {
                 driver,
                 point,
                 clients,
@@ -815,7 +836,7 @@ impl<'a> CaptureCollector<'a> {
 
                 poll_caps
             }
-            Process::Submit {
+            Terminator::Submit {
                 span,
                 driver,
                 point,
@@ -830,42 +851,53 @@ impl<'a> CaptureCollector<'a> {
                 }
                 caps
             }
-            Process::Block(_span, index, body, process) => {
+            Terminator::Block(_span, index, body, process) => {
                 let body_env = self.block_envs.get(index).cloned().unwrap_or_default();
                 let body_caps = self.process_captures(body, &body_env);
                 self.update_block_caps(*index, &body_caps);
                 self.process_captures(process, env)
             }
-            Process::Goto(_, index, _) => {
+            Terminator::Goto(_, index, _) => {
                 self.old_block_caps.get(index).cloned().unwrap_or_default()
             }
-            Process::Unreachable(_) => Captures::new(),
+            Terminator::Unreachable(_) => Captures::new(),
         }
     }
 
     fn command_captures(
         &mut self,
         command: &Command<(), Unresolved>,
+        env: &LoopEnv,
+        mut caps: Captures,
+    ) -> Captures {
+        match command {
+            Command::Noop
+            | Command::Signal(_)
+            | Command::Continue
+            | Command::SendType(_)
+            | Command::ReceiveType(_) => caps,
+            Command::Send(argument) => {
+                let arg_caps = self.expression_captures(argument, env);
+                caps.merge_missing(&arg_caps);
+                caps
+            }
+            Command::Receive(parameter, _annotation, _typ, _vars) => {
+                caps.remove(parameter);
+                caps
+            }
+        }
+    }
+
+    fn terminal_command_captures(
+        &mut self,
+        command: &TerminalCommand<(), Unresolved>,
         span: &Span,
         subject: &LocalName,
         env: &LoopEnv,
     ) -> Captures {
         match command {
-            Command::Noop(process) => self.process_captures(process, env),
-            Command::Link(expression) => self.expression_captures(expression, env),
-            Command::Send(argument, process) => {
-                let mut caps = self.process_captures(process, env);
-                let arg_caps = self.expression_captures(argument, env);
-                caps.merge_missing(&arg_caps);
-                caps
-            }
-            Command::Receive(parameter, _annotation, _typ, process, _vars) => {
-                let mut caps = self.process_captures(process, env);
-                caps.remove(parameter);
-                caps
-            }
-            Command::Signal(_, process) => self.process_captures(process, env),
-            Command::Case(_, processes, else_process) => {
+            TerminalCommand::Link(expression) => self.expression_captures(expression, env),
+            TerminalCommand::Case(_, processes, else_process) => {
                 let mut caps = Captures::new();
                 for process in processes {
                     let branch_caps = self.process_captures(process, env);
@@ -877,9 +909,8 @@ impl<'a> CaptureCollector<'a> {
                 }
                 caps
             }
-            Command::Break => Captures::new(),
-            Command::Continue(process) => self.process_captures(process, env),
-            Command::Begin { label, body, .. } => {
+            TerminalCommand::Break => Captures::new(),
+            TerminalCommand::Begin { label, body, .. } => {
                 let begin_id = span.clone();
                 let env = env.with_begin(label, begin_id.clone());
                 let body_caps = self.process_captures(body, &env);
@@ -888,12 +919,10 @@ impl<'a> CaptureCollector<'a> {
                 self.update_begin_caps(begin_id, &loop_caps);
                 body_caps
             }
-            Command::Loop(label, _, _) => env
+            TerminalCommand::Loop(label, _, _) => env
                 .resolve(label)
                 .and_then(|id| self.old_begin_caps.get(&id).cloned())
                 .unwrap_or_default(),
-            Command::SendType(_, process) => self.process_captures(process, env),
-            Command::ReceiveType(_, process) => self.process_captures(process, env),
         }
     }
 
