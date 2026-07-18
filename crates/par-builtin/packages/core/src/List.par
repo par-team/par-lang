@@ -36,7 +36,7 @@ export {
   // Applies a mapping function to each element of a list.
   //
   // ```par
-  // {*(1, 2, 3)}->List.Map(box [n] n * 2)
+  // *(1, 2, 3)->List.Map(box [n] n * 2)
   // // = *(2, 4, 6)
   // ```
   dec Map : <a>[List<a>] <b>[box [a] b] List<b>
@@ -59,7 +59,7 @@ export {
   // Expression syntax:
   //
   // ```par
-  // {0}->List.ForEach(*(1, 2, 3), box [sum, n] sum + n)
+  // 0->List.ForEach(*(1, 2, 3), box [sum, n] sum + n)
   // // = 6
   // ```
   //
