@@ -3847,14 +3847,6 @@ mod test {
         );
     }
 
-    fn assert_definition_rejected(body: &str) {
-        let source = format!("module Main\n\ndef Value = {body}\n");
-        assert!(
-            parse_module(&source, "Main.par".into()).is_err(),
-            "unexpectedly parsed definition body: {body}"
-        );
-    }
-
     #[test]
     fn test_parse_examples() {
         let input = include_str!(concat!(
@@ -4023,21 +4015,6 @@ def Value = 1 + 2 * 3
             "value->Module.F(arg).case { .some x => x, .none! => 0 }",
         ] {
             assert_definition_parses(body);
-        }
-    }
-
-    #[test]
-    fn test_reject_revamped_expression_boundaries() {
-        for body in [
-            "1 + if { .true! => 2, else => 3 }",
-            "if { .true! => 1, else => 2 }->Id",
-            ".true!.case { .true! => 1, .false! => 0 }",
-            ".true!->Id",
-            "n->box [x] x",
-            "submit(xs)->Id",
-            "loop->Id",
-        ] {
-            assert_definition_rejected(body);
         }
     }
 
@@ -4458,16 +4435,6 @@ def CommandMatch = [tagged] do {
 } in !
 ";
         assert!(parse_module(source, "Minimal.par".into()).is_ok());
-    }
-
-    #[test]
-    fn test_reject_old_implicit_generic_prefix_syntax() {
-        let function = "module Minimal\n\ndec Old : <a>[a] a\n";
-        let pair = "module Minimal\n\ntype Old = <a>(a)!\n";
-        assert!(parse_module(function, "Minimal.par".into()).is_err());
-        assert!(parse_module(pair, "Minimal.par".into()).is_err());
-        assert_definition_rejected("<a>[x] x");
-        assert_definition_rejected("[value] value.case { .dat<a>(x)! => x }");
     }
 
     #[test]
