@@ -340,23 +340,32 @@ fn validate_process_visibility(
     visibility: &VisibilityIndex,
     errors: &mut IndexSet<TypeError<Universal>>,
 ) {
-    match process.as_ref() {
-        process::Process::Let {
-            annotation,
-            value,
-            then,
-            ..
-        } => {
-            if let Some(annotation) = annotation {
-                validate_type_visibility_in_type(current_module, annotation, visibility, errors);
+    for step in &process.steps {
+        match step {
+            process::Step::Let {
+                annotation, value, ..
+            } => {
+                if let Some(annotation) = annotation {
+                    validate_type_visibility_in_type(
+                        current_module,
+                        annotation,
+                        visibility,
+                        errors,
+                    );
+                }
+                validate_expression_visibility(current_module, value, visibility, errors);
             }
-            validate_expression_visibility(current_module, value, visibility, errors);
-            validate_process_visibility(current_module, then, visibility, errors);
+            process::Step::Do { command, .. } => {
+                validate_command_visibility(current_module, command, visibility, errors);
+            }
         }
-        process::Process::Do { command, .. } => {
-            validate_command_visibility(current_module, command, visibility, errors);
+    }
+
+    match &process.terminator {
+        process::Terminator::Do { command, .. } => {
+            validate_terminal_command_visibility(current_module, command, visibility, errors);
         }
-        process::Process::Poll {
+        process::Terminator::Poll {
             clients,
             then,
             else_,
@@ -368,16 +377,16 @@ fn validate_process_visibility(
             validate_process_visibility(current_module, then, visibility, errors);
             validate_process_visibility(current_module, else_, visibility, errors);
         }
-        process::Process::Submit { values, .. } => {
+        process::Terminator::Submit { values, .. } => {
             for value in values {
                 validate_expression_visibility(current_module, value, visibility, errors);
             }
         }
-        process::Process::Block(_, _, body, then) => {
+        process::Terminator::Block(_, _, body, then) => {
             validate_process_visibility(current_module, body, visibility, errors);
             validate_process_visibility(current_module, then, visibility, errors);
         }
-        process::Process::Goto(..) | process::Process::Unreachable(..) => {}
+        process::Terminator::Goto(..) | process::Terminator::Unreachable(..) => {}
     }
 }
 
@@ -388,26 +397,33 @@ fn validate_command_visibility(
     errors: &mut IndexSet<TypeError<Universal>>,
 ) {
     match command {
-        process::Command::Noop(process) => {
-            validate_process_visibility(current_module, process, visibility, errors);
-        }
-        process::Command::Link(expression) => {
-            validate_expression_visibility(current_module, expression, visibility, errors);
-        }
-        process::Command::Send(argument, process) => {
+        process::Command::Noop | process::Command::Continue => {}
+        process::Command::Send(argument) => {
             validate_expression_visibility(current_module, argument, visibility, errors);
-            validate_process_visibility(current_module, process, visibility, errors);
         }
-        process::Command::Receive(_, annotation, _, process, _) => {
+        process::Command::Receive(_, annotation, _, _) => {
             if let Some(annotation) = annotation {
                 validate_type_visibility_in_type(current_module, annotation, visibility, errors);
             }
-            validate_process_visibility(current_module, process, visibility, errors);
         }
-        process::Command::Signal(_, process) => {
-            validate_process_visibility(current_module, process, visibility, errors);
+        process::Command::Signal(_) | process::Command::ReceiveType(_) => {}
+        process::Command::SendType(argument) => {
+            validate_type_visibility_in_type(current_module, argument, visibility, errors);
         }
-        process::Command::Case(_, processes, else_process) => {
+    }
+}
+
+fn validate_terminal_command_visibility(
+    current_module: &Universal,
+    command: &process::TerminalCommand<(), Universal>,
+    visibility: &VisibilityIndex,
+    errors: &mut IndexSet<TypeError<Universal>>,
+) {
+    match command {
+        process::TerminalCommand::Link(expression) => {
+            validate_expression_visibility(current_module, expression, visibility, errors);
+        }
+        process::TerminalCommand::Case(_, processes, else_process) => {
             for process in processes {
                 validate_process_visibility(current_module, process, visibility, errors);
             }
@@ -415,20 +431,9 @@ fn validate_command_visibility(
                 validate_process_visibility(current_module, process, visibility, errors);
             }
         }
-        process::Command::Break => {}
-        process::Command::Continue(process) => {
-            validate_process_visibility(current_module, process, visibility, errors);
-        }
-        process::Command::Begin { body, .. } => {
+        process::TerminalCommand::Break | process::TerminalCommand::Loop(..) => {}
+        process::TerminalCommand::Begin { body, .. } => {
             validate_process_visibility(current_module, body, visibility, errors);
-        }
-        process::Command::Loop(..) => {}
-        process::Command::SendType(argument, process) => {
-            validate_type_visibility_in_type(current_module, argument, visibility, errors);
-            validate_process_visibility(current_module, process, visibility, errors);
-        }
-        process::Command::ReceiveType(_, process) => {
-            validate_process_visibility(current_module, process, visibility, errors);
         }
     }
 }

@@ -832,6 +832,28 @@ struct Pass {
     disabled_reasons: Vec<CatchDisabledReason>,
 }
 
+enum CommandLoweringFrame {
+    Step(process::Step<(), Unresolved>),
+    Receive {
+        span: Span,
+        pattern: Pattern<Unresolved>,
+        vars: Vec<TypeParameter>,
+        original_object_name: Option<LocalName>,
+    },
+    Try {
+        span: Span,
+        catch_block: Arc<process::Process<(), Unresolved>>,
+    },
+    Default {
+        span: Span,
+        expression: Arc<process::Expression<(), Unresolved>>,
+    },
+    Pipe {
+        span: Span,
+        function: Arc<process::Expression<(), Unresolved>>,
+    },
+}
+
 impl Context {
     pub(crate) fn new() -> Self {
         Self {
@@ -847,19 +869,19 @@ impl Context {
     ) -> Arc<process::Process<(), Unresolved>> {
         match name {
             None => process,
-            Some(original) => Arc::new(process::Process::Let {
-                span: original.span.clone(),
-                name: original.clone(),
-                annotation: None,
-                typ: (),
-                value: Arc::new(process::Expression::Variable(
+            Some(original) => process::Process::let_step(
+                original.span.clone(),
+                original.clone(),
+                None,
+                (),
+                Arc::new(process::Expression::Variable(
                     original.span.clone(),
                     LocalName::subject(),
                     (),
                     VariableUsage::Unknown,
                 )),
-                then: process,
-            }),
+                process,
+            ),
         }
     }
 
@@ -1148,7 +1170,7 @@ impl Context {
         if !self.passes.fallthrough.take().unwrap().used {
             return Err(CompileError::UnreachableCode(body.span()));
         }
-        let result = Arc::new(process::Process::Block(
+        let result = process::Process::terminal(process::Terminator::Block(
             body.span(),
             block_index,
             body,
@@ -1186,13 +1208,13 @@ impl Context {
             chan_type: (),
             expr_type: (),
             process: self.with_fallthrough(body, |pass| {
-                Ok(Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(f(pass)?),
-                }))
+                Ok(process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(f(pass)?),
+                ))
             })?,
         }))
     }
@@ -1314,7 +1336,7 @@ impl Context {
         let build = |pass: &mut Self| {
             let then = then(pass)?;
             let else_ = pass.without_poll(|pass| else_(pass))?;
-            Ok(Arc::new(process::Process::Poll {
+            Ok(process::Process::terminal(process::Terminator::Poll {
                 span: span.clone(),
                 kind: kind.clone(),
                 driver: driver.clone(),
@@ -1357,7 +1379,7 @@ impl Context {
             })?,
         };
 
-        Ok(Arc::new(process::Process::Submit {
+        Ok(process::Process::terminal(process::Terminator::Submit {
             span: span.clone(),
             driver,
             point,
@@ -1399,7 +1421,7 @@ impl Context {
         if !current.unwrap().used {
             return Err(CompileError::UnreachableCode(body.span()));
         }
-        Ok(Arc::new(process::Process::Block(
+        Ok(process::Process::terminal(process::Terminator::Block(
             body.span(),
             block_index,
             body,
@@ -1422,13 +1444,13 @@ impl Context {
             chan_type: (),
             expr_type: (),
             process: self.with_catch(label, body, |pass| {
-                Ok(Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(f(pass)?),
-                }))
+                Ok(process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(f(pass)?),
+                ))
             })?,
         }))
     }
@@ -1473,23 +1495,24 @@ impl Context {
         process: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         if let Pattern::Name(_, name, annotation) = pattern {
-            return Ok(Arc::new(process::Process::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone(),
-                typ: (),
-                value: expression,
-                then: process,
-            }));
+            return Ok(process::Process::let_step(
+                span.clone(),
+                name.clone(),
+                annotation.clone(),
+                (),
+                expression,
+                process,
+            ));
         }
-        Ok(Arc::new(process::Process::Let {
-            span: span.clone(),
-            name: LocalName::match_(0),
-            annotation: pattern.annotation(),
-            typ: (),
-            value: expression,
-            then: self.compile_pattern_helper(pattern, 0, process)?,
-        }))
+        let then = self.compile_pattern_helper(pattern, 0, process)?;
+        Ok(process::Process::let_step(
+            span.clone(),
+            LocalName::match_(0),
+            pattern.annotation(),
+            (),
+            expression,
+            then,
+        ))
     }
 
     pub(crate) fn compile_pattern_chan(
@@ -1527,33 +1550,34 @@ impl Context {
         block: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         if let Pattern::Name(_, name, annotation) = pattern {
-            return Ok(Arc::new(process::Process::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone(),
-                typ: (),
-                value: Arc::new(process::Expression::Variable(
+            return Ok(process::Process::let_step(
+                span.clone(),
+                name.clone(),
+                annotation.clone(),
+                (),
+                Arc::new(process::Expression::Variable(
                     span.clone(),
                     LocalName::error(),
                     (),
                     VariableUsage::Unknown,
                 )),
-                then: block,
-            }));
+                block,
+            ));
         }
-        Ok(Arc::new(process::Process::Let {
-            span: span.clone(),
-            name: LocalName::match_(0),
-            annotation: None,
-            typ: (),
-            value: Arc::new(process::Expression::Variable(
+        let then = self.compile_pattern_helper(pattern, 0, block)?;
+        Ok(process::Process::let_step(
+            span.clone(),
+            LocalName::match_(0),
+            None,
+            (),
+            Arc::new(process::Expression::Variable(
                 span.clone(),
                 LocalName::error(),
                 (),
                 VariableUsage::Unknown,
             )),
-            then: self.compile_pattern_helper(pattern, 0, block)?,
-        }))
+            then,
+        ))
     }
 
     pub(crate) fn compile_pattern_receive(
@@ -1566,33 +1590,24 @@ impl Context {
         vars: Vec<TypeParameter>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         if let Pattern::Name(_, name, annotation) = pattern {
-            return Ok(Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: subject.clone(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Receive(
-                    name.clone(),
-                    annotation.clone(),
-                    (),
-                    process,
-                    vars,
-                ),
-            }));
-        }
-        Ok(Arc::new(process::Process::Do {
-            span: span.clone(),
-            name: subject.clone(),
-            usage: VariableUsage::Unknown,
-            typ: (),
-            command: process::Command::Receive(
-                LocalName::match_(level),
-                pattern.annotation(),
+            return Ok(process::Process::do_step(
+                span.clone(),
+                subject.clone(),
+                VariableUsage::Unknown,
                 (),
-                self.compile_pattern_helper(pattern, level, process)?,
-                vars,
-            ),
-        }))
+                process::Command::Receive(name.clone(), annotation.clone(), (), vars),
+                process,
+            ));
+        }
+        let then = self.compile_pattern_helper(pattern, level, process)?;
+        Ok(process::Process::do_step(
+            span.clone(),
+            subject.clone(),
+            VariableUsage::Unknown,
+            (),
+            process::Command::Receive(LocalName::match_(level), pattern.annotation(), (), vars),
+            then,
+        ))
     }
 
     fn compile_pattern_helper(
@@ -1602,19 +1617,19 @@ impl Context {
         process: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         match pattern {
-            Pattern::Name(span, name, annotation) => Ok(Arc::new(process::Process::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone(),
-                typ: (),
-                value: Arc::new(process::Expression::Variable(
+            Pattern::Name(span, name, annotation) => Ok(process::Process::let_step(
+                span.clone(),
+                name.clone(),
+                annotation.clone(),
+                (),
+                Arc::new(process::Expression::Variable(
                     span.clone(),
                     LocalName::match_(level),
                     (),
                     VariableUsage::Unknown,
                 )),
-                then: process,
-            })),
+                process,
+            )),
 
             Pattern::Receive(span, first, rest, vars) => {
                 let then_process = self.compile_pattern_helper(rest, level, process)?;
@@ -1628,41 +1643,43 @@ impl Context {
                 )
             }
 
-            Pattern::Continue(span) => Ok(Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::match_(level),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Continue(process),
-            })),
+            Pattern::Continue(span) => Ok(process::Process::do_step(
+                span.clone(),
+                LocalName::match_(level),
+                VariableUsage::Unknown,
+                (),
+                process::Command::Continue,
+                process,
+            )),
 
-            Pattern::ReceiveType(span, parameter, rest) => Ok(Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::match_(level),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::ReceiveType(
-                    parameter.clone(),
-                    self.compile_pattern_helper(rest, level, process)?,
-                ),
-            })),
+            Pattern::ReceiveType(span, parameter, rest) => {
+                let then = self.compile_pattern_helper(rest, level, process)?;
+                Ok(process::Process::do_step(
+                    span.clone(),
+                    LocalName::match_(level),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    then,
+                ))
+            }
 
             Pattern::Try(span, label, rest) => {
                 let catch_block = self.use_catch(span, label)?;
                 let catch_block = if let Some(original) = &self.original_object_name {
-                    Arc::new(process::Process::Let {
-                        span: original.span.clone(),
-                        name: original.clone(),
-                        annotation: None,
-                        typ: (),
-                        value: Arc::new(process::Expression::Variable(
+                    process::Process::let_step(
+                        original.span.clone(),
+                        original.clone(),
+                        None,
+                        (),
+                        Arc::new(process::Expression::Variable(
                             original.span.clone(),
                             LocalName::subject(),
                             (),
                             VariableUsage::Unknown,
                         )),
-                        then: catch_block,
-                    })
+                        catch_block,
+                    )
                 } else {
                     catch_block
                 };
@@ -1696,49 +1713,45 @@ impl Context {
             }
 
             Expression::List(span, items) => {
-                let mut process = Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(
-                        LocalName {
-                            span: span.clone(),
-                            string: literal!("end"),
-                        },
-                        Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: LocalName::result(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Break,
-                        }),
-                    ),
-                });
+                let mut process = process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Break,
+                );
+                process = process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(LocalName {
+                        span: span.clone(),
+                        string: literal!("end"),
+                    }),
+                    process,
+                );
                 for item in items.iter().rev() {
                     let span = item.span();
-                    process = Arc::new(process::Process::Do {
-                        span: span.clone(),
-                        name: LocalName::result(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Signal(
-                            LocalName {
-                                span: span.clone(),
-                                string: literal!("item"),
-                            },
-                            Arc::new(process::Process::Do {
-                                span,
-                                name: LocalName::result(),
-                                usage: VariableUsage::Unknown,
-                                typ: (),
-                                command: process::Command::Send(
-                                    self.compile_expression(item)?,
-                                    process,
-                                ),
-                            }),
-                        ),
-                    });
+                    process = process::Process::do_step(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::Command::Send(self.compile_expression(item)?),
+                        process,
+                    );
+                    process = process::Process::do_step(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::Command::Signal(LocalName {
+                            span,
+                            string: literal!("item"),
+                        }),
+                        process,
+                    );
                 }
                 Arc::new(process::Expression::Chan {
                     span: span.clone(),
@@ -1848,44 +1861,28 @@ impl Context {
             }
 
             Expression::Condition(span, condition) => {
-                let true_process = Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(
-                        LocalName {
+                let make_bool = |variant| {
+                    let end = process::Process::do_terminal(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Break,
+                    );
+                    process::Process::do_step(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::Command::Signal(LocalName {
                             span: span.clone(),
-                            string: literal!("true"),
-                        },
-                        Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: LocalName::result(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Break,
+                            string: ArcStr::from(variant),
                         }),
-                    ),
-                });
-                let false_process = Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(
-                        LocalName {
-                            span: span.clone(),
-                            string: literal!("false"),
-                        },
-                        Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: LocalName::result(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Break,
-                        }),
-                    ),
-                });
+                        end,
+                    )
+                };
+                let true_process = make_bool("true");
+                let false_process = make_bool("false");
                 let process = self.compile_condition_process(
                     condition.as_ref(),
                     true_process,
@@ -1940,18 +1937,18 @@ impl Context {
                     chan_annotation: None,
                     chan_type: (),
                     expr_type: (),
-                    process: Arc::new(process::Process::Let {
-                        span: span.clone(),
-                        name: LocalName::object(),
-                        annotation: Some(typ.clone()),
-                        typ: (),
-                        value: expression,
-                        then: Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: LocalName::result(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Link(Arc::new(
+                    process: process::Process::let_step(
+                        span.clone(),
+                        LocalName::object(),
+                        Some(typ.clone()),
+                        (),
+                        expression,
+                        process::Process::do_terminal(
+                            span.clone(),
+                            LocalName::result(),
+                            VariableUsage::Unknown,
+                            (),
+                            process::TerminalCommand::Link(Arc::new(
                                 process::Expression::Variable(
                                     span.clone(),
                                     LocalName::object(),
@@ -1959,8 +1956,8 @@ impl Context {
                                     VariableUsage::Unknown,
                                 ),
                             )),
-                        }),
-                    }),
+                        ),
+                    ),
                 })
             }
 
@@ -1995,13 +1992,13 @@ impl Context {
                         pattern,
                         span,
                         expression,
-                        Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: LocalName::result(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Link(body),
-                        }),
+                        process::Process::do_terminal(
+                            span.clone(),
+                            LocalName::result(),
+                            VariableUsage::Unknown,
+                            (),
+                            process::TerminalCommand::Link(body),
+                        ),
                     )?,
                 })
             }
@@ -2013,13 +2010,13 @@ impl Context {
                 block,
                 then,
             } => {
-                let block = Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(self.compile_expression(block)?),
-                });
+                let block = process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(self.compile_expression(block)?),
+                );
                 let block = self.compile_pattern_catch_block(pattern, span, block)?;
                 self.expr_with_catch(span, label.clone(), block, |pass| {
                     pass.compile_expression(then)
@@ -2036,14 +2033,14 @@ impl Context {
                         chan_annotation: None,
                         chan_type: (),
                         expr_type: (),
-                        process: Arc::new(process::Process::Let {
-                            span: span.clone(),
-                            name: LocalName::error(),
-                            annotation: None,
-                            typ: (),
-                            value: pass.compile_expression(expression)?,
-                            then: catch_block,
-                        }),
+                        process: process::Process::let_step(
+                            span.clone(),
+                            LocalName::error(),
+                            None,
+                            (),
+                            pass.compile_expression(expression)?,
+                            catch_block,
+                        ),
                     }))
                 })?
             }
@@ -2055,7 +2052,9 @@ impl Context {
             } => {
                 let else_proc = match else_ {
                     Some(expr) => self.compile_process(&link_process_from_expr(expr))?,
-                    None => Arc::new(process::Process::Unreachable(span.clone())),
+                    None => {
+                        process::Process::terminal(process::Terminator::Unreachable(span.clone()))
+                    }
                 };
                 let compiled = self.compile_if_branches(branches, else_proc, |body, pass| {
                     pass.compile_process(&link_process_from_expr(body))
@@ -2079,13 +2078,13 @@ impl Context {
                 let expression = self.compile_expression(expression)?;
                 self.expr_with_fallthrough(
                     span,
-                    Arc::new(process::Process::Do {
-                        span: span.clone(),
-                        name: LocalName::result(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Link(expression),
-                    }),
+                    process::Process::do_terminal(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Link(expression),
+                    ),
                     |pass| {
                         Ok(Arc::new(process::Expression::Chan {
                             span: span.clone(),
@@ -2138,14 +2137,14 @@ impl Context {
                     chan_annotation: None,
                     chan_type: (),
                     expr_type: (),
-                    process: Arc::new(process::Process::Let {
-                        span: span.clone(),
-                        name: LocalName::object(),
-                        annotation: None,
-                        typ: (),
-                        value: expr,
-                        then: process,
-                    }),
+                    process: process::Process::let_step(
+                        span.clone(),
+                        LocalName::object(),
+                        None,
+                        (),
+                        expr,
+                        process,
+                    ),
                 })
             }
         });
@@ -2164,25 +2163,26 @@ impl Context {
         Ok(match construct {
             Construct::Then(expression) => {
                 let expression = self.compile_expression(expression)?;
-                Arc::new(process::Process::Do {
-                    span: Span::None,
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(expression),
-                })
+                process::Process::do_terminal(
+                    Span::None,
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(expression),
+                )
             }
 
             Construct::Send(span, argument, construct) => {
                 let argument = self.compile_expression(argument)?;
                 let process = self.compile_construct(construct)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Send(argument, process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Send(argument),
+                    process,
+                )
             }
 
             Construct::Receive(span, pattern, construct, vars) => {
@@ -2199,13 +2199,14 @@ impl Context {
 
             Construct::Signal(span, chosen, construct) => {
                 let process = self.compile_construct(construct)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(chosen.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(chosen.clone()),
+                    process,
+                )
             }
 
             Construct::Case(span, ConstructBranches(construct_branches), else_branch) => {
@@ -2221,22 +2222,22 @@ impl Context {
                 };
                 let branches = Arc::from(branches);
                 let processes = Box::from(processes);
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Case(branches, processes, else_process),
-                })
+                process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Case(branches, processes, else_process),
+                )
             }
 
-            Construct::Break(span) => Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::result(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Break,
-            }),
+            Construct::Break(span) => process::Process::do_terminal(
+                span.clone(),
+                LocalName::result(),
+                VariableUsage::Unknown,
+                (),
+                process::TerminalCommand::Break,
+            ),
 
             Construct::Begin {
                 span,
@@ -2245,52 +2246,54 @@ impl Context {
                 then: construct,
             } => {
                 let process = self.compile_construct(construct)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Begin {
+                process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Begin {
                         unfounded: *unfounded,
                         label: label.clone(),
                         captures: Captures::new(),
                         body: process,
                     },
-                })
+                )
             }
 
-            Construct::Loop(span, label) => Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::result(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Loop(
+            Construct::Loop(span, label) => process::Process::do_terminal(
+                span.clone(),
+                LocalName::result(),
+                VariableUsage::Unknown,
+                (),
+                process::TerminalCommand::Loop(
                     label.clone(),
                     LocalName::invalid(),
                     Captures::new(),
                 ),
-            }),
+            ),
 
             Construct::SendType(span, argument, construct) => {
                 let process = self.compile_construct(construct)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::SendType(argument.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::SendType(argument.clone()),
+                    process,
+                )
             }
 
             Construct::ReceiveType(span, parameter, construct) => {
                 let process = self.compile_construct(construct)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::ReceiveType(parameter.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    process,
+                )
             }
         })
     }
@@ -2302,13 +2305,13 @@ impl Context {
         Ok(match branch {
             ConstructBranch::Then(_, expression) => {
                 let expression = self.compile_expression(expression)?;
-                Arc::new(process::Process::Do {
-                    span: Span::None,
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(expression),
-                })
+                process::Process::do_terminal(
+                    Span::None,
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(expression),
+                )
             }
 
             ConstructBranch::Receive(span, pattern, branch, vars) => {
@@ -2325,13 +2328,14 @@ impl Context {
 
             ConstructBranch::ReceiveType(span, parameter, branch) => {
                 let process = self.compile_construct_branch(branch)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::result(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::ReceiveType(parameter.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    process,
+                )
             }
         })
     }
@@ -2341,40 +2345,42 @@ impl Context {
         apply: &Apply<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         Ok(match apply {
-            Apply::Noop(span) => Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::result(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Link(Arc::new(process::Expression::Variable(
+            Apply::Noop(span) => process::Process::do_terminal(
+                span.clone(),
+                LocalName::result(),
+                VariableUsage::Unknown,
+                (),
+                process::TerminalCommand::Link(Arc::new(process::Expression::Variable(
                     span.clone(),
                     LocalName::object(),
                     (),
                     VariableUsage::Unknown,
                 ))),
-            }),
+            ),
 
             Apply::Send(span, expression, apply) => {
                 let expression = self.compile_expression(expression)?;
                 let process = self.compile_apply(apply)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Send(expression, process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Send(expression),
+                    process,
+                )
             }
 
             Apply::Signal(span, chosen, apply) => {
                 let process = self.compile_apply(apply)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(chosen.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(chosen.clone()),
+                    process,
+                )
             }
 
             Apply::Case(span, ApplyBranches(expression_branches), else_branch) => {
@@ -2390,13 +2396,13 @@ impl Context {
                 };
                 let branches = Arc::from(branches);
                 let processes = Box::from(processes);
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Case(branches, processes, else_process),
-                })
+                process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Case(branches, processes, else_process),
+                )
             }
 
             Apply::Begin {
@@ -2406,41 +2412,42 @@ impl Context {
                 then: apply,
             } => {
                 let process = self.compile_apply(apply)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Begin {
+                process::Process::do_terminal(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Begin {
                         unfounded: *unfounded,
                         label: label.clone(),
                         captures: Captures::new(),
                         body: process,
                     },
-                })
+                )
             }
 
-            Apply::Loop(span, label) => Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::object(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Loop(
+            Apply::Loop(span, label) => process::Process::do_terminal(
+                span.clone(),
+                LocalName::object(),
+                VariableUsage::Unknown,
+                (),
+                process::TerminalCommand::Loop(
                     label.clone(),
                     LocalName::invalid(),
                     Captures::new(),
                 ),
-            }),
+            ),
 
             Apply::SendType(span, argument, apply) => {
                 let process = self.compile_apply(apply)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::SendType(argument.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::SendType(argument.clone()),
+                    process,
+                )
             }
 
             Apply::Default(span, expr, apply) => {
@@ -2470,25 +2477,25 @@ impl Context {
         Ok(match branch {
             ApplyBranch::Then(span, name, expression) => {
                 let expression = self.compile_expression(expression)?;
-                Arc::new(process::Process::Let {
-                    span: span.clone(),
-                    name: name.clone(),
-                    annotation: None,
-                    typ: (),
-                    value: Arc::new(process::Expression::Variable(
+                process::Process::let_step(
+                    span.clone(),
+                    name.clone(),
+                    None,
+                    (),
+                    Arc::new(process::Expression::Variable(
                         span.clone(),
                         LocalName::object(),
                         (),
                         VariableUsage::Unknown,
                     )),
-                    then: Arc::new(process::Process::Do {
-                        span: span.clone(),
-                        name: LocalName::result(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Link(expression),
-                    }),
-                })
+                    process::Process::do_terminal(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Link(expression),
+                    ),
+                )
             }
 
             ApplyBranch::Receive(span, pattern, branch, vars) => {
@@ -2505,30 +2512,32 @@ impl Context {
 
             ApplyBranch::Continue(span, expression) => {
                 let expression = self.compile_expression(expression)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Continue(Arc::new(process::Process::Do {
-                        span: span.clone(),
-                        name: LocalName::result(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Link(expression),
-                    })),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Continue,
+                    process::Process::do_terminal(
+                        span.clone(),
+                        LocalName::result(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Link(expression),
+                    ),
+                )
             }
 
             ApplyBranch::ReceiveType(span, parameter, branch) => {
                 let process = self.compile_apply_branch(branch)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: LocalName::object(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::ReceiveType(parameter.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    process,
+                )
             }
 
             ApplyBranch::Try(span, label, branch) => {
@@ -2561,7 +2570,9 @@ impl Context {
                     self.with_fallthrough(tail, |pass| {
                         let else_proc = match else_ {
                             Some(proc) => pass.compile_process(proc)?,
-                            None => Arc::new(process::Process::Unreachable(span.clone())),
+                            None => process::Process::terminal(process::Terminator::Unreachable(
+                                span.clone(),
+                            )),
                         };
                         pass.compile_if_branches(branches, else_proc, |body, pass| {
                             pass.compile_process(body)
@@ -2570,7 +2581,9 @@ impl Context {
                 } else {
                     let else_proc = match else_ {
                         Some(proc) => self.compile_process(proc)?,
-                        None => Arc::new(process::Process::Unreachable(span.clone())),
+                        None => process::Process::terminal(process::Terminator::Unreachable(
+                            span.clone(),
+                        )),
                     };
                     self.compile_if_branches(branches, else_proc, |body, pass| {
                         pass.compile_process(body)
@@ -2673,14 +2686,14 @@ impl Context {
                     pass.enable_catches();
                     expression
                 })?;
-                Arc::new(process::Process::Let {
-                    span: span.clone(),
-                    name: LocalName::error(),
-                    annotation: None,
-                    typ: (),
-                    value: expression,
-                    then: catch_block,
-                })
+                process::Process::let_step(
+                    span.clone(),
+                    LocalName::error(),
+                    None,
+                    (),
+                    expression,
+                    catch_block,
+                )
             }
 
             Process::GlobalCommand(_, global_name, command) => {
@@ -2689,23 +2702,24 @@ impl Context {
                     span: span.clone(),
                     string: ArcStr::from(global_name.to_string()),
                 };
-                Arc::new(process::Process::Let {
-                    span: span.clone(),
-                    name: local_name.clone(),
-                    annotation: None,
-                    typ: (),
-                    value: Arc::new(process::Expression::Global(span, global_name.clone(), ())),
-                    then: self.compile_command(command, &local_name)?,
-                })
+                process::Process::let_step(
+                    span.clone(),
+                    local_name.clone(),
+                    None,
+                    (),
+                    Arc::new(process::Expression::Global(span, global_name.clone(), ())),
+                    self.compile_command(command, &local_name)?,
+                )
             }
 
-            Process::Command(_, name, Command::Then(next)) => Arc::new(process::Process::Do {
-                span: name.span.clone(),
-                name: name.clone(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Noop(self.compile_process(next)?),
-            }),
+            Process::Command(_, name, Command::Then(next)) => process::Process::do_step(
+                name.span.clone(),
+                name.clone(),
+                VariableUsage::Unknown,
+                (),
+                process::Command::Noop,
+                self.compile_process(next)?,
+            ),
 
             Process::Command(_, name, command) => {
                 let None = self.original_object_name else {
@@ -2725,19 +2739,19 @@ impl Context {
                         self.original_object_name.clone().unwrap().string
                     )
                 };
-                Arc::new(process::Process::Let {
-                    span: name.span.clone(),
-                    name: LocalName::subject(),
-                    annotation: None,
-                    typ: (),
-                    value: Arc::new(process::Expression::Variable(
+                process::Process::let_step(
+                    name.span.clone(),
+                    LocalName::subject(),
+                    None,
+                    (),
+                    Arc::new(process::Expression::Variable(
                         name.span.clone(),
                         name.clone(),
                         (),
                         VariableUsage::Unknown,
                     )),
-                    then: then_process,
-                })
+                    then_process,
+                )
             }
 
             Process::Fallthrough(span) => match self.use_fallthrough(span) {
@@ -2748,6 +2762,160 @@ impl Context {
     }
 
     pub(crate) fn compile_command(
+        &mut self,
+        command: &Command<Unresolved>,
+        object_name: &LocalName,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
+        let mut frames = Vec::new();
+        let mut command = command;
+
+        let mut process = loop {
+            match command {
+                Command::Send(span, argument, then) => {
+                    self.disable_catches(CatchDisabledReason::DifferentProcess);
+                    let argument = self.compile_expression(argument)?;
+                    self.enable_catches();
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::Send(argument),
+                    }));
+                    command = then;
+                }
+                Command::Receive(span, pattern, then, vars) => {
+                    frames.push(CommandLoweringFrame::Receive {
+                        span: span.clone(),
+                        pattern: pattern.clone(),
+                        vars: vars.clone(),
+                        original_object_name: self.original_object_name.clone(),
+                    });
+                    command = then;
+                }
+                Command::Signal(span, chosen, then) => {
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::Signal(chosen.clone()),
+                    }));
+                    command = then;
+                }
+                Command::SendType(span, argument, then) => {
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::SendType(argument.clone()),
+                    }));
+                    command = then;
+                }
+                Command::ReceiveType(span, parameter, then) => {
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::ReceiveType(parameter.clone()),
+                    }));
+                    command = then;
+                }
+                Command::Try(span, label, then) => {
+                    frames.push(CommandLoweringFrame::Try {
+                        span: span.clone(),
+                        catch_block: self.use_catch(span, label)?,
+                    });
+                    command = then;
+                }
+                Command::Default(span, expression, then) => {
+                    frames.push(CommandLoweringFrame::Default {
+                        span: span.clone(),
+                        expression: self.compile_expression(expression)?,
+                    });
+                    command = then;
+                }
+                Command::Pipe(span, function, then) => {
+                    self.disable_catches(CatchDisabledReason::DifferentProcess);
+                    let function = self.compile_expression(function)?;
+                    self.enable_catches();
+                    frames.push(CommandLoweringFrame::Pipe {
+                        span: span.clone(),
+                        function,
+                    });
+                    command = then;
+                }
+                Command::Then(_)
+                | Command::Link(..)
+                | Command::Case(..)
+                | Command::Break(_)
+                | Command::Continue(..)
+                | Command::Begin { .. }
+                | Command::Loop(..) => {
+                    break self.compile_command_terminal(command, object_name)?;
+                }
+            }
+        };
+
+        let flush_steps =
+            |steps: &mut Vec<process::Step<(), Unresolved>>,
+             process: Arc<process::Process<(), Unresolved>>| {
+                if steps.is_empty() {
+                    return process;
+                }
+                steps.reverse();
+                let mut builder = process::ProcessBuilder::new();
+                for step in steps.drain(..) {
+                    builder.push(step);
+                }
+                builder.finish_with(process)
+            };
+
+        let mut steps = Vec::new();
+        for frame in frames.into_iter().rev() {
+            match frame {
+                CommandLoweringFrame::Step(step) => steps.push(step),
+                CommandLoweringFrame::Receive {
+                    span,
+                    pattern,
+                    vars,
+                    original_object_name,
+                } => {
+                    process = flush_steps(&mut steps, process);
+                    let None = self.original_object_name else {
+                        unreachable!("original_object_name should be none after command")
+                    };
+                    self.original_object_name = original_object_name;
+                    process = self.compile_pattern_receive(
+                        &pattern,
+                        0,
+                        &span,
+                        object_name,
+                        process,
+                        vars,
+                    )?;
+                    self.original_object_name = None;
+                }
+                CommandLoweringFrame::Try { span, catch_block } => {
+                    process = flush_steps(&mut steps, process);
+                    process = self.compile_try(&span, object_name.clone(), catch_block, process);
+                }
+                CommandLoweringFrame::Default { span, expression } => {
+                    process = flush_steps(&mut steps, process);
+                    process = self.compile_default(&span, object_name.clone(), expression, process);
+                }
+                CommandLoweringFrame::Pipe { span, function } => {
+                    process = flush_steps(&mut steps, process);
+                    process = self.compile_pipe(&span, object_name.clone(), function, process);
+                }
+            }
+        }
+        Ok(flush_steps(&mut steps, process))
+    }
+
+    fn compile_command_terminal(
         &mut self,
         command: &Command<Unresolved>,
         object_name: &LocalName,
@@ -2764,13 +2932,13 @@ impl Context {
                 let expression = self.compile_expression(expression)?;
                 self.enable_catches();
                 self.original_object_name = None;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Link(expression),
-                })
+                process::Process::do_terminal(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Link(expression),
+                )
             }
 
             Command::Send(span, argument, command) => {
@@ -2778,13 +2946,14 @@ impl Context {
                 let argument = self.compile_expression(argument)?;
                 self.enable_catches();
                 let process = self.compile_command(command, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Send(argument, process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Send(argument),
+                    process,
+                )
             }
 
             Command::Receive(span, pattern, command, vars) => {
@@ -2808,13 +2977,14 @@ impl Context {
 
             Command::Signal(span, chosen, command) => {
                 let process = self.compile_command(command, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Signal(chosen.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(chosen.clone()),
+                    process,
+                )
             }
 
             Command::Case(
@@ -2846,13 +3016,13 @@ impl Context {
                         };
                         let branches = Arc::from(branches);
                         let processes = Box::from(processes);
-                        Ok(Arc::new(process::Process::Do {
-                            span: span.clone(),
-                            name: object_name.clone(),
-                            usage: VariableUsage::Unknown,
-                            typ: (),
-                            command: process::Command::Case(branches, processes, else_process),
-                        }))
+                        Ok(process::Process::do_terminal(
+                            span.clone(),
+                            object_name.clone(),
+                            VariableUsage::Unknown,
+                            (),
+                            process::TerminalCommand::Case(branches, processes, else_process),
+                        ))
                     })?
                 } else {
                     for (branch_name, process_branch) in process_branches {
@@ -2865,38 +3035,39 @@ impl Context {
                     };
                     let branches = Arc::from(branches);
                     let processes = Box::from(processes);
-                    Arc::new(process::Process::Do {
-                        span: span.clone(),
-                        name: object_name.clone(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Case(branches, processes, else_process),
-                    })
+                    process::Process::do_terminal(
+                        span.clone(),
+                        object_name.clone(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Case(branches, processes, else_process),
+                    )
                 };
                 self.restore_object_name(original, process)
             }
 
             Command::Break(span) => {
                 self.original_object_name = None;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Break,
-                })
+                process::Process::do_terminal(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Break,
+                )
             }
 
             Command::Continue(span, process) => {
                 self.original_object_name = None;
                 let process = self.compile_process(process)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Continue(process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Continue,
+                    process,
+                )
             }
 
             Command::Begin {
@@ -2906,55 +3077,57 @@ impl Context {
                 then: command,
             } => {
                 let process = self.compile_command(command, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Begin {
+                process::Process::do_terminal(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Begin {
                         unfounded: *unfounded,
                         label: label.clone(),
                         captures: Captures::new(),
                         body: process,
                     },
-                })
+                )
             }
 
             Command::Loop(span, label) => {
                 self.original_object_name = None;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Loop(
+                process::Process::do_terminal(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Loop(
                         label.clone(),
                         LocalName::invalid(),
                         Captures::new(),
                     ),
-                })
+                )
             }
 
             Command::SendType(span, argument, command) => {
                 let process = self.compile_command(command, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::SendType(argument.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::SendType(argument.clone()),
+                    process,
+                )
             }
 
             Command::ReceiveType(span, parameter, command) => {
                 let process = self.compile_command(command, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::ReceiveType(parameter.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    process,
+                )
             }
 
             Command::Try(span, label, command) => {
@@ -2989,19 +3162,19 @@ impl Context {
 
             CommandBranch::BindThen(span, name, process) => {
                 let process = self.compile_process(process)?;
-                Arc::new(process::Process::Let {
-                    span: span.clone(),
-                    name: name.clone(),
-                    annotation: None,
-                    typ: (),
-                    value: Arc::new(process::Expression::Variable(
+                process::Process::let_step(
+                    span.clone(),
+                    name.clone(),
+                    None,
+                    (),
+                    Arc::new(process::Expression::Variable(
                         span.clone(),
                         object_name.clone(),
                         (),
                         VariableUsage::Unknown,
                     )),
-                    then: process,
-                })
+                    process,
+                )
             }
 
             CommandBranch::Receive(span, pattern, branch, vars) => {
@@ -3011,24 +3184,26 @@ impl Context {
 
             CommandBranch::Continue(span, process) => {
                 let process = self.compile_process(process)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Continue(process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Continue,
+                    process,
+                )
             }
 
             CommandBranch::ReceiveType(span, parameter, branch) => {
                 let process = self.compile_command_branch(branch, object_name)?;
-                Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: object_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::ReceiveType(parameter.clone(), process),
-                })
+                process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::ReceiveType(parameter.clone()),
+                    process,
+                )
             }
 
             CommandBranch::Try(span, label, branch) => {
@@ -3051,35 +3226,35 @@ impl Context {
         catch_block: Arc<process::Process<(), Unresolved>>,
         ok_process: Arc<process::Process<(), Unresolved>>,
     ) -> Arc<process::Process<(), Unresolved>> {
-        Arc::new(process::Process::Do {
-            span: span.clone(),
-            name: variable.clone(),
-            usage: VariableUsage::Unknown,
-            typ: (),
-            command: process::Command::Case(
+        process::Process::do_terminal(
+            span.clone(),
+            variable.clone(),
+            VariableUsage::Unknown,
+            (),
+            process::TerminalCommand::Case(
                 Arc::from([
                     LocalName::from(literal!("err")),
                     LocalName::from(literal!("ok")),
                 ]),
                 Box::from([
-                    Arc::new(process::Process::Let {
-                        span: span.clone(),
-                        name: LocalName::error(),
-                        annotation: None,
-                        typ: (),
-                        value: Arc::new(process::Expression::Variable(
+                    process::Process::let_step(
+                        span.clone(),
+                        LocalName::error(),
+                        None,
+                        (),
+                        Arc::new(process::Expression::Variable(
                             span.clone(),
                             variable,
                             (),
                             VariableUsage::Unknown,
                         )),
-                        then: catch_block,
-                    }),
+                        catch_block,
+                    ),
                     ok_process,
                 ]),
                 None,
             ),
-        })
+        )
     }
 
     fn compile_default(
@@ -3090,30 +3265,30 @@ impl Context {
         ok_process: Arc<process::Process<(), Unresolved>>,
     ) -> Arc<process::Process<(), Unresolved>> {
         self.with_fallthrough(ok_process, |pass| {
-            Ok(Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: variable.clone(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Case(
+            Ok(process::Process::do_terminal(
+                span.clone(),
+                variable.clone(),
+                VariableUsage::Unknown,
+                (),
+                process::TerminalCommand::Case(
                     Arc::from([
                         LocalName::from(literal!("none")),
                         LocalName::from(literal!("some")),
                     ]),
                     Box::from([
-                        Arc::new(process::Process::Let {
-                            span: span.clone(),
-                            name: variable.clone(),
-                            annotation: None,
-                            typ: (),
-                            value: default_expr,
-                            then: pass.use_fallthrough(span).unwrap(),
-                        }),
+                        process::Process::let_step(
+                            span.clone(),
+                            variable.clone(),
+                            None,
+                            (),
+                            default_expr,
+                            pass.use_fallthrough(span).unwrap(),
+                        ),
                         pass.use_fallthrough(span).unwrap(),
                     ]),
                     None,
                 ),
-            }))
+            ))
         })
         .unwrap()
     }
@@ -3125,40 +3300,38 @@ impl Context {
         function: Arc<process::Expression<(), Unresolved>>,
         then: Arc<process::Process<(), Unresolved>>,
     ) -> Arc<process::Process<(), Unresolved>> {
-        Arc::new(process::Process::Let {
-            span: span.clone(),
-            name: LocalName::temp(),
-            annotation: None,
-            typ: (),
-            value: function,
-            then: Arc::new(process::Process::Do {
-                span: span.clone(),
-                name: LocalName::temp(),
-                usage: VariableUsage::Unknown,
-                typ: (),
-                command: process::Command::Send(
+        process::Process::let_step(
+            span.clone(),
+            LocalName::temp(),
+            None,
+            (),
+            function,
+            process::Process::do_step(
+                span.clone(),
+                LocalName::temp(),
+                VariableUsage::Unknown,
+                (),
+                process::Command::Send(Arc::new(process::Expression::Variable(
+                    span.clone(),
+                    variable.clone(),
+                    (),
+                    VariableUsage::Unknown,
+                ))),
+                process::Process::let_step(
+                    span.clone(),
+                    variable,
+                    None,
+                    (),
                     Arc::new(process::Expression::Variable(
                         span.clone(),
-                        variable.clone(),
+                        LocalName::temp(),
                         (),
                         VariableUsage::Unknown,
                     )),
-                    Arc::new(process::Process::Let {
-                        span: span.clone(),
-                        name: variable,
-                        annotation: None,
-                        typ: (),
-                        value: Arc::new(process::Expression::Variable(
-                            span.clone(),
-                            LocalName::temp(),
-                            (),
-                            VariableUsage::Unknown,
-                        )),
-                        then,
-                    }),
+                    then,
                 ),
-            }),
-        })
+            ),
+        )
     }
 
     fn attach_pattern_to_process_compiled(
@@ -3190,14 +3363,14 @@ impl Context {
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         restores.iter().rev().try_fold(tail, |acc, restore| {
             let value = self.compile_expression(&restore.value)?;
-            Ok(Arc::new(process::Process::Let {
-                span: restore.span.clone(),
-                name: restore.name.clone(),
-                annotation: None,
-                typ: (),
+            Ok(process::Process::let_step(
+                restore.span.clone(),
+                restore.name.clone(),
+                None,
+                (),
                 value,
-                then: acc,
-            }))
+                acc,
+            ))
         })
     }
 
@@ -3211,18 +3384,18 @@ impl Context {
             Condition::Bool(_, expr) => {
                 let temp = LocalName::temp();
                 let expr = self.compile_expression(expr)?;
-                Arc::new(process::Process::Let {
-                    span: Span::None,
-                    name: temp.clone(),
-                    annotation: None,
-                    typ: (),
-                    value: expr,
-                    then: Arc::new(process::Process::Do {
-                        span: Span::None,
-                        name: temp.clone(),
-                        usage: VariableUsage::Unknown,
-                        typ: (),
-                        command: process::Command::Case(
+                process::Process::let_step(
+                    Span::None,
+                    temp.clone(),
+                    None,
+                    (),
+                    expr,
+                    process::Process::do_terminal(
+                        Span::None,
+                        temp.clone(),
+                        VariableUsage::Unknown,
+                        (),
+                        process::TerminalCommand::Case(
                             Arc::from([
                                 LocalName::from(literal!("false")),
                                 LocalName::from(literal!("true")),
@@ -3230,8 +3403,8 @@ impl Context {
                             Box::from([failure, success]),
                             None,
                         ),
-                    }),
-                })
+                    ),
+                )
             }
             Condition::Is {
                 span,
@@ -3247,27 +3420,27 @@ impl Context {
                 let success_process =
                     self.attach_pattern_to_process_compiled(pattern, success, &subject_name)?;
 
-                let command_process = Arc::new(process::Process::Do {
-                    span: span.clone(),
-                    name: subject_name.clone(),
-                    usage: VariableUsage::Unknown,
-                    typ: (),
-                    command: process::Command::Case(
+                let command_process = process::Process::do_terminal(
+                    span.clone(),
+                    subject_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::TerminalCommand::Case(
                         Arc::from([variant.clone()]),
                         Box::from([success_process]),
                         Some(failure),
                     ),
-                });
+                );
 
                 match binding_value {
-                    Some(value) => Arc::new(process::Process::Let {
-                        span: span.clone(),
-                        name: subject_name.clone(),
-                        annotation: None,
-                        typ: (),
+                    Some(value) => process::Process::let_step(
+                        span.clone(),
+                        subject_name.clone(),
+                        None,
+                        (),
                         value,
-                        then: command_process,
-                    }),
+                        command_process,
+                    ),
                     None => command_process,
                 }
             }
@@ -3365,7 +3538,7 @@ impl Pass {
 
     fn use_at(&mut self, span: &Span) -> Arc<process::Process<(), Unresolved>> {
         self.used = true;
-        Arc::new(process::Process::Goto(
+        process::Process::terminal(process::Terminator::Goto(
             span.clone(),
             self.block_index,
             Captures::new(),
@@ -3655,4 +3828,38 @@ fn link_process_from_expr(expr: &Expression<Unresolved>) -> Process<Unresolved> 
         LocalName::result(),
         Command::Link(span, Box::new(expr.clone())),
     )
+}
+
+#[cfg(test)]
+mod flat_ir_tests {
+    use super::*;
+
+    #[test]
+    fn lowers_long_command_chain_without_recursive_ir_walk() {
+        const STEP_COUNT: usize = 20_000;
+        let subject = LocalName::from(literal!("subject"));
+        let chosen = LocalName::from(literal!("next"));
+        let mut command = Command::Break(Span::None);
+        for _ in 0..STEP_COUNT {
+            command = Command::Signal(Span::None, chosen.clone(), Box::new(command));
+        }
+
+        let mut context = Context::new();
+        let lowered = context.compile_command(&command, &subject).unwrap();
+        assert_eq!(lowered.steps.len(), STEP_COUNT);
+        assert!(matches!(
+            lowered.terminator,
+            process::Terminator::Do {
+                command: process::TerminalCommand::Break,
+                ..
+            }
+        ));
+
+        let (fixed, _) = lowered.fix_captures();
+        assert_eq!(fixed.steps.len(), STEP_COUNT);
+
+        // The source AST is intentionally recursive and outside this refactor's scope. Avoid a
+        // recursive destructor walk obscuring what this test is measuring.
+        std::mem::forget(command);
+    }
 }
