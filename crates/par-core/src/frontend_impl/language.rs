@@ -383,11 +383,6 @@ pub enum Expression<S> {
         then: Box<Expression<S>>,
         else_: Box<Expression<S>>,
     },
-    Submit {
-        span: Span,
-        label: Option<LocalName>,
-        values: Vec<Expression<S>>,
-    },
     Condition(Span, Box<Condition<S>>),
     Grouped(Span, Box<Self>),
     TypeIn {
@@ -473,6 +468,11 @@ pub enum ConstructTerminator<S> {
         body: Box<Construct<S>>,
     },
     Loop(Span, Option<LocalName>),
+    Submit {
+        span: Span,
+        label: Option<LocalName>,
+        values: Vec<Expression<S>>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -618,6 +618,7 @@ pub struct ProcessCommand<S> {
 pub enum CommandTarget<S> {
     Global(GlobalName<S>),
     Local(LocalName),
+    Expression(Box<Expression<S>>),
 }
 
 #[derive(Clone, Debug)]
@@ -1936,26 +1937,6 @@ impl Context {
                 })
             }
 
-            Expression::Submit {
-                span,
-                label,
-                values,
-            } => {
-                let values: Result<Vec<_>, _> =
-                    values.iter().map(|e| self.compile_expression(e)).collect();
-                let values = values?;
-                let process = self.make_submit_process(span, label, values)?;
-                Arc::new(process::Expression::Chan {
-                    span: span.clone(),
-                    captures: Captures::new(),
-                    chan_name: LocalName::result(),
-                    chan_annotation: None,
-                    chan_type: (),
-                    expr_type: (),
-                    process,
-                })
-            }
-
             Expression::Condition(span, condition) => {
                 let make_bool = |variant| {
                     let end = process::Process::do_terminal(
@@ -2335,6 +2316,17 @@ impl Context {
                     Captures::new(),
                 ),
             ),
+            ConstructTerminator::Submit {
+                span,
+                label,
+                values,
+            } => {
+                let values = values
+                    .iter()
+                    .map(|value| self.compile_expression(value))
+                    .collect::<Result<_, _>>()?;
+                self.make_submit_process(span, label, values)?
+            }
         };
         for step in construct.steps.iter().rev() {
             process = match step {
@@ -2832,6 +2824,20 @@ impl Context {
                     command,
                 ))
             }
+            CommandTarget::Expression(expression) => {
+                let span = expression.span();
+                let command =
+                    self.compile_command(&source.command, &LocalName::subject(), continuation)?;
+                let expression = self.compile_expression(expression)?;
+                Ok(process::Process::let_step(
+                    span,
+                    LocalName::subject(),
+                    None,
+                    (),
+                    expression,
+                    command,
+                ))
+            }
         }
     }
 
@@ -2851,6 +2857,7 @@ impl Context {
                 self.original_object_name = Some(name.clone());
                 LocalName::subject()
             }
+            CommandTarget::Expression(_) => LocalName::subject(),
         };
         let frames = self.prepare_command_frames(&source.command.steps, &object_name)?;
         if matches!(source.command.steps.last(), Some(CommandStep::Continue(_))) {
@@ -2909,6 +2916,18 @@ impl Context {
                         )),
                         process,
                     ),
+                    CommandTarget::Expression(expression) => {
+                        let span = expression.span();
+                        let expression = self.compile_expression(&expression)?;
+                        process::Process::let_step(
+                            span,
+                            LocalName::subject(),
+                            None,
+                            (),
+                            expression,
+                            process,
+                        )
+                    }
                 }
             }
         })
@@ -3705,7 +3724,6 @@ impl<S> Spanning for Expression<S> {
             | Self::Variable(span, _)
             | Self::Poll { span, .. }
             | Self::Repoll { span, .. }
-            | Self::Submit { span, .. }
             | Self::Condition(span, _)
             | Self::Grouped(span, _)
             | Self::TypeIn { span, .. }
@@ -3753,7 +3771,8 @@ impl<S> ConstructTerminator<S> {
             Self::Case(span, _, _)
             | Self::Break(span)
             | Self::Begin { span, .. }
-            | Self::Loop(span, _) => span.clone(),
+            | Self::Loop(span, _)
+            | Self::Submit { span, .. } => span.clone(),
         }
     }
 }

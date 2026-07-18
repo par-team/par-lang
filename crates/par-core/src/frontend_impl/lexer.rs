@@ -380,6 +380,16 @@ fn scan_number_token(input: &str) -> Option<(&str, TokenKind, usize)> {
             }
             let raw = &input[..idx];
             return Some((raw, TokenKind::Float, idx));
+        } else if matches!(bytes.get(frac_start), Some(b'_')) {
+            idx = frac_start + 1;
+            while matches!(
+                bytes.get(idx),
+                Some(b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_')
+            ) {
+                idx += 1;
+            }
+            let raw = &input[..idx];
+            return Some((raw, TokenKind::Unknown, idx));
         }
     }
 
@@ -957,6 +967,14 @@ mod lexer_test {
             tokens.iter().map(|token| token.raw).collect::<Vec<_>>(),
             vec!["1.0", "-0.5", "+3.25", "1_000.25", "6.02e23", "1.0e-6"]
         );
+    }
+
+    #[test]
+    fn invalid_fraction_underscore_stays_one_unknown_token() {
+        let tokens = lex("1._0", &FILE);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Unknown);
+        assert_eq!(tokens[0].raw, "1._0");
     }
 
     #[test]

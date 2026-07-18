@@ -26,6 +26,20 @@ def KeyA : Key = (1) 2
 def KeyB : Key = (0) 3
 def KeyC : Key = (2) 0
 
+dec ZeroAsNat : [Nat] Nat
+def ZeroAsNat = [n] chan result {
+  {n == 0}.case {
+    .true! => { result <> 1 }
+    .false! => { result <> 0 }
+  }
+}
+
+def TestGroupedCommandSubject : [Test] ! = [test] do {
+  test
+    .assert("A grouped comparison can be a temporary command subject", ZeroAsNat(0) == 1)
+    .assert("A temporary command subject is evaluated for the other branch", ZeroAsNat(4) == 0)
+} in !
+
 dec MapLookupThenList : [Map<Key, String>, Key] (Option<String>) PairList
 def MapLookupThenList = [map, key] do {
   map.entry(key)[entry]
@@ -65,7 +79,7 @@ def TestListConstraintsAndEquality : [Test] ! = [test] do {
   let takeUnderThree = values->List.TakeWhile(box [n] n < 3)
   let dropUnderThree = values->List.DropWhile(box [n] n < 3)
   let enumerated = values->List.Enumerate
-  let sum = {0}->List.ForEach(values, box [sum, n] sum + n)
+  let sum = 0->List.ForEach(values, box [sum, n] sum + n)
   let builder = List.Builder(type Nat)
   builder->List.ForEach(values, box [b, n] b.add(n * 2))
   let doubled = builder.build
@@ -162,7 +176,7 @@ def TestStreamCombinators : [Test] ! = [test] do {
     ->Stream.ToList
     ->Try.Ok
 
-  let (status) total = {0}->Stream.ForEach(
+  let (status) total = 0->Stream.ForEach(
     numbers->Stream.FromList,
     box [sum, n] sum + n,
   )
@@ -181,14 +195,14 @@ def TestStreamCombinators : [Test] ! = [test] do {
 } in !
 
 def TestStreamFlattening : [Test] ! = [test] do {
-  let stream1 = {*(1, 2)}->Stream.FromList
-  let stream2 = {*(3)}->Stream.FromList
-  let stream3 = {*(4, 5)}->Stream.FromList
+  let stream1 = *(1, 2)->Stream.FromList
+  let stream2 = *(3)->Stream.FromList
+  let stream3 = *(4, 5)->Stream.FromList
   let nested = *(stream1, stream2, stream3)
 
   let concatenated = nested->Stream.Concat->Stream.ToList->Try.Ok
 
-  let flatMapped = {*(1, 2, 3)}
+  let flatMapped = *(1, 2, 3)
     ->Stream.FromList
     ->Stream.FlatMap(box [n] Stream.FromList(*(n, n * 10)))
     ->Stream.ToList

@@ -28,7 +28,7 @@ let result = Square(Add(3, Double(4)))  // = 121
 With pipes you can say the same thing in the order you want to read it:
 
 ```par
-let result = {3}
+let result = 3
   -> Add(Double(4))
   -> Square
 ```
@@ -70,6 +70,20 @@ the whole expression becomes the operation:
 ```par
 value -> {Func(arg1)}(arg3)  // == Func(arg1, value, arg3)
 ```
+
+Names and values such as `3`, `"text"`, `*(1, 2, 3)`, and `<<1 2 3>>` can
+start a pipe or another postfix operation directly. Compound expressions and
+constructions need braces in that position:
+
+```par
+{if { ready => value, else => fallback }}->Func
+{.true!}.case { .true! => yes, .false! => no }
+n->{box [x] x + n}
+```
+
+The braces turn the entire enclosed expression into one value before the
+postfix operation starts. They are also how you pipe a whole infix expression:
+`{1 + 2}->Func`. Without them, `1 + 2->Func` applies `Func` only to `2`.
 
 ## Pipes as commands
 
