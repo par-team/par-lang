@@ -151,8 +151,8 @@ The empty `submit()` in the `.end!` branch now makes sense! Just because one of 
 **Let's now merge two lists into one:**
 
 ```par
-dec MergeTwoLists : <a>[List<a>] [List<a>] List<a>
-def MergeTwoLists = <a>[left] [right] poll(left, right) {
+dec MergeTwoLists : [<a> List<a>, List<a>] List<a>
+def MergeTwoLists = [<a> left, right] poll(left, right) {
   list => list.case {
     .end! => submit(),
     .item(x) xs => .item(x) submit(xs),
@@ -188,8 +188,8 @@ type Tree<a> = recursive either {
 Works like a charm:
 
 ```par
-dec TreeToList : <a>[Tree<a>] List<a>
-def TreeToList = <a>[tree] poll(tree) {
+dec TreeToList : [<a> Tree<a>] List<a>
+def TreeToList = [<a> tree] poll(tree) {
   tree => tree.case {
     .leaf x => .item(x) submit(),
     .node(l) r => submit(l, r),
