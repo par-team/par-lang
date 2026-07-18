@@ -280,13 +280,23 @@ impl LocalName {
 }
 
 #[derive(Clone, Debug)]
-pub enum Pattern<S> {
+pub struct Pattern<S> {
+    pub steps: Vec<PatternStep<S>>,
+    pub terminal: PatternTerminal<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum PatternStep<S> {
+    Receive(Span, Box<Pattern<S>>, Vec<TypeParameter>),
+    ReceiveType(Span, TypeParameter),
+    Try(Span, Option<LocalName>),
+    Default(Span, Box<Expression<S>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum PatternTerminal<S> {
     Name(Span, LocalName, Option<Type<S>>),
-    Receive(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Continue(Span),
-    ReceiveType(Span, TypeParameter, Box<Self>),
-    Try(Span, Option<LocalName>, Box<Self>),
-    Default(Span, Box<Expression<S>>, Box<Self>),
 }
 
 #[derive(Clone, Debug)]
@@ -437,79 +447,135 @@ pub enum Expression<S> {
 }
 
 #[derive(Clone, Debug)]
-pub enum Construct<S> {
-    /// wraps an expression
+pub struct Construct<S> {
+    pub steps: Vec<ConstructStep<S>>,
+    pub terminator: ConstructTerminator<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConstructStep<S> {
+    Send(Span, Box<Expression<S>>),
+    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Signal(Span, LocalName),
+    SendType(Span, Type<S>),
+    ReceiveType(Span, TypeParameter),
+}
+
+#[derive(Clone, Debug)]
+pub enum ConstructTerminator<S> {
     Then(Box<Expression<S>>),
-    Send(Span, Box<Expression<S>>, Box<Self>),
-    Receive(Span, Pattern<S>, Box<Self>, Vec<TypeParameter>),
-    /// constructs an either type
-    Signal(Span, LocalName, Box<Self>),
-    /// constructs a choice type
     Case(Span, ConstructBranches<S>, Option<Box<ConstructBranch<S>>>),
-    /// ! (unit)
     Break(Span),
     Begin {
         span: Span,
         unfounded: bool,
         label: Option<LocalName>,
-        then: Box<Self>,
+        body: Box<Construct<S>>,
     },
     Loop(Span, Option<LocalName>),
-    SendType(Span, Type<S>, Box<Self>),
-    ReceiveType(Span, TypeParameter, Box<Self>),
 }
 
 #[derive(Clone, Debug)]
 pub struct ConstructBranches<S>(pub BTreeMap<LocalName, ConstructBranch<S>>);
 
 #[derive(Clone, Debug)]
-pub enum ConstructBranch<S> {
-    Then(Span, Expression<S>),
-    Receive(Span, Pattern<S>, Box<Self>, Vec<TypeParameter>),
-    ReceiveType(Span, TypeParameter, Box<Self>),
+pub struct ConstructBranch<S> {
+    pub steps: Vec<ConstructBranchStep<S>>,
+    pub terminator: ConstructBranchTerminator<S>,
 }
 
 #[derive(Clone, Debug)]
-pub enum Apply<S> {
+pub enum ConstructBranchStep<S> {
+    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    ReceiveType(Span, TypeParameter),
+}
+
+#[derive(Clone, Debug)]
+pub enum ConstructBranchTerminator<S> {
+    Then(Span, Expression<S>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Apply<S> {
+    pub steps: Vec<ApplyStep<S>>,
+    pub terminator: ApplyTerminator<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ApplyStep<S> {
+    Send(Span, Box<Expression<S>>),
+    Signal(Span, LocalName),
+    SendType(Span, Type<S>),
+    Try(Span, Option<LocalName>),
+    Default(Span, Box<Expression<S>>),
+    Pipe(Span, Box<Expression<S>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum ApplyTerminator<S> {
     Noop(Span),
-    Send(Span, Box<Expression<S>>, Box<Self>),
-    Signal(Span, LocalName, Box<Self>),
     Case(Span, ApplyBranches<S>, Option<Box<ApplyBranch<S>>>),
     Begin {
         span: Span,
         unfounded: bool,
         label: Option<LocalName>,
-        then: Box<Self>,
+        body: Box<Apply<S>>,
     },
     Loop(Span, Option<LocalName>),
-    SendType(Span, Type<S>, Box<Self>),
-    Try(Span, Option<LocalName>, Box<Self>),
-    Default(Span, Box<Expression<S>>, Box<Self>),
-    Pipe(Span, Box<Expression<S>>, Box<Self>),
 }
 
 #[derive(Clone, Debug)]
 pub struct ApplyBranches<S>(pub BTreeMap<LocalName, ApplyBranch<S>>);
 
 #[derive(Clone, Debug)]
-pub enum ApplyBranch<S> {
-    Then(Span, LocalName, Expression<S>),
-    Receive(Span, Pattern<S>, Box<Self>, Vec<TypeParameter>),
-    Continue(Span, Expression<S>),
-    ReceiveType(Span, TypeParameter, Box<Self>),
-    Try(Span, Option<LocalName>, Box<Self>),
-    Default(Span, Box<Expression<S>>, Box<Self>),
+pub struct ApplyBranch<S> {
+    pub steps: Vec<ApplyBranchStep<S>>,
+    pub terminator: ApplyBranchTerminator<S>,
 }
 
-// span doesn't include the "then" process
 #[derive(Clone, Debug)]
-pub enum Process<S> {
+pub enum ApplyBranchStep<S> {
+    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    ReceiveType(Span, TypeParameter),
+    Try(Span, Option<LocalName>),
+    Default(Span, Box<Expression<S>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum ApplyBranchTerminator<S> {
+    Then(Span, LocalName, Expression<S>),
+    Continue(Span, Expression<S>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Process<S> {
+    pub steps: Vec<ProcessStep<S>>,
+    pub terminator: ProcessTerminator<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ProcessStep<S> {
     Let {
         span: Span,
         pattern: Pattern<S>,
         value: Box<Expression<S>>,
-        then: Box<Self>,
     },
+    Catch {
+        span: Span,
+        label: Option<LocalName>,
+        pattern: Pattern<S>,
+        block: Box<Process<S>>,
+    },
+    If {
+        span: Span,
+        branches: Vec<(Condition<S>, Process<S>)>,
+        else_: Option<Box<Process<S>>>,
+    },
+    Command(ProcessCommand<S>),
+}
+
+#[derive(Clone, Debug)]
+pub enum ProcessTerminator<S> {
     Poll {
         span: Span,
         label: Option<LocalName>,
@@ -531,66 +597,86 @@ pub enum Process<S> {
         label: Option<LocalName>,
         values: Vec<Expression<S>>,
     },
-    Catch {
-        span: Span,
-        label: Option<LocalName>,
-        pattern: Pattern<S>,
-        block: Box<Self>,
-        then: Box<Self>,
-    },
     Throw(Span, Option<LocalName>, Box<Expression<S>>),
     If {
         span: Span,
         branches: Vec<(Condition<S>, Process<S>)>,
         else_: Option<Box<Process<S>>>,
-        then: Option<Box<Process<S>>>,
     },
-    GlobalCommand(Span, GlobalName<S>, Command<S>),
-    Command(Span, LocalName, Command<S>),
+    Command(ProcessCommand<S>),
     Fallthrough(Span),
 }
 
 #[derive(Clone, Debug)]
-pub enum Command<S> {
-    Then(Box<Process<S>>),
+pub struct ProcessCommand<S> {
+    pub span: Span,
+    pub target: CommandTarget<S>,
+    pub command: Command<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum CommandTarget<S> {
+    Global(GlobalName<S>),
+    Local(LocalName),
+}
+
+#[derive(Clone, Debug)]
+pub struct Command<S> {
+    pub steps: Vec<CommandStep<S>>,
+    pub terminator: CommandTerminator<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum CommandStep<S> {
+    Send(Span, Expression<S>),
+    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Signal(Span, LocalName),
+    Continue(Span),
+    SendType(Span, Type<S>),
+    ReceiveType(Span, TypeParameter),
+    Try(Span, Option<LocalName>),
+    Default(Span, Box<Expression<S>>),
+    Pipe(Span, Box<Expression<S>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum CommandTerminator<S> {
+    Then(Span),
     Link(Span, Box<Expression<S>>),
-    Send(Span, Expression<S>, Box<Self>),
-    Receive(Span, Pattern<S>, Box<Self>, Vec<TypeParameter>),
-    Signal(Span, LocalName, Box<Self>),
-    Case(
-        Span,
-        CommandBranches<S>,
-        Option<Box<CommandBranch<S>>>,
-        Option<Box<Process<S>>>,
-    ),
+    Case(Span, CommandBranches<S>, Option<Box<CommandBranch<S>>>),
     Break(Span),
-    Continue(Span, Box<Process<S>>),
     Begin {
         span: Span,
         unfounded: bool,
         label: Option<LocalName>,
-        then: Box<Self>,
+        body: Box<Command<S>>,
+        continuation: Option<Box<Process<S>>>,
     },
     Loop(Span, Option<LocalName>),
-    SendType(Span, Type<S>, Box<Self>),
-    ReceiveType(Span, TypeParameter, Box<Self>),
-    Try(Span, Option<LocalName>, Box<Self>),
-    Default(Span, Box<Expression<S>>, Box<Self>),
-    Pipe(Span, Box<Expression<S>>, Box<Self>),
 }
 
 #[derive(Clone, Debug)]
 pub struct CommandBranches<S>(pub BTreeMap<LocalName, CommandBranch<S>>);
 
 #[derive(Clone, Debug)]
-pub enum CommandBranch<S> {
+pub struct CommandBranch<S> {
+    pub steps: Vec<CommandBranchStep<S>>,
+    pub terminator: CommandBranchTerminator<S>,
+}
+
+#[derive(Clone, Debug)]
+pub enum CommandBranchStep<S> {
+    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    ReceiveType(Span, TypeParameter),
+    Try(Span, Option<LocalName>),
+    Default(Span, Box<Expression<S>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum CommandBranchTerminator<S> {
     Then(Span, Process<S>),
     BindThen(Span, LocalName, Process<S>),
-    Receive(Span, Pattern<S>, Box<Self>, Vec<TypeParameter>),
     Continue(Span, Process<S>),
-    ReceiveType(Span, TypeParameter, Box<Self>),
-    Try(Span, Option<LocalName>, Box<Self>),
-    Default(Span, Box<Expression<S>>, Box<Self>),
 }
 
 impl Hash for LocalName {
@@ -854,6 +940,20 @@ enum CommandLoweringFrame {
     },
 }
 
+enum ProcessLoweringFrame {
+    Let {
+        span: Span,
+        pattern: Pattern<Unresolved>,
+        value: Arc<process::Expression<(), Unresolved>>,
+    },
+    Command {
+        target: CommandTarget<Unresolved>,
+        object_name: LocalName,
+        original_object_name: Option<LocalName>,
+        frames: Vec<CommandLoweringFrame>,
+    },
+}
+
 impl Context {
     pub(crate) fn new() -> Self {
         Self {
@@ -942,11 +1042,10 @@ impl Context {
         Expression::Application(
             span.clone(),
             Box::new(function),
-            Apply::Send(
-                span.clone(),
-                Box::new(argument),
-                Box::new(Apply::Noop(span.clone())),
-            ),
+            Apply {
+                steps: vec![ApplyStep::Send(span.clone(), Box::new(argument))],
+                terminator: ApplyTerminator::Noop(span.clone()),
+            },
         )
     }
 
@@ -957,11 +1056,10 @@ impl Context {
     ) -> Expression<Unresolved> {
         Expression::Construction(
             span.clone(),
-            Construct::Send(
-                span.clone(),
-                Box::new(left),
-                Box::new(Construct::Then(Box::new(right))),
-            ),
+            Construct {
+                steps: vec![ConstructStep::Send(span.clone(), Box::new(left))],
+                terminator: ConstructTerminator::Then(Box::new(right)),
+            },
         )
     }
 
@@ -1032,7 +1130,10 @@ impl Context {
             span: Span::None,
             value: compare,
             variant: Self::operator_local_name(&Span::None, variant),
-            pattern: Pattern::Continue(Span::None),
+            pattern: Pattern {
+                steps: Vec::new(),
+                terminal: PatternTerminal::Continue(Span::None),
+            },
         };
 
         if negate {
@@ -1093,7 +1194,10 @@ impl Context {
                     let binding_span = binding.span();
                     combined = Expression::Let {
                         span: binding_span.join(combined.span()),
-                        pattern: Pattern::Name(binding_span.clone(), name, None),
+                        pattern: Pattern {
+                            steps: Vec::new(),
+                            terminal: PatternTerminal::Name(binding_span.clone(), name, None),
+                        },
                         expression: Box::new(binding),
                         then: Box::new(combined),
                     };
@@ -1494,7 +1598,7 @@ impl Context {
         expression: Arc<process::Expression<(), Unresolved>>,
         process: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        if let Pattern::Name(_, name, annotation) = pattern {
+        if let Some((_, name, annotation)) = pattern.as_name() {
             return Ok(process::Process::let_step(
                 span.clone(),
                 name.clone(),
@@ -1521,7 +1625,7 @@ impl Context {
         span: &Span,
         process: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Expression<(), Unresolved>>, CompileError> {
-        if let Pattern::Name(_, name, annotation) = pattern {
+        if let Some((_, name, annotation)) = pattern.as_name() {
             return Ok(Arc::new(process::Expression::Chan {
                 span: span.clone(),
                 captures: Captures::new(),
@@ -1549,7 +1653,7 @@ impl Context {
         span: &Span,
         block: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        if let Pattern::Name(_, name, annotation) = pattern {
+        if let Some((_, name, annotation)) = pattern.as_name() {
             return Ok(process::Process::let_step(
                 span.clone(),
                 name.clone(),
@@ -1589,7 +1693,7 @@ impl Context {
         process: Arc<process::Process<(), Unresolved>>,
         vars: Vec<TypeParameter>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        if let Pattern::Name(_, name, annotation) = pattern {
+        if let Some((_, name, annotation)) = pattern.as_name() {
             return Ok(process::Process::do_step(
                 span.clone(),
                 subject.clone(),
@@ -1616,8 +1720,8 @@ impl Context {
         level: usize,
         process: Arc<process::Process<(), Unresolved>>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        match pattern {
-            Pattern::Name(span, name, annotation) => Ok(process::Process::let_step(
+        let mut process = match &pattern.terminal {
+            PatternTerminal::Name(span, name, annotation) => process::Process::let_step(
                 span.clone(),
                 name.clone(),
                 annotation.clone(),
@@ -1629,70 +1733,62 @@ impl Context {
                     VariableUsage::Unknown,
                 )),
                 process,
-            )),
-
-            Pattern::Receive(span, first, rest, vars) => {
-                let then_process = self.compile_pattern_helper(rest, level, process)?;
-                self.compile_pattern_receive(
-                    first,
-                    level + 1,
-                    span,
-                    &LocalName::match_(level),
-                    then_process,
-                    vars.clone(),
-                )
-            }
-
-            Pattern::Continue(span) => Ok(process::Process::do_step(
+            ),
+            PatternTerminal::Continue(span) => process::Process::do_step(
                 span.clone(),
                 LocalName::match_(level),
                 VariableUsage::Unknown,
                 (),
                 process::Command::Continue,
                 process,
-            )),
-
-            Pattern::ReceiveType(span, parameter, rest) => {
-                let then = self.compile_pattern_helper(rest, level, process)?;
-                Ok(process::Process::do_step(
+            ),
+        };
+        for step in pattern.steps.iter().rev() {
+            process = match step {
+                PatternStep::Receive(span, first, vars) => self.compile_pattern_receive(
+                    first,
+                    level + 1,
+                    span,
+                    &LocalName::match_(level),
+                    process,
+                    vars.clone(),
+                )?,
+                PatternStep::ReceiveType(span, parameter) => process::Process::do_step(
                     span.clone(),
                     LocalName::match_(level),
                     VariableUsage::Unknown,
                     (),
                     process::Command::ReceiveType(parameter.clone()),
-                    then,
-                ))
-            }
-
-            Pattern::Try(span, label, rest) => {
-                let catch_block = self.use_catch(span, label)?;
-                let catch_block = if let Some(original) = &self.original_object_name {
-                    process::Process::let_step(
-                        original.span.clone(),
-                        original.clone(),
-                        None,
-                        (),
-                        Arc::new(process::Expression::Variable(
+                    process,
+                ),
+                PatternStep::Try(span, label) => {
+                    let catch_block = self.use_catch(span, label)?;
+                    let catch_block = if let Some(original) = &self.original_object_name {
+                        process::Process::let_step(
                             original.span.clone(),
-                            LocalName::subject(),
+                            original.clone(),
+                            None,
                             (),
-                            VariableUsage::Unknown,
-                        )),
-                        catch_block,
-                    )
-                } else {
-                    catch_block
-                };
-                let then_process = self.compile_pattern_helper(rest, level, process)?;
-                Ok(self.compile_try(span, LocalName::match_(level), catch_block, then_process))
-            }
-
-            Pattern::Default(span, expr, rest) => {
-                let default_expr = self.compile_expression(expr)?;
-                let ok_process = self.compile_pattern_helper(rest, level, process)?;
-                Ok(self.compile_default(span, LocalName::match_(level), default_expr, ok_process))
-            }
+                            Arc::new(process::Expression::Variable(
+                                original.span.clone(),
+                                LocalName::subject(),
+                                (),
+                                VariableUsage::Unknown,
+                            )),
+                            catch_block,
+                        )
+                    } else {
+                        catch_block
+                    };
+                    self.compile_try(span, LocalName::match_(level), catch_block, process)
+                }
+                PatternStep::Default(span, expr) => {
+                    let default_expr = self.compile_expression(expr)?;
+                    self.compile_default(span, LocalName::match_(level), default_expr, process)
+                }
+            };
         }
+        Ok(process)
     }
 
     pub(crate) fn compile_expression(
@@ -2125,7 +2221,14 @@ impl Context {
                 })
             }
 
-            Expression::Application(_, expr, Apply::Noop(_)) => self.compile_expression(expr)?,
+            Expression::Application(
+                _,
+                expr,
+                Apply {
+                    steps,
+                    terminator: ApplyTerminator::Noop(_),
+                },
+            ) if steps.is_empty() => self.compile_expression(expr)?,
 
             Expression::Application(span, expr, apply) => {
                 let expr = self.compile_expression(expr)?;
@@ -2160,8 +2263,8 @@ impl Context {
         &mut self,
         construct: &Construct<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match construct {
-            Construct::Then(expression) => {
+        let mut process = match &construct.terminator {
+            ConstructTerminator::Then(expression) => {
                 let expression = self.compile_expression(expression)?;
                 process::Process::do_terminal(
                     Span::None,
@@ -2171,45 +2274,7 @@ impl Context {
                     process::TerminalCommand::Link(expression),
                 )
             }
-
-            Construct::Send(span, argument, construct) => {
-                let argument = self.compile_expression(argument)?;
-                let process = self.compile_construct(construct)?;
-                process::Process::do_step(
-                    span.clone(),
-                    LocalName::result(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Send(argument),
-                    process,
-                )
-            }
-
-            Construct::Receive(span, pattern, construct, vars) => {
-                let process = self.compile_construct(construct)?;
-                self.compile_pattern_receive(
-                    pattern,
-                    0,
-                    span,
-                    &LocalName::result(),
-                    process,
-                    vars.clone(),
-                )?
-            }
-
-            Construct::Signal(span, chosen, construct) => {
-                let process = self.compile_construct(construct)?;
-                process::Process::do_step(
-                    span.clone(),
-                    LocalName::result(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Signal(chosen.clone()),
-                    process,
-                )
-            }
-
-            Construct::Case(span, ConstructBranches(construct_branches), else_branch) => {
+            ConstructTerminator::Case(span, ConstructBranches(construct_branches), else_branch) => {
                 let mut branches = Vec::new();
                 let mut processes = Vec::new();
                 for (branch_name, construct_branch) in construct_branches {
@@ -2230,8 +2295,7 @@ impl Context {
                     process::TerminalCommand::Case(branches, processes, else_process),
                 )
             }
-
-            Construct::Break(span) => process::Process::do_terminal(
+            ConstructTerminator::Break(span) => process::Process::do_terminal(
                 span.clone(),
                 LocalName::result(),
                 VariableUsage::Unknown,
@@ -2239,11 +2303,11 @@ impl Context {
                 process::TerminalCommand::Break,
             ),
 
-            Construct::Begin {
+            ConstructTerminator::Begin {
                 span,
                 unfounded,
                 label,
-                then: construct,
+                body: construct,
             } => {
                 let process = self.compile_construct(construct)?;
                 process::Process::do_terminal(
@@ -2260,7 +2324,7 @@ impl Context {
                 )
             }
 
-            Construct::Loop(span, label) => process::Process::do_terminal(
+            ConstructTerminator::Loop(span, label) => process::Process::do_terminal(
                 span.clone(),
                 LocalName::result(),
                 VariableUsage::Unknown,
@@ -2271,39 +2335,60 @@ impl Context {
                     Captures::new(),
                 ),
             ),
-
-            Construct::SendType(span, argument, construct) => {
-                let process = self.compile_construct(construct)?;
-                process::Process::do_step(
+        };
+        for step in construct.steps.iter().rev() {
+            process = match step {
+                ConstructStep::Send(span, argument) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Send(self.compile_expression(argument)?),
+                    process,
+                ),
+                ConstructStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
+                    pattern,
+                    0,
+                    span,
+                    &LocalName::result(),
+                    process,
+                    vars.clone(),
+                )?,
+                ConstructStep::Signal(span, chosen) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::result(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(chosen.clone()),
+                    process,
+                ),
+                ConstructStep::SendType(span, argument) => process::Process::do_step(
                     span.clone(),
                     LocalName::result(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::SendType(argument.clone()),
                     process,
-                )
-            }
-
-            Construct::ReceiveType(span, parameter, construct) => {
-                let process = self.compile_construct(construct)?;
-                process::Process::do_step(
+                ),
+                ConstructStep::ReceiveType(span, parameter) => process::Process::do_step(
                     span.clone(),
                     LocalName::result(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::ReceiveType(parameter.clone()),
                     process,
-                )
-            }
-        })
+                ),
+            };
+        }
+        Ok(process)
     }
 
     pub(crate) fn compile_construct_branch(
         &mut self,
         branch: &ConstructBranch<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match branch {
-            ConstructBranch::Then(_, expression) => {
+        let mut process = match &branch.terminator {
+            ConstructBranchTerminator::Then(_, expression) => {
                 let expression = self.compile_expression(expression)?;
                 process::Process::do_terminal(
                     Span::None,
@@ -2313,39 +2398,36 @@ impl Context {
                     process::TerminalCommand::Link(expression),
                 )
             }
-
-            ConstructBranch::Receive(span, pattern, branch, vars) => {
-                let process = self.compile_construct_branch(branch)?;
-                self.compile_pattern_receive(
+        };
+        for step in branch.steps.iter().rev() {
+            process = match step {
+                ConstructBranchStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
                     pattern,
                     0,
                     span,
                     &LocalName::result(),
                     process,
                     vars.clone(),
-                )?
-            }
-
-            ConstructBranch::ReceiveType(span, parameter, branch) => {
-                let process = self.compile_construct_branch(branch)?;
-                process::Process::do_step(
+                )?,
+                ConstructBranchStep::ReceiveType(span, parameter) => process::Process::do_step(
                     span.clone(),
                     LocalName::result(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::ReceiveType(parameter.clone()),
                     process,
-                )
-            }
-        })
+                ),
+            };
+        }
+        Ok(process)
     }
 
     pub(crate) fn compile_apply(
         &mut self,
         apply: &Apply<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match apply {
-            Apply::Noop(span) => process::Process::do_terminal(
+        let mut process = match &apply.terminator {
+            ApplyTerminator::Noop(span) => process::Process::do_terminal(
                 span.clone(),
                 LocalName::result(),
                 VariableUsage::Unknown,
@@ -2358,32 +2440,7 @@ impl Context {
                 ))),
             ),
 
-            Apply::Send(span, expression, apply) => {
-                let expression = self.compile_expression(expression)?;
-                let process = self.compile_apply(apply)?;
-                process::Process::do_step(
-                    span.clone(),
-                    LocalName::object(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Send(expression),
-                    process,
-                )
-            }
-
-            Apply::Signal(span, chosen, apply) => {
-                let process = self.compile_apply(apply)?;
-                process::Process::do_step(
-                    span.clone(),
-                    LocalName::object(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Signal(chosen.clone()),
-                    process,
-                )
-            }
-
-            Apply::Case(span, ApplyBranches(expression_branches), else_branch) => {
+            ApplyTerminator::Case(span, ApplyBranches(expression_branches), else_branch) => {
                 let mut branches = Vec::new();
                 let mut processes = Vec::new();
                 for (branch_name, expression_branch) in expression_branches {
@@ -2405,11 +2462,11 @@ impl Context {
                 )
             }
 
-            Apply::Begin {
+            ApplyTerminator::Begin {
                 span,
                 unfounded,
                 label,
-                then: apply,
+                body: apply,
             } => {
                 let process = self.compile_apply(apply)?;
                 process::Process::do_terminal(
@@ -2426,7 +2483,7 @@ impl Context {
                 )
             }
 
-            Apply::Loop(span, label) => process::Process::do_terminal(
+            ApplyTerminator::Loop(span, label) => process::Process::do_terminal(
                 span.clone(),
                 LocalName::object(),
                 VariableUsage::Unknown,
@@ -2437,45 +2494,56 @@ impl Context {
                     Captures::new(),
                 ),
             ),
-
-            Apply::SendType(span, argument, apply) => {
-                let process = self.compile_apply(apply)?;
-                process::Process::do_step(
+        };
+        for step in apply.steps.iter().rev() {
+            process = match step {
+                ApplyStep::Send(span, expression) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Send(self.compile_expression(expression)?),
+                    process,
+                ),
+                ApplyStep::Signal(span, chosen) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Signal(chosen.clone()),
+                    process,
+                ),
+                ApplyStep::SendType(span, argument) => process::Process::do_step(
                     span.clone(),
                     LocalName::object(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::SendType(argument.clone()),
                     process,
-                )
-            }
-
-            Apply::Default(span, expr, apply) => {
-                let default_expr = self.compile_expression(expr)?;
-                let ok_process = self.compile_apply(apply)?;
-                self.compile_default(span, LocalName::object(), default_expr, ok_process)
-            }
-
-            Apply::Try(span, label, apply) => {
-                let catch_block = self.use_catch(span, label)?;
-                let ok_process = self.compile_apply(apply)?;
-                self.compile_try(span, LocalName::object(), catch_block, ok_process)
-            }
-
-            Apply::Pipe(span, function, apply) => {
-                let function = self.compile_expression(function)?;
-                let then = self.compile_apply(apply)?;
-                self.compile_pipe(span, LocalName::object(), function, then)
-            }
-        })
+                ),
+                ApplyStep::Default(span, expr) => {
+                    let default_expr = self.compile_expression(expr)?;
+                    self.compile_default(span, LocalName::object(), default_expr, process)
+                }
+                ApplyStep::Try(span, label) => {
+                    let catch_block = self.use_catch(span, label)?;
+                    self.compile_try(span, LocalName::object(), catch_block, process)
+                }
+                ApplyStep::Pipe(span, function) => {
+                    let function = self.compile_expression(function)?;
+                    self.compile_pipe(span, LocalName::object(), function, process)
+                }
+            };
+        }
+        Ok(process)
     }
 
     pub(crate) fn compile_apply_branch(
         &mut self,
         branch: &ApplyBranch<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match branch {
-            ApplyBranch::Then(span, name, expression) => {
+        let mut process = match &branch.terminator {
+            ApplyBranchTerminator::Then(span, name, expression) => {
                 let expression = self.compile_expression(expression)?;
                 process::Process::let_step(
                     span.clone(),
@@ -2497,20 +2565,7 @@ impl Context {
                     ),
                 )
             }
-
-            ApplyBranch::Receive(span, pattern, branch, vars) => {
-                let process = self.compile_apply_branch(branch)?;
-                self.compile_pattern_receive(
-                    pattern,
-                    0,
-                    span,
-                    &LocalName::object(),
-                    process,
-                    vars.clone(),
-                )?
-            }
-
-            ApplyBranch::Continue(span, expression) => {
+            ApplyBranchTerminator::Continue(span, expression) => {
                 let expression = self.compile_expression(expression)?;
                 process::Process::do_step(
                     span.clone(),
@@ -2527,47 +2582,101 @@ impl Context {
                     ),
                 )
             }
-
-            ApplyBranch::ReceiveType(span, parameter, branch) => {
-                let process = self.compile_apply_branch(branch)?;
-                process::Process::do_step(
+        };
+        for step in branch.steps.iter().rev() {
+            process = match step {
+                ApplyBranchStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
+                    pattern,
+                    0,
+                    span,
+                    &LocalName::object(),
+                    process,
+                    vars.clone(),
+                )?,
+                ApplyBranchStep::ReceiveType(span, parameter) => process::Process::do_step(
                     span.clone(),
                     LocalName::object(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::ReceiveType(parameter.clone()),
                     process,
-                )
-            }
-
-            ApplyBranch::Try(span, label, branch) => {
-                let catch_block = self.use_catch(span, label)?;
-                let process = self.compile_apply_branch(branch)?;
-                self.compile_try(span, LocalName::object(), catch_block, process)
-            }
-
-            ApplyBranch::Default(span, expr, branch) => {
-                let default_expr = self.compile_expression(expr)?;
-                let ok_process = self.compile_apply_branch(branch)?;
-                self.compile_default(span, LocalName::object(), default_expr, ok_process)
-            }
-        })
+                ),
+                ApplyBranchStep::Try(span, label) => {
+                    let catch_block = self.use_catch(span, label)?;
+                    self.compile_try(span, LocalName::object(), catch_block, process)
+                }
+                ApplyBranchStep::Default(span, expr) => {
+                    let default_expr = self.compile_expression(expr)?;
+                    self.compile_default(span, LocalName::object(), default_expr, process)
+                }
+            };
+        }
+        Ok(process)
     }
 
     pub(crate) fn compile_process(
         &mut self,
         process: &Process<Unresolved>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match process {
-            Process::If {
-                span,
-                branches,
-                else_,
-                then,
-            } => {
-                if let Some(tail) = then {
-                    let tail = self.compile_process(tail)?;
-                    self.with_fallthrough(tail, |pass| {
+        self.compile_process_from(process, 0)
+    }
+
+    fn compile_process_from(
+        &mut self,
+        source: &Process<Unresolved>,
+        mut index: usize,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
+        let mut frames = Vec::new();
+        let mut process = loop {
+            let Some(step) = source.steps.get(index) else {
+                break self.compile_process_terminator(&source.terminator)?;
+            };
+            match step {
+                ProcessStep::Let {
+                    span,
+                    pattern,
+                    value,
+                } => {
+                    let value = self.expr_without_fallthrough(|pass| {
+                        pass.disable_catches(CatchDisabledReason::DifferentProcess);
+                        let value = pass.compile_expression(value)?;
+                        pass.enable_catches();
+                        Ok(value)
+                    })?;
+                    frames.push(ProcessLoweringFrame::Let {
+                        span: span.clone(),
+                        pattern: pattern.clone(),
+                        value,
+                    });
+                    index += 1;
+                }
+                ProcessStep::Command(command)
+                    if matches!(command.command.terminator, CommandTerminator::Then(_)) =>
+                {
+                    frames.push(self.prepare_process_command(command)?);
+                    index += 1;
+                }
+                ProcessStep::Catch {
+                    span,
+                    label,
+                    pattern,
+                    block,
+                } => {
+                    let block = self.without_fallthrough(|pass| {
+                        let block = pass.compile_process(block)?;
+                        pass.compile_pattern_catch_block(pattern, span, block)
+                    })?;
+                    break self.with_catch(label.clone(), block, |pass| {
+                        pass.compile_process_from(source, index + 1)
+                    })?;
+                }
+                ProcessStep::If {
+                    span,
+                    branches,
+                    else_,
+                } => {
+                    let tail = self.compile_process_from(source, index + 1)?;
+                    break self.with_fallthrough(tail, |pass| {
                         let else_proc = match else_ {
                             Some(proc) => pass.compile_process(proc)?,
                             None => process::Process::terminal(process::Terminator::Unreachable(
@@ -2577,21 +2686,33 @@ impl Context {
                         pass.compile_if_branches(branches, else_proc, |body, pass| {
                             pass.compile_process(body)
                         })
-                    })?
-                } else {
-                    let else_proc = match else_ {
-                        Some(proc) => self.compile_process(proc)?,
-                        None => process::Process::terminal(process::Terminator::Unreachable(
-                            span.clone(),
-                        )),
-                    };
-                    self.compile_if_branches(branches, else_proc, |body, pass| {
-                        pass.compile_process(body)
-                    })?
+                    })?;
+                }
+                ProcessStep::Command(command) => {
+                    break self.compile_process_command(command, Some((source, index + 1)))?;
                 }
             }
+        };
+        for frame in frames.into_iter().rev() {
+            process = self.apply_process_lowering_frame(frame, process)?;
+        }
+        Ok(process)
+    }
 
-            Process::Poll {
+    fn compile_process_terminator(
+        &mut self,
+        terminator: &ProcessTerminator<Unresolved>,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
+        Ok(match terminator {
+            ProcessTerminator::Poll {
+                span,
+                label,
+                clients,
+                name,
+                then,
+                else_,
+            }
+            | ProcessTerminator::Repoll {
                 span,
                 label,
                 clients,
@@ -2599,86 +2720,33 @@ impl Context {
                 then,
                 else_,
             } => {
+                let kind = if matches!(terminator, ProcessTerminator::Poll { .. }) {
+                    process::PollKind::Poll
+                } else {
+                    process::PollKind::Repoll
+                };
                 let clients: Result<Vec<_>, _> =
                     clients.iter().map(|e| self.compile_expression(e)).collect();
-                let clients = clients?;
                 self.make_poll_process(
                     span,
-                    process::PollKind::Poll,
+                    kind,
                     label,
-                    clients,
+                    clients?,
                     name.clone(),
                     |pass| pass.compile_process(then),
                     |pass| pass.compile_process(else_),
                 )?
             }
-
-            Process::Repoll {
-                span,
-                label,
-                clients,
-                name,
-                then,
-                else_,
-            } => {
-                let clients: Result<Vec<_>, _> =
-                    clients.iter().map(|e| self.compile_expression(e)).collect();
-                let clients = clients?;
-                self.make_poll_process(
-                    span,
-                    process::PollKind::Repoll,
-                    label,
-                    clients,
-                    name.clone(),
-                    |pass| pass.compile_process(then),
-                    |pass| pass.compile_process(else_),
-                )?
-            }
-
-            Process::Submit {
+            ProcessTerminator::Submit {
                 span,
                 label,
                 values,
             } => {
                 let values: Result<Vec<_>, _> =
                     values.iter().map(|e| self.compile_expression(e)).collect();
-                let values = values?;
-                self.make_submit_process(span, label, values)?
+                self.make_submit_process(span, label, values?)?
             }
-
-            Process::Let {
-                span,
-                pattern,
-                value,
-                then,
-            } => {
-                let value = self.expr_without_fallthrough(|pass| {
-                    pass.disable_catches(CatchDisabledReason::DifferentProcess);
-                    let value = pass.compile_expression(value)?;
-                    pass.enable_catches();
-                    Ok(value)
-                })?;
-                let then_process = self.compile_process(then)?;
-                self.compile_pattern_let(pattern, span, value, then_process)?
-            }
-
-            Process::Catch {
-                span,
-                label,
-                pattern,
-                block,
-                then,
-            } => {
-                let block = self.without_fallthrough(|pass| {
-                    let block = pass.compile_process(block)?;
-                    pass.compile_pattern_catch_block(pattern, span, block)
-                })?;
-                let process =
-                    self.with_catch(label.clone(), block, |pass| pass.compile_process(then))?;
-                process
-            }
-
-            Process::Throw(span, label, expression) => {
+            ProcessTerminator::Throw(span, label, expression) => {
                 let catch_block = self.use_catch(span, label)?;
                 let expression = self.expr_without_fallthrough(|pass| {
                     pass.disable_catches(CatchDisabledReason::DifferentProcess);
@@ -2695,51 +2763,62 @@ impl Context {
                     catch_block,
                 )
             }
+            ProcessTerminator::If {
+                span,
+                branches,
+                else_,
+            } => {
+                let else_proc = match else_ {
+                    Some(proc) => self.compile_process(proc)?,
+                    None => {
+                        process::Process::terminal(process::Terminator::Unreachable(span.clone()))
+                    }
+                };
+                self.compile_if_branches(branches, else_proc, |body, pass| {
+                    pass.compile_process(body)
+                })?
+            }
+            ProcessTerminator::Command(command) => self.compile_process_command(command, None)?,
+            ProcessTerminator::Fallthrough(span) => match self.use_fallthrough(span) {
+                Some(process) => process,
+                None => Err(CompileError::MustEndProcess(span.clone()))?,
+            },
+        })
+    }
 
-            Process::GlobalCommand(_, global_name, command) => {
+    fn compile_process_command(
+        &mut self,
+        source: &ProcessCommand<Unresolved>,
+        continuation: Option<(&Process<Unresolved>, usize)>,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
+        match &source.target {
+            CommandTarget::Global(global_name) => {
                 let span = global_name.span.clone();
                 let local_name = LocalName {
                     span: span.clone(),
                     string: ArcStr::from(global_name.to_string()),
                 };
-                process::Process::let_step(
+                let command = self.compile_command(&source.command, &local_name, continuation)?;
+                Ok(process::Process::let_step(
                     span.clone(),
-                    local_name.clone(),
+                    local_name,
                     None,
                     (),
                     Arc::new(process::Expression::Global(span, global_name.clone(), ())),
-                    self.compile_command(command, &local_name)?,
-                )
+                    command,
+                ))
             }
-
-            Process::Command(_, name, Command::Then(next)) => process::Process::do_step(
-                name.span.clone(),
-                name.clone(),
-                VariableUsage::Unknown,
-                (),
-                process::Command::Noop,
-                self.compile_process(next)?,
-            ),
-
-            Process::Command(_, name, command) => {
+            CommandTarget::Local(name) => {
                 let None = self.original_object_name else {
-                    // this should never happen. If it did it means we forgot to exit the alias-mode.
-                    unreachable!(
-                        "Can't be in more than one command chain at once. currently set to: {}",
-                        self.original_object_name.clone().unwrap().string
-                    )
+                    unreachable!("can't be in more than one command chain at once")
                 };
                 self.original_object_name = Some(name.clone());
-                let then_process = self.compile_command(command, &LocalName::subject())?;
+                let command =
+                    self.compile_command(&source.command, &LocalName::subject(), continuation)?;
                 let None = self.original_object_name else {
-                    // this should never happen. If it did it means we forgot to exit the alias-mode.
-                    unreachable!(
-                        "Can't be in more than one command chain at once. {:?} was: {}",
-                        command,
-                        self.original_object_name.clone().unwrap().string
-                    )
+                    unreachable!("command lowering did not leave alias mode")
                 };
-                process::Process::let_step(
+                Ok(process::Process::let_step(
                     name.span.clone(),
                     LocalName::subject(),
                     None,
@@ -2750,14 +2829,88 @@ impl Context {
                         (),
                         VariableUsage::Unknown,
                     )),
-                    then_process,
-                )
+                    command,
+                ))
             }
+        }
+    }
 
-            Process::Fallthrough(span) => match self.use_fallthrough(span) {
-                Some(process) => process,
-                None => Err(CompileError::MustEndProcess(span.clone()))?,
+    fn prepare_process_command(
+        &mut self,
+        source: &ProcessCommand<Unresolved>,
+    ) -> Result<ProcessLoweringFrame, CompileError> {
+        let object_name = match &source.target {
+            CommandTarget::Global(global_name) => LocalName {
+                span: global_name.span.clone(),
+                string: ArcStr::from(global_name.to_string()),
             },
+            CommandTarget::Local(name) => {
+                let None = self.original_object_name else {
+                    unreachable!("can't be in more than one command chain at once")
+                };
+                self.original_object_name = Some(name.clone());
+                LocalName::subject()
+            }
+        };
+        let frames = self.prepare_command_frames(&source.command.steps, &object_name)?;
+        if matches!(source.command.steps.last(), Some(CommandStep::Continue(_))) {
+            self.original_object_name = None;
+        }
+        let original_object_name = std::mem::take(&mut self.original_object_name);
+        Ok(ProcessLoweringFrame::Command {
+            target: source.target.clone(),
+            object_name,
+            original_object_name,
+            frames,
+        })
+    }
+
+    fn apply_process_lowering_frame(
+        &mut self,
+        frame: ProcessLoweringFrame,
+        process: Arc<process::Process<(), Unresolved>>,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
+        Ok(match frame {
+            ProcessLoweringFrame::Let {
+                span,
+                pattern,
+                value,
+            } => self.compile_pattern_let(&pattern, &span, value, process)?,
+            ProcessLoweringFrame::Command {
+                target,
+                object_name,
+                original_object_name,
+                frames,
+            } => {
+                let process = self.restore_object_name(original_object_name, process);
+                let process = self.apply_command_frames(frames, &object_name, process)?;
+                match target {
+                    CommandTarget::Global(global_name) => {
+                        let span = global_name.span.clone();
+                        process::Process::let_step(
+                            span.clone(),
+                            object_name,
+                            None,
+                            (),
+                            Arc::new(process::Expression::Global(span, global_name, ())),
+                            process,
+                        )
+                    }
+                    CommandTarget::Local(name) => process::Process::let_step(
+                        name.span.clone(),
+                        LocalName::subject(),
+                        None,
+                        (),
+                        Arc::new(process::Expression::Variable(
+                            name.span.clone(),
+                            name,
+                            (),
+                            VariableUsage::Unknown,
+                        )),
+                        process,
+                    ),
+                }
+            }
         })
     }
 
@@ -2765,13 +2918,27 @@ impl Context {
         &mut self,
         command: &Command<Unresolved>,
         object_name: &LocalName,
+        continuation: Option<(&Process<Unresolved>, usize)>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        let mut frames = Vec::new();
-        let mut command = command;
+        let frames = self.prepare_command_frames(&command.steps, object_name)?;
+        if matches!(command.steps.last(), Some(CommandStep::Continue(_))) {
+            self.original_object_name = None;
+        }
 
-        let mut process = loop {
-            match command {
-                Command::Send(span, argument, then) => {
+        let process =
+            self.compile_command_terminal(&command.terminator, object_name, continuation)?;
+        self.apply_command_frames(frames, object_name, process)
+    }
+
+    fn prepare_command_frames(
+        &mut self,
+        steps: &[CommandStep<Unresolved>],
+        object_name: &LocalName,
+    ) -> Result<Vec<CommandLoweringFrame>, CompileError> {
+        let mut frames = Vec::with_capacity(steps.len());
+        for step in steps {
+            match step {
+                CommandStep::Send(span, argument) => {
                     self.disable_catches(CatchDisabledReason::DifferentProcess);
                     let argument = self.compile_expression(argument)?;
                     self.enable_catches();
@@ -2782,18 +2949,16 @@ impl Context {
                         typ: (),
                         command: process::Command::Send(argument),
                     }));
-                    command = then;
                 }
-                Command::Receive(span, pattern, then, vars) => {
+                CommandStep::Receive(span, pattern, vars) => {
                     frames.push(CommandLoweringFrame::Receive {
                         span: span.clone(),
                         pattern: pattern.clone(),
                         vars: vars.clone(),
                         original_object_name: self.original_object_name.clone(),
                     });
-                    command = then;
                 }
-                Command::Signal(span, chosen, then) => {
+                CommandStep::Signal(span, chosen) => {
                     frames.push(CommandLoweringFrame::Step(process::Step::Do {
                         span: span.clone(),
                         name: object_name.clone(),
@@ -2801,9 +2966,17 @@ impl Context {
                         typ: (),
                         command: process::Command::Signal(chosen.clone()),
                     }));
-                    command = then;
                 }
-                Command::SendType(span, argument, then) => {
+                CommandStep::Continue(span) => {
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::Continue,
+                    }));
+                }
+                CommandStep::SendType(span, argument) => {
                     frames.push(CommandLoweringFrame::Step(process::Step::Do {
                         span: span.clone(),
                         name: object_name.clone(),
@@ -2811,9 +2984,8 @@ impl Context {
                         typ: (),
                         command: process::Command::SendType(argument.clone()),
                     }));
-                    command = then;
                 }
-                Command::ReceiveType(span, parameter, then) => {
+                CommandStep::ReceiveType(span, parameter) => {
                     frames.push(CommandLoweringFrame::Step(process::Step::Do {
                         span: span.clone(),
                         name: object_name.clone(),
@@ -2821,23 +2993,20 @@ impl Context {
                         typ: (),
                         command: process::Command::ReceiveType(parameter.clone()),
                     }));
-                    command = then;
                 }
-                Command::Try(span, label, then) => {
+                CommandStep::Try(span, label) => {
                     frames.push(CommandLoweringFrame::Try {
                         span: span.clone(),
                         catch_block: self.use_catch(span, label)?,
                     });
-                    command = then;
                 }
-                Command::Default(span, expression, then) => {
+                CommandStep::Default(span, expression) => {
                     frames.push(CommandLoweringFrame::Default {
                         span: span.clone(),
                         expression: self.compile_expression(expression)?,
                     });
-                    command = then;
                 }
-                Command::Pipe(span, function, then) => {
+                CommandStep::Pipe(span, function) => {
                     self.disable_catches(CatchDisabledReason::DifferentProcess);
                     let function = self.compile_expression(function)?;
                     self.enable_catches();
@@ -2845,20 +3014,18 @@ impl Context {
                         span: span.clone(),
                         function,
                     });
-                    command = then;
-                }
-                Command::Then(_)
-                | Command::Link(..)
-                | Command::Case(..)
-                | Command::Break(_)
-                | Command::Continue(..)
-                | Command::Begin { .. }
-                | Command::Loop(..) => {
-                    break self.compile_command_terminal(command, object_name)?;
                 }
             }
-        };
+        }
+        Ok(frames)
+    }
 
+    fn apply_command_frames(
+        &mut self,
+        frames: Vec<CommandLoweringFrame>,
+        object_name: &LocalName,
+        mut process: Arc<process::Process<(), Unresolved>>,
+    ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         let flush_steps =
             |steps: &mut Vec<process::Step<(), Unresolved>>,
              process: Arc<process::Process<(), Unresolved>>| {
@@ -2917,17 +3084,24 @@ impl Context {
 
     fn compile_command_terminal(
         &mut self,
-        command: &Command<Unresolved>,
+        command: &CommandTerminator<Unresolved>,
         object_name: &LocalName,
+        process_continuation: Option<(&Process<Unresolved>, usize)>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         Ok(match command {
-            Command::Then(process) => {
+            CommandTerminator::Then(span) => {
                 let original = std::mem::take(&mut self.original_object_name);
-                let process = self.compile_process(process)?;
+                let process = match process_continuation {
+                    Some((source, index)) => self.compile_process_from(source, index)?,
+                    None => match self.use_fallthrough(span) {
+                        Some(process) => process,
+                        None => Err(CompileError::MustEndProcess(span.clone()))?,
+                    },
+                };
                 self.restore_object_name(original, process)
             }
 
-            Command::Link(span, expression) => {
+            CommandTerminator::Link(span, expression) => {
                 self.disable_catches(CatchDisabledReason::DifferentProcess);
                 let expression = self.compile_expression(expression)?;
                 self.enable_catches();
@@ -2941,58 +3115,7 @@ impl Context {
                 )
             }
 
-            Command::Send(span, argument, command) => {
-                self.disable_catches(CatchDisabledReason::DifferentProcess);
-                let argument = self.compile_expression(argument)?;
-                self.enable_catches();
-                let process = self.compile_command(command, object_name)?;
-                process::Process::do_step(
-                    span.clone(),
-                    object_name.clone(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Send(argument),
-                    process,
-                )
-            }
-
-            Command::Receive(span, pattern, command, vars) => {
-                let original = self.original_object_name.clone();
-                let process = self.compile_command(command, object_name)?;
-                let None = self.original_object_name else {
-                    unreachable!("original_object_name should be none after command")
-                };
-                self.original_object_name = original;
-                let process = self.compile_pattern_receive(
-                    pattern,
-                    0,
-                    span,
-                    object_name,
-                    process,
-                    vars.clone(),
-                )?;
-                self.original_object_name = None;
-                process
-            }
-
-            Command::Signal(span, chosen, command) => {
-                let process = self.compile_command(command, object_name)?;
-                process::Process::do_step(
-                    span.clone(),
-                    object_name.clone(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Signal(chosen.clone()),
-                    process,
-                )
-            }
-
-            Command::Case(
-                span,
-                CommandBranches(process_branches),
-                else_branch,
-                optional_process,
-            ) => {
+            CommandTerminator::Case(span, CommandBranches(process_branches), else_branch) => {
                 let original = std::mem::take(&mut self.original_object_name);
                 let object_name = match &original {
                     None => object_name,
@@ -3002,8 +3125,8 @@ impl Context {
                 let mut branches = Vec::new();
                 let mut processes = Vec::new();
 
-                let process = if let Some(process) = optional_process {
-                    let process = self.compile_process(process)?;
+                let process = if let Some((source, index)) = process_continuation {
+                    let process = self.compile_process_from(source, index)?;
                     self.with_fallthrough(process, |pass| {
                         for (branch_name, process_branch) in process_branches {
                             branches.push(branch_name.clone());
@@ -3046,7 +3169,7 @@ impl Context {
                 self.restore_object_name(original, process)
             }
 
-            Command::Break(span) => {
+            CommandTerminator::Break(span) => {
                 self.original_object_name = None;
                 process::Process::do_terminal(
                     span.clone(),
@@ -3057,26 +3180,18 @@ impl Context {
                 )
             }
 
-            Command::Continue(span, process) => {
-                self.original_object_name = None;
-                let process = self.compile_process(process)?;
-                process::Process::do_step(
-                    span.clone(),
-                    object_name.clone(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::Continue,
-                    process,
-                )
-            }
-
-            Command::Begin {
+            CommandTerminator::Begin {
                 span,
                 unfounded,
                 label,
-                then: command,
+                body: command,
+                continuation,
             } => {
-                let process = self.compile_command(command, object_name)?;
+                let nested_continuation = continuation
+                    .as_deref()
+                    .map(|continuation| (continuation, 0));
+                let continuation = nested_continuation.or(process_continuation);
+                let process = self.compile_command(command, object_name, continuation)?;
                 process::Process::do_terminal(
                     span.clone(),
                     object_name.clone(),
@@ -3091,7 +3206,7 @@ impl Context {
                 )
             }
 
-            Command::Loop(span, label) => {
+            CommandTerminator::Loop(span, label) => {
                 self.original_object_name = None;
                 process::Process::do_terminal(
                     span.clone(),
@@ -3105,50 +3220,6 @@ impl Context {
                     ),
                 )
             }
-
-            Command::SendType(span, argument, command) => {
-                let process = self.compile_command(command, object_name)?;
-                process::Process::do_step(
-                    span.clone(),
-                    object_name.clone(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::SendType(argument.clone()),
-                    process,
-                )
-            }
-
-            Command::ReceiveType(span, parameter, command) => {
-                let process = self.compile_command(command, object_name)?;
-                process::Process::do_step(
-                    span.clone(),
-                    object_name.clone(),
-                    VariableUsage::Unknown,
-                    (),
-                    process::Command::ReceiveType(parameter.clone()),
-                    process,
-                )
-            }
-
-            Command::Try(span, label, command) => {
-                let catch_block = self.use_catch(span, label)?;
-                let ok_process = self.compile_command(command, object_name)?;
-                self.compile_try(span, object_name.clone(), catch_block, ok_process)
-            }
-
-            Command::Default(span, expr, command) => {
-                let default_expr = self.compile_expression(expr)?;
-                let ok_process = self.compile_command(command, object_name)?;
-                self.compile_default(span, object_name.clone(), default_expr, ok_process)
-            }
-
-            Command::Pipe(span, function, command) => {
-                self.disable_catches(CatchDisabledReason::DifferentProcess);
-                let function = self.compile_expression(function)?;
-                self.enable_catches();
-                let process = self.compile_command(command, object_name)?;
-                self.compile_pipe(span, object_name.clone(), function, process)
-            }
         })
     }
 
@@ -3157,10 +3228,9 @@ impl Context {
         branch: &CommandBranch<Unresolved>,
         object_name: &LocalName,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        Ok(match branch {
-            CommandBranch::Then(_, process) => self.compile_process(process)?,
-
-            CommandBranch::BindThen(span, name, process) => {
+        let mut process = match &branch.terminator {
+            CommandBranchTerminator::Then(_, process) => self.compile_process(process)?,
+            CommandBranchTerminator::BindThen(span, name, process) => {
                 let process = self.compile_process(process)?;
                 process::Process::let_step(
                     span.clone(),
@@ -3176,14 +3246,8 @@ impl Context {
                     process,
                 )
             }
-
-            CommandBranch::Receive(span, pattern, branch, vars) => {
-                let process = self.compile_command_branch(branch, object_name)?;
-                self.compile_pattern_receive(pattern, 0, span, object_name, process, vars.clone())?
-            }
-
-            CommandBranch::Continue(span, process) => {
-                let process = self.compile_process(process)?;
+            CommandBranchTerminator::Continue(span, source) => {
+                let process = self.compile_process(source)?;
                 process::Process::do_step(
                     span.clone(),
                     object_name.clone(),
@@ -3193,30 +3257,36 @@ impl Context {
                     process,
                 )
             }
-
-            CommandBranch::ReceiveType(span, parameter, branch) => {
-                let process = self.compile_command_branch(branch, object_name)?;
-                process::Process::do_step(
+        };
+        for step in branch.steps.iter().rev() {
+            process = match step {
+                CommandBranchStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
+                    pattern,
+                    0,
+                    span,
+                    object_name,
+                    process,
+                    vars.clone(),
+                )?,
+                CommandBranchStep::ReceiveType(span, parameter) => process::Process::do_step(
                     span.clone(),
                     object_name.clone(),
                     VariableUsage::Unknown,
                     (),
                     process::Command::ReceiveType(parameter.clone()),
                     process,
-                )
-            }
-
-            CommandBranch::Try(span, label, branch) => {
-                let catch_block = self.use_catch(span, label)?;
-                let process = self.compile_command_branch(branch, object_name)?;
-                self.compile_try(span, object_name.clone(), catch_block, process)
-            }
-            CommandBranch::Default(span, expr, branch) => {
-                let default_expr = self.compile_expression(expr)?;
-                let ok_process = self.compile_command_branch(branch, object_name)?;
-                self.compile_default(span, object_name.clone(), default_expr, ok_process)
-            }
-        })
+                ),
+                CommandBranchStep::Try(span, label) => {
+                    let catch_block = self.use_catch(span, label)?;
+                    self.compile_try(span, object_name.clone(), catch_block, process)
+                }
+                CommandBranchStep::Default(span, expr) => {
+                    let default_expr = self.compile_expression(expr)?;
+                    self.compile_default(span, object_name.clone(), default_expr, process)
+                }
+            };
+        }
+        Ok(process)
     }
 
     fn compile_try(
@@ -3340,7 +3410,7 @@ impl Context {
         body: Arc<process::Process<(), Unresolved>>,
         subject: &LocalName,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
-        if matches!(pattern, Pattern::Continue(_)) {
+        if pattern.is_continue() {
             return Ok(body);
         }
         self.compile_pattern_let(
@@ -3547,46 +3617,80 @@ impl Pass {
 }
 
 impl<S> Pattern<S> {
+    fn as_name(&self) -> Option<(&Span, &LocalName, &Option<Type<S>>)> {
+        if !self.steps.is_empty() {
+            return None;
+        }
+        match &self.terminal {
+            PatternTerminal::Name(span, name, annotation) => Some((span, name, annotation)),
+            PatternTerminal::Continue(_) => None,
+        }
+    }
+
+    fn is_continue(&self) -> bool {
+        self.steps.is_empty() && matches!(self.terminal, PatternTerminal::Continue(_))
+    }
+
     fn annotation(&self) -> Option<Type<S>>
     where
         S: Clone,
     {
-        match self {
-            Self::Name(_, _, annotation) => annotation.clone(),
-            Self::Receive(span, first, rest, vars) => {
-                let first = first.annotation()?;
-                let rest = rest.annotation()?;
-                Some(Type::Pair(
-                    span.clone(),
-                    Box::new(first),
-                    Box::new(rest),
-                    vars.clone(),
-                ))
-            }
-            Self::Continue(span) => Some(Type::Break(span.clone())),
-            Self::ReceiveType(span, parameter, rest) => {
-                let rest = rest.annotation()?;
-                Some(Type::Exists(
-                    span.clone(),
-                    parameter.clone(),
-                    Box::new(rest),
-                ))
-            }
-            Self::Try(_, _, _) => None,
-            Self::Default(_, _, rest) => rest.annotation(),
+        let mut annotation = match &self.terminal {
+            PatternTerminal::Name(_, _, annotation) => annotation.clone(),
+            PatternTerminal::Continue(span) => Some(Type::Break(span.clone())),
+        };
+        for step in self.steps.iter().rev() {
+            annotation = match step {
+                PatternStep::Receive(span, first, vars) => {
+                    let first = first.annotation()?;
+                    let rest = annotation?;
+                    Some(Type::Pair(
+                        span.clone(),
+                        Box::new(first),
+                        Box::new(rest),
+                        vars.clone(),
+                    ))
+                }
+                PatternStep::ReceiveType(span, parameter) => {
+                    let rest = annotation?;
+                    Some(Type::Exists(
+                        span.clone(),
+                        parameter.clone(),
+                        Box::new(rest),
+                    ))
+                }
+                PatternStep::Try(_, _) => None,
+                PatternStep::Default(_, _) => annotation,
+            };
         }
+        annotation
     }
 }
 
 impl<S> Spanning for Pattern<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminal.span(),
+        }
+    }
+}
+
+impl<S> Spanning for PatternStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Name(span, _, _)
-            | Self::Continue(span)
-            | Self::Receive(span, _, _, _)
-            | Self::ReceiveType(span, _, _)
-            | Self::Try(span, _, _)
-            | Self::Default(span, _, _) => span.clone(),
+            Self::Receive(span, _, _)
+            | Self::ReceiveType(span, _)
+            | Self::Try(span, _)
+            | Self::Default(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> PatternTerminal<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Name(span, _, _) | Self::Continue(span) => span.clone(),
         }
     }
 }
@@ -3623,112 +3727,230 @@ impl<S> Spanning for Expression<S> {
 
 impl<S> Spanning for Construct<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for ConstructStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Send(span, _, _)
-            | Self::Receive(span, _, _, _)
-            | Self::Signal(span, _, _)
-            | Self::Case(span, _, _)
+            Self::Send(span, _)
+            | Self::Receive(span, _, _)
+            | Self::Signal(span, _)
+            | Self::SendType(span, _)
+            | Self::ReceiveType(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> ConstructTerminator<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Then(expression) => expression.span(),
+            Self::Case(span, _, _)
             | Self::Break(span)
             | Self::Begin { span, .. }
-            | Self::Loop(span, _)
-            | Self::SendType(span, _, _)
-            | Self::ReceiveType(span, _, _) => span.clone(),
-
-            Self::Then(expression) => expression.span(),
+            | Self::Loop(span, _) => span.clone(),
         }
     }
 }
 
 impl<S> Spanning for ConstructBranch<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for ConstructBranchStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Then(span, _) | Self::Receive(span, _, _, _) | Self::ReceiveType(span, _, _) => {
-                span.clone()
-            }
+            Self::Receive(span, _, _) | Self::ReceiveType(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> ConstructBranchTerminator<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Then(span, _) => span.clone(),
         }
     }
 }
 
 impl<S> Spanning for Apply<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for ApplyStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Send(span, _, _)
-            | Self::Signal(span, _, _)
+            Self::Send(span, _)
+            | Self::Signal(span, _)
+            | Self::SendType(span, _)
+            | Self::Try(span, _)
+            | Self::Default(span, _)
+            | Self::Pipe(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> ApplyTerminator<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Noop(span)
             | Self::Case(span, _, _)
             | Self::Begin { span, .. }
-            | Self::Loop(span, _)
-            | Self::SendType(span, _, _)
-            | Self::Noop(span)
-            | Self::Try(span, _, _)
-            | Self::Default(span, _, _)
-            | Self::Pipe(span, _, _) => span.clone(),
+            | Self::Loop(span, _) => span.clone(),
         }
     }
 }
 
 impl<S> Spanning for ApplyBranch<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for ApplyBranchStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Then(span, _, _)
-            | Self::Receive(span, _, _, _)
-            | Self::Continue(span, _)
-            | Self::ReceiveType(span, _, _)
-            | Self::Try(span, _, _)
-            | Self::Default(span, _, _) => span.clone(),
+            Self::Receive(span, _, _)
+            | Self::ReceiveType(span, _)
+            | Self::Try(span, _)
+            | Self::Default(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> ApplyBranchTerminator<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Then(span, _, _) | Self::Continue(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> Process<S> {
+    pub fn fallthrough(span: Span) -> Self {
+        Self {
+            steps: Vec::new(),
+            terminator: ProcessTerminator::Fallthrough(span),
         }
     }
 }
 
 impl<S> Spanning for Process<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for ProcessStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Let { span, .. } => span.clone(),
-            Self::Poll { span, .. } => span.clone(),
-            Self::Repoll { span, .. } => span.clone(),
-            Self::Submit { span, .. } => span.clone(),
-            Self::Catch { span, .. } => span.clone(),
-            Self::Throw(span, _, _) => span.clone(),
-            Self::If { span, .. } => span.clone(),
-            Self::GlobalCommand(span, _, _) => span.clone(),
-            Self::Command(span, _, _) => span.clone(),
-            Self::Fallthrough(span) => span.clone(),
+            Self::Let { span, .. } | Self::Catch { span, .. } | Self::If { span, .. } => {
+                span.clone()
+            }
+            Self::Command(command) => command.span.clone(),
+        }
+    }
+}
+
+impl<S> Spanning for ProcessTerminator<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Poll { span, .. }
+            | Self::Repoll { span, .. }
+            | Self::Submit { span, .. }
+            | Self::If { span, .. }
+            | Self::Throw(span, ..)
+            | Self::Fallthrough(span) => span.clone(),
+            Self::Command(command) => command.span.clone(),
+        }
+    }
+}
+
+impl<S> CommandTerminator<S> {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Then(span)
+            | Self::Link(span, _)
+            | Self::Case(span, _, _)
+            | Self::Break(span)
+            | Self::Begin { span, .. }
+            | Self::Loop(span, _) => span.clone(),
         }
     }
 }
 
 impl<S> Spanning for Command<S> {
     fn span(&self) -> Span {
-        match self {
-            Self::Link(span, _)
-            | Self::Send(span, _, _)
-            | Self::Receive(span, _, _, _)
-            | Self::Signal(span, _, _)
-            | Self::Case(span, _, _, _)
-            | Self::Break(span)
-            | Self::Continue(span, _)
-            | Self::Begin { span, .. }
-            | Self::Loop(span, _)
-            | Self::SendType(span, _, _)
-            | Self::ReceiveType(span, _, _)
-            | Self::Try(span, _, _)
-            | Self::Default(span, _, _)
-            | Self::Pipe(span, _, _) => span.clone(),
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
 
-            Self::Then(process) => process.span(),
+impl<S> Spanning for CommandStep<S> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Send(span, _)
+            | Self::Receive(span, _, _)
+            | Self::Signal(span, _)
+            | Self::Continue(span)
+            | Self::SendType(span, _)
+            | Self::ReceiveType(span, _)
+            | Self::Try(span, _)
+            | Self::Default(span, _)
+            | Self::Pipe(span, _) => span.clone(),
         }
     }
 }
 
 impl<S> Spanning for CommandBranch<S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(step) => step.span(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<S> Spanning for CommandBranchStep<S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Then(span, _)
-            | Self::BindThen(span, _, _)
-            | Self::Receive(span, _, _, _)
-            | Self::Continue(span, _)
-            | Self::ReceiveType(span, _, _)
-            | Self::Try(span, _, _)
-            | Self::Default(span, _, _) => span.clone(),
+            Self::Receive(span, _, _)
+            | Self::ReceiveType(span, _)
+            | Self::Try(span, _)
+            | Self::Default(span, _) => span.clone(),
+        }
+    }
+}
+
+impl<S> CommandBranchTerminator<S> {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Then(span, _) | Self::BindThen(span, _, _) | Self::Continue(span, _) => {
+                span.clone()
+            }
         }
     }
 }
@@ -3741,42 +3963,35 @@ struct Restoration {
 }
 
 fn pattern_to_expression(pattern: &Pattern<Unresolved>) -> Option<Expression<Unresolved>> {
-    match pattern {
-        Pattern::Name(span, name, _) => Some(Expression::Variable(span.clone(), name.clone())),
-        Pattern::Receive(span, first, rest, _vars) => {
-            let first_expr = pattern_to_expression(first)?;
-            let then = construct_from_pattern(rest)?;
-            Some(Expression::Construction(
-                span.clone(),
-                Construct::Send(span.clone(), Box::new(first_expr), Box::new(then)),
-            ))
-        }
-        Pattern::Continue(span) => Some(Expression::Construction(
-            span.clone(),
-            Construct::Break(span.clone()),
-        )),
-        Pattern::ReceiveType(_, _, _) | Pattern::Try(_, _, _) | Pattern::Default(_, _, _) => None,
+    if let Some((span, name, _)) = pattern.as_name() {
+        return Some(Expression::Variable(span.clone(), name.clone()));
     }
+    Some(Expression::Construction(
+        pattern.span(),
+        construct_from_pattern(pattern)?,
+    ))
 }
 
 fn construct_from_pattern(pattern: &Pattern<Unresolved>) -> Option<Construct<Unresolved>> {
-    match pattern {
-        Pattern::Name(span, name, _) => Some(Construct::Then(Box::new(Expression::Variable(
-            span.clone(),
-            name.clone(),
-        )))),
-        Pattern::Receive(span, first, rest, _vars) => {
-            let expression = pattern_to_expression(first)?;
-            let then = construct_from_pattern(rest)?;
-            Some(Construct::Send(
-                span.clone(),
-                Box::new(expression),
-                Box::new(then),
-            ))
+    let terminator = match &pattern.terminal {
+        PatternTerminal::Name(span, name, _) => {
+            ConstructTerminator::Then(Box::new(Expression::Variable(span.clone(), name.clone())))
         }
-        Pattern::Continue(span) => Some(Construct::Break(span.clone())),
-        Pattern::ReceiveType(_, _, _) | Pattern::Try(_, _, _) | Pattern::Default(_, _, _) => None,
+        PatternTerminal::Continue(span) => ConstructTerminator::Break(span.clone()),
+    };
+    let mut steps = Vec::with_capacity(pattern.steps.len());
+    for step in &pattern.steps {
+        match step {
+            PatternStep::Receive(span, payload, _) => steps.push(ConstructStep::Send(
+                span.clone(),
+                Box::new(pattern_to_expression(payload)?),
+            )),
+            PatternStep::ReceiveType(..) | PatternStep::Try(..) | PatternStep::Default(..) => {
+                return None;
+            }
+        }
     }
+    Some(Construct { steps, terminator })
 }
 
 fn reconstruction_for_is(
@@ -3788,11 +4003,11 @@ fn reconstruction_for_is(
     let Expression::Variable(_, name) = value else {
         return None;
     };
-    let payload = construct_from_pattern(pattern)?;
-    let reconstruction = Expression::Construction(
-        span.clone(),
-        Construct::Signal(span.clone(), variant.clone(), Box::new(payload)),
-    );
+    let mut payload = construct_from_pattern(pattern)?;
+    payload
+        .steps
+        .insert(0, ConstructStep::Signal(span.clone(), variant.clone()));
+    let reconstruction = Expression::Construction(span.clone(), payload);
     Some(Restoration {
         span: span.clone(),
         name: name.clone(),
@@ -3823,11 +4038,17 @@ fn collect_restorations(condition: &Condition<Unresolved>) -> Vec<Restoration> {
 
 fn link_process_from_expr(expr: &Expression<Unresolved>) -> Process<Unresolved> {
     let span = expr.span();
-    Process::Command(
-        span.clone(),
-        LocalName::result(),
-        Command::Link(span, Box::new(expr.clone())),
-    )
+    Process {
+        steps: Vec::new(),
+        terminator: ProcessTerminator::Command(ProcessCommand {
+            span: span.clone(),
+            target: CommandTarget::Local(LocalName::result()),
+            command: Command {
+                steps: Vec::new(),
+                terminator: CommandTerminator::Link(span, Box::new(expr.clone())),
+            },
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -3839,13 +4060,17 @@ mod flat_ir_tests {
         const STEP_COUNT: usize = 20_000;
         let subject = LocalName::from(literal!("subject"));
         let chosen = LocalName::from(literal!("next"));
-        let mut command = Command::Break(Span::None);
+        let mut steps = Vec::with_capacity(STEP_COUNT);
         for _ in 0..STEP_COUNT {
-            command = Command::Signal(Span::None, chosen.clone(), Box::new(command));
+            steps.push(CommandStep::Signal(Span::None, chosen.clone()));
         }
+        let command = Command {
+            steps,
+            terminator: CommandTerminator::Break(Span::None),
+        };
 
         let mut context = Context::new();
-        let lowered = context.compile_command(&command, &subject).unwrap();
+        let lowered = context.compile_command(&command, &subject, None).unwrap();
         assert_eq!(lowered.steps.len(), STEP_COUNT);
         assert!(matches!(
             lowered.terminator,
@@ -3857,9 +4082,78 @@ mod flat_ir_tests {
 
         let (fixed, _) = lowered.fix_captures();
         assert_eq!(fixed.steps.len(), STEP_COUNT);
+    }
 
-        // The source AST is intentionally recursive and outside this refactor's scope. Avoid a
-        // recursive destructor walk obscuring what this test is measuring.
-        std::mem::forget(command);
+    #[test]
+    fn lowers_long_high_level_sequences_without_recursive_spines() {
+        const STEP_COUNT: usize = 20_000;
+        let value = LocalName::from(literal!("value"));
+        let binding = LocalName::from(literal!("binding"));
+        let exit = LocalName::from(literal!("exit"));
+        let chosen = LocalName::from(literal!("next"));
+
+        let process = Process {
+            steps: (0..STEP_COUNT)
+                .map(|_| ProcessStep::Let {
+                    span: Span::None,
+                    pattern: Pattern {
+                        steps: Vec::new(),
+                        terminal: PatternTerminal::Name(Span::None, binding.clone(), None),
+                    },
+                    value: Box::new(Expression::Variable(Span::None, value.clone())),
+                })
+                .collect(),
+            terminator: ProcessTerminator::Command(ProcessCommand {
+                span: Span::None,
+                target: CommandTarget::Local(exit),
+                command: Command {
+                    steps: Vec::new(),
+                    terminator: CommandTerminator::Break(Span::None),
+                },
+            }),
+        };
+        let lowered = Context::new().compile_process(&process).unwrap();
+        assert_eq!(lowered.steps.len(), STEP_COUNT + 1);
+
+        let construct = Construct {
+            steps: (0..STEP_COUNT)
+                .map(|_| ConstructStep::Signal(Span::None, chosen.clone()))
+                .collect(),
+            terminator: ConstructTerminator::Break(Span::None),
+        };
+        let lowered = Context::new().compile_construct(&construct).unwrap();
+        assert_eq!(lowered.steps.len(), STEP_COUNT);
+
+        let apply = Apply {
+            steps: (0..STEP_COUNT)
+                .map(|_| ApplyStep::Signal(Span::None, chosen.clone()))
+                .collect(),
+            terminator: ApplyTerminator::Noop(Span::None),
+        };
+        let lowered = Context::new().compile_apply(&apply).unwrap();
+        assert_eq!(lowered.steps.len(), STEP_COUNT);
+
+        let pattern = Pattern {
+            steps: (0..STEP_COUNT)
+                .map(|_| {
+                    PatternStep::ReceiveType(
+                        Span::None,
+                        TypeParameter::any(LocalName::from(literal!("a"))),
+                    )
+                })
+                .collect(),
+            terminal: PatternTerminal::Name(Span::None, binding, None),
+        };
+        let tail = process::Process::do_terminal(
+            Span::None,
+            LocalName::result(),
+            VariableUsage::Unknown,
+            (),
+            process::TerminalCommand::Break,
+        );
+        let lowered = Context::new()
+            .compile_pattern_helper(&pattern, 0, tail)
+            .unwrap();
+        assert_eq!(lowered.steps.len(), STEP_COUNT + 1);
     }
 }
