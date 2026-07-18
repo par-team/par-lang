@@ -166,8 +166,8 @@
 
 import @core/List
 
-dec MergeTwoLists : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
-def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
+dec MergeTwoLists : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+def MergeTwoLists = [&lt;a&gt; left, right] poll(left, right) {
   list =&gt; list.case {
     .end! =&gt; submit(),
     .item(x) xs =&gt; .item(x) submit(xs),
@@ -176,8 +176,8 @@ def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
 }
 </code></pre>
 <p>And also a tree:</p>
-<pre><code class="language-par">dec TreeToList : &lt;a&gt;[Tree&lt;a&gt;] List&lt;a&gt;
-def TreeToList = &lt;a&gt;[tree] poll(tree) {
+<pre><code class="language-par">dec TreeToList : [&lt;a&gt; Tree&lt;a&gt;] List&lt;a&gt;
+def TreeToList = [&lt;a&gt; tree] poll(tree) {
   tree =&gt; tree.case {
     .leaf x =&gt; .item(x) submit(),
     .node(l) r =&gt; submit(l, r),
@@ -187,15 +187,15 @@ def TreeToList = &lt;a&gt;[tree] poll(tree) {
 </code></pre>
 <p>Merging multiple sources of information this way is great when you need to aggregate from multiple, slow-producing sources into a single stream, where you can react immediately to every bit produced.</p>
 <p><strong>What about merging a list of lists?</strong></p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
 def MergeLists = ???
 </code></pre>
 <p>If we want to merge them in the order their items are produced, <strong>we run into a problem with <code>poll</code>/<code>submit</code>.</strong></p>
 <p>That’s because a pool requires all its clients to be of the same type. But if we put a <code>List&lt;List&lt;a&gt;&gt;</code> into a pool, we get back a <code>List&lt;List&lt;a&gt;&gt;</code>. We still don’t know which of the inner lists to poll from!</p>
 <blockquote>
 <p>We can actually solve this by combining <code>poll</code>/<code>submit</code> with <code>.begin</code>/<code>.loop</code>.</p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
-def MergeLists = &lt;a&gt;[lists] lists.begin.case {
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+def MergeLists = [&lt;a&gt; lists] lists.begin.case {
   .end! =&gt; .end!,
   .item(list) lists =&gt; poll(list, lists.loop) {
     list =&gt; list.case {
@@ -248,8 +248,8 @@ type Tree&lt;a&gt; = recursive either {
 </code></pre>
 <p>They allow the structure to <strong>dynamically spread into multiple agents,</strong> while the other branches handle the behavior of a single one: an individual list in this case.</p>
 <p>The transformation is quite simple:</p>
-<pre><code class="language-par">dec ListFan : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] ListFan&lt;a&gt;
-def ListFan = &lt;a&gt;[lists] lists.begin.case {
+<pre><code class="language-par">dec ListFan : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] ListFan&lt;a&gt;
+def ListFan = [&lt;a&gt; lists] lists.begin.case {
   .end! =&gt; .end!,
   .item(list) lists =&gt; .spawn(
     list.begin.case {
@@ -278,8 +278,8 @@ def ListFan = &lt;a&gt;[lists] lists.begin.case {
 </ul>
 <p><strong>Importantly, the transformation is <em>on-line:</em></strong> Each part of the input immediately produces a part of the output. As a result, no concurrency or timing information is lost, with Par’s concurrent execution model.</p>
 <p><strong>Now, we’re able to implement <code>MergeLists</code> easily:</strong></p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
-def MergeLists = &lt;a&gt;[lists] poll(ListFan(lists)) {
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+def MergeLists = [&lt;a&gt; lists] poll(ListFan(lists)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),

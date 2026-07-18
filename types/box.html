@@ -237,8 +237,8 @@ Copying, closing, and chaining all become manual work.</p>
 
 import @core/List
 
-dec Map : &lt;a&gt;[List&lt;a&gt;] &lt;b&gt;[box [a] b] List&lt;b&gt;
-def Map = &lt;a&gt;[list] &lt;b&gt;[f] list.begin.case {
+dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
+def Map = [&lt;a&gt; list, &lt;b&gt; f] list.begin.case {
   .end! =&gt; .end!,
   .item(x) xs =&gt; .item(f(x)) xs.loop,
 }
@@ -272,9 +272,9 @@ import {
   @core/List
 }
 
-dec Filter : &lt;a: box&gt;[List&lt;a&gt;] [box [a] Bool] List&lt;a&gt;
+dec Filter : [&lt;a: box&gt; List&lt;a&gt;, box [a] Bool] List&lt;a&gt;
 
-def Filter = &lt;a: box&gt;[list] [predicate] list.begin.case {
+def Filter = [&lt;a: box&gt; list, predicate] list.begin.case {
   .end! =&gt; .end!,
   .item(x) xs =&gt; predicate(x).case {
     .true! =&gt; .item(x) xs.loop,

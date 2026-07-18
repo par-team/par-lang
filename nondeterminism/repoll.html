@@ -210,7 +210,7 @@
 </blockquote>
 <h2 id="switching-from-produce-to-cancel"><a class="header" href="#switching-from-produce-to-cancel">Switching from “produce” to “cancel”</a></h2>
 <p>Now suppose we have many sources, and we want to merge them into one:</p>
-<pre><code class="language-par">dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+<pre><code class="language-par">dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
 </code></pre>
 <p>When the merged source is canceled, all underlying sources must be canceled too. That means our server needs two distinct modes:</p>
 <ul>
@@ -249,14 +249,14 @@ type SourceFan&lt;a&gt; = recursive either {
   }
 }
 
-dec SourceFan : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] SourceFan&lt;a&gt;
-def SourceFan = &lt;a&gt;[sources] sources.begin.case {
+dec SourceFan : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] SourceFan&lt;a&gt;
+def SourceFan = [&lt;a&gt; sources] sources.begin.case {
   .end! =&gt; .end!,
   .item(source) sources =&gt; .spawn(source) sources.loop,
 }
 </code></pre>
 <p>Now we can implement:</p>
-<pre><code class="language-par">dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+<pre><code class="language-par">dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
 </code></pre>
 <p>The key idea is that <code>MergeSources</code> has two modes:</p>
 <ul>
@@ -264,7 +264,7 @@ def SourceFan = &lt;a&gt;[sources] sources.begin.case {
 <li><strong>Cancel mode:</strong> once the consumer cancels, discard everything left in the pool.</li>
 </ul>
 <p>Here’s the overall structure:</p>
-<pre><code class="language-par">def MergeSources = &lt;a&gt;[sources] poll(SourceFan(sources)) {
+<pre><code class="language-par">def MergeSources = [&lt;a&gt; sources] poll(SourceFan(sources)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),
@@ -315,8 +315,8 @@ def SourceFan = &lt;a&gt;[sources] sources.begin.case {
 
 import @core/List
 
-dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
-def MergeSources = &lt;a&gt;[sources] poll(SourceFan(sources)) {
+dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+def MergeSources = [&lt;a&gt; sources] poll(SourceFan(sources)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),

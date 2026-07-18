@@ -277,8 +277,8 @@ def PollSumTwo = [nums1, nums2] poll(nums1, nums2) {
 <p>Everything else remains the same.</p>
 <p>The empty <code>submit()</code> in the <code>.end!</code> branch now makes sense! Just because one of the lists has ended doesn’t mean there’s no more clients: there’s the other list!</p>
 <p><strong>Let’s now merge two lists into one:</strong></p>
-<pre><code class="language-par">dec MergeTwoLists : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
-def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
+<pre><code class="language-par">dec MergeTwoLists : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+def MergeTwoLists = [&lt;a&gt; left, right] poll(left, right) {
   list =&gt; list.case {
     .end! =&gt; submit(),
     .item(x) xs =&gt; .item(x) submit(xs),
@@ -306,8 +306,8 @@ def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
 }
 </code></pre>
 <p>Works like a charm:</p>
-<pre><code class="language-par">dec TreeToList : &lt;a&gt;[Tree&lt;a&gt;] List&lt;a&gt;
-def TreeToList = &lt;a&gt;[tree] poll(tree) {
+<pre><code class="language-par">dec TreeToList : [&lt;a&gt; Tree&lt;a&gt;] List&lt;a&gt;
+def TreeToList = [&lt;a&gt; tree] poll(tree) {
   tree =&gt; tree.case {
     .leaf x =&gt; .item(x) submit(),
     .node(l) r =&gt; submit(l, r),

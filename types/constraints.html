@@ -163,12 +163,12 @@
                         <h1 id="type-constraints"><a class="header" href="#type-constraints">Type Constraints</a></h1>
 <p>Generic code often needs to know a little bit about an unknown type.</p>
 <p>For example, this function can return its argument without knowing anything about <code>a</code>:</p>
-<pre><code class="language-par">dec Identity : &lt;a&gt;[a] a
-def Identity = &lt;a&gt;[x] x
+<pre><code class="language-par">dec Identity : [&lt;a&gt; a] a
+def Identity = [&lt;a&gt; x] x
 </code></pre>
 <p>But this one needs to use its value twice:</p>
-<pre><code class="language-par">dec Duplicate : &lt;a: box&gt;[a] (a, a)!
-def Duplicate = &lt;a: box&gt;[x] (x, x)!
+<pre><code class="language-par">dec Duplicate : [&lt;a: box&gt; a] (a, a)!
+def Duplicate = [&lt;a: box&gt; x] (x, x)!
 </code></pre>
 <p>The <code>: box</code> part is a <strong>type constraint</strong>. It says that the unknown type <code>a</code> must be non-linear,
 so values of that type may be reused or dropped.</p>
@@ -190,13 +190,13 @@ also <code>box</code>.</p>
 <pre><code class="language-par">dec ZeroOr : [type a: number, Bool, a] a
 </code></pre>
 <p>Implicit generic functions use angle-bracket binders:</p>
-<pre><code class="language-par">dec Sum : &lt;a: number&gt;[(a) a] a
+<pre><code class="language-par">dec Sum : [&lt;a: number&gt; (a) a] a
 </code></pre>
 <p>Existential types can constrain the hidden type:</p>
 <pre><code class="language-par">type SomeData = (type a: data) a
 </code></pre>
 <p>Implicit generic pairs can do the same:</p>
-<pre><code class="language-par">type DataWithText = &lt;a: data&gt;(a) String
+<pre><code class="language-par">type DataWithText = (&lt;a: data&gt; a) String
 </code></pre>
 <p>When you construct a value with a constrained explicit binder, the checked type must satisfy the
 same constraint:</p>
@@ -212,8 +212,8 @@ on that type.</p>
 <h2 id="the-box-constraint"><a class="header" href="#the-box-constraint">The <code>box</code> Constraint</a></h2>
 <p>The <code>box</code> constraint means values are non-linear. A value whose type is known only as <code>a: box</code> may
 be copied, reused, or dropped.</p>
-<pre><code class="language-par">dec KeepFirst : &lt;a: box&gt;[(a, a)!] a
-def KeepFirst = &lt;a: box&gt;[(first, second)!] first
+<pre><code class="language-par">dec KeepFirst : [&lt;a: box&gt; (a, a)!] a
+def KeepFirst = [&lt;a: box&gt; (first, second)!] first
 </code></pre>
 <p>In the example, <code>second</code> is not used. That is allowed because <code>a: box</code>.</p>
 <p>Types that satisfy <code>box</code> include:</p>
@@ -234,14 +234,14 @@ support:</p>
 <li>comparison operators: <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code></li>
 <li>data interpolation in template strings: <code>#{...}</code></li>
 </ul>
-<pre><code class="language-par">dec Min : &lt;a: data&gt;[(a) a] a
-def Min = &lt;a: data&gt;[(left) right] if {
+<pre><code class="language-par">dec Min : [&lt;a: data&gt; (a) a] a
+def Min = [&lt;a: data&gt; (left) right] if {
   left &lt;= right =&gt; left,
   else =&gt; right,
 }
 
-dec Label : &lt;a: data&gt;[a] String
-def Label = &lt;a: data&gt;[value] `value = #{value}`
+dec Label : [&lt;a: data&gt; a] String
+def Label = [&lt;a: data&gt; value] `value = #{value}`
 </code></pre>
 <p>The comparison operators use <code>@core/Data.Compare</code> under the hood. The <code>#{...}</code> template form uses
 <code>@core/Data.ToString</code>.</p>
@@ -272,8 +272,8 @@ the data value inside.</p>
 
 import @core/Number
 
-dec SumPair : &lt;a: number&gt;[(a) a] a
-def SumPair = &lt;a: number&gt;[(left) right] left + right
+dec SumPair : [&lt;a: number&gt; (a) a] a
+def SumPair = [&lt;a: number&gt; (left) right] left + right
 
 dec Zero : [type a: number] a
 def Zero = [type a: number] Number.Zero(type a)
@@ -294,11 +294,11 @@ everything from <code>number</code>, plus:</p>
 <li><code>-</code></li>
 <li><code>neg</code></li>
 </ul>
-<pre><code class="language-par">dec Difference : &lt;a: signed&gt;[(a) a] a
-def Difference = &lt;a: signed&gt;[(left) right] left - right
+<pre><code class="language-par">dec Difference : [&lt;a: signed&gt; (a) a] a
+def Difference = [&lt;a: signed&gt; (left) right] left - right
 
-dec Negate : &lt;a: signed&gt;[a] a
-def Negate = &lt;a: signed&gt;[value] neg value
+dec Negate : [&lt;a: signed&gt; a] a
+def Negate = [&lt;a: signed&gt; value] neg value
 </code></pre>
 <p>The signed types are:</p>
 <ul>

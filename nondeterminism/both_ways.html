@@ -184,7 +184,7 @@
 }
 </code></pre>
 <p>We used it for merging <code>List&lt;List&lt;a&gt;&gt;</code>, but nothing prevents us from using it standalone as well:</p>
-<pre><code class="language-par">dec ServeListFan : &lt;a&gt;[ListFan&lt;a&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec ServeListFan : [&lt;a&gt; ListFan&lt;a&gt;] List&lt;a&gt;
 def ServeListFan = ...
 </code></pre>
 <p>The code will be the same as for <code>MergeLists</code> in the <a href="./fan_pattern.html#the-fan-transformation">previous chapter</a>.</p>
@@ -350,8 +350,8 @@ def Main: ! = ServeIds(chan server {
 <p>To implement such a server, we need to decide what to do with the value once all clients finish. Here, we just return it to the creator of the server.</p>
 <pre><code class="language-par">type MutexClient&lt;a&gt; = dual MutexServer&lt;a&gt;
 
-dec ShareMutex : &lt;a&gt;[a] [MutexClient&lt;a&gt;] a
-def ShareMutex = &lt;a&gt;[value] [clients] poll(clients) {
+dec ShareMutex : [&lt;a&gt; a, MutexClient&lt;a&gt;] a
+def ShareMutex = [&lt;a&gt; value, clients] poll(clients) {
   client =&gt; client.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),

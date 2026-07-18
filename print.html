@@ -1601,29 +1601,34 @@ def Swapped = Swap(type String, type Int, Pair)
 obvious from the value you are passing. For those cases, Par also has <strong>implicit
 generics</strong>.</p>
 <h2 id="syntax"><a class="header" href="#syntax">Syntax</a></h2>
-<p>Implicit generics are not a standalone type. The <code>&lt;a, ...&gt;</code> binder is an
-extension of a <strong><a href="types/./function.html">function</a> type</strong>: it must appear immediately
-before the <code>[...]</code> of that type.</p>
-<pre><code class="language-par">&lt;a, b&gt;[Arg] Res
+<p>Implicit generics are not a standalone type. The <code>&lt;a, ...&gt;</code> binder is part of
+one value item inside a <strong><a href="types/./function.html">function</a> type</strong>. It appears immediately
+before the argument type whose value will determine those type variables.</p>
+<pre><code class="language-par">[&lt;a, b&gt; Arg, Other] Res
 </code></pre>
-<p>You cannot write <code>&lt;a&gt;</code> in front of <code>either</code>, <code>choice</code>, <code>box</code>, or anything else.</p>
+<p>An item may have no binder, one binder, or a binder with several variables. This
+means implicit and ordinary arguments can share one pair of brackets:</p>
+<pre><code class="language-par">[A, &lt;b&gt; B, C] Res
+</code></pre>
+<p>You cannot use <code>&lt;a&gt;</code> outside a function or pair item list, or put it in front of
+<code>either</code>, <code>choice</code>, <code>box</code>, or another complete type.</p>
 <p>The key rule is local inference:</p>
 <p><strong>Implicit type variables are inferred only from the single argument
 immediately following the <code>&lt;...&gt;</code> binder.</strong></p>
-<p>This is also reflected in the syntax: the bracket right after <code>&lt;...&gt;</code> must
-contain exactly one argument type. If you need multiple value arguments, you
-still write a curried function type.</p>
-<p>So this is valid:</p>
-<pre><code class="language-par">dec Concat : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
+<p>The binder does not infer from the other items in the same brackets. For
+example, this function infers <code>a</code> from <code>left</code> only; <code>right</code> is checked afterward
+using the inferred <code>a</code>:</p>
+<pre><code class="language-par">dec Concat : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
 </code></pre>
-<p>But this is not valid syntax:</p>
-<pre><code class="language-par">dec Concat : &lt;a&gt;[List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+<p>Different items may introduce different variables:</p>
+<pre><code class="language-par">dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
 </code></pre>
-<p>When calling such a function, you can still pass all arguments at once:</p>
+<p>Callers pass the value arguments normally:</p>
 <pre><code class="language-par">Concat(left, right)
 </code></pre>
-<p>The type is still written in curried form, because inference must happen from
-that first argument alone.</p>
+<p>The surface list still represents sequential, nested function types. Attaching
+the binder to an item records exactly which one argument drives each local
+inference step.</p>
 <p>One more important point: there is no syntax for “manually specifying” implicit
 type arguments. When designing an API you choose, for each type variable,
 whether it is implicit or explicit:</p>
@@ -1636,12 +1641,12 @@ whether it is implicit or explicit:</p>
 <code>&lt;a: data&gt;</code>. The constraints themselves are covered in <a href="types/./constraints.html">Type Constraints</a>.</p>
 <h2 id="construction-5"><a class="header" href="#construction-5">Construction</a></h2>
 <p>Start with the <code>Swap</code> example, but make it implicit:</p>
-<pre><code class="language-par">dec Swap : &lt;a, b&gt;[(a, b)!] (b, a)!
+<pre><code class="language-par">dec Swap : [&lt;a, b&gt; (a, b)!] (b, a)!
 </code></pre>
 <p>To construct a value of this type, you also introduce the implicit type names
 at the term level, and then receive the value argument:</p>
-<pre><code class="language-par">dec Swap : &lt;a, b&gt;[(a, b)!] (b, a)!
-def Swap = &lt;a, b&gt;[pair]
+<pre><code class="language-par">dec Swap : [&lt;a, b&gt; (a, b)!] (b, a)!
+def Swap = [&lt;a, b&gt; pair]
   let (first, second)! = pair
   in (second, first)!
 </code></pre>
@@ -1650,7 +1655,7 @@ explicit <code>forall</code> generic are different types, and they do not subtyp
 another.</p>
 <p>You can also use implicit generics when the type variable is nested inside a
 larger argument:</p>
-<pre><code class="language-par">dec Flatten : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec Flatten : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
 </code></pre>
 <h2 id="destruction-5"><a class="header" href="#destruction-5">Destruction</a></h2>
 <p>To use an implicit generic, you call it like an ordinary function:</p>
@@ -1675,7 +1680,7 @@ the expected argument type to check expressions whose type is only partially
 known.</p>
 <p>A classic example is an anonymous function. The <code>box</code> here is not the point —
 it just happens that <code>Map</code> takes a boxed function.</p>
-<pre><code class="language-par">dec Map : &lt;a&gt;[List&lt;a&gt;] &lt;b&gt;[box [a] b] List&lt;b&gt;
+<pre><code class="language-par">dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
 </code></pre>
 <p>The list argument infers <code>a</code>. When checking the mapper, <code>b</code> is still unknown,
 but the checker can still use the partial expected type <code>box [a] b</code>. That means
@@ -1695,11 +1700,12 @@ There is still no syntax for manually passing an implicit type argument.</p>
 <h2 id="implicit-generics-and-pairs"><a class="header" href="#implicit-generics-and-pairs">Implicit generics and pairs</a></h2>
 <p>Implicit generics also exist for <a href="types/./pair.html">pair</a> types. This is the implicit
 counterpart of <a href="types/./exists.html"><code>exists</code></a>.</p>
-<p>Just like with functions, the <code>&lt;a, ...&gt;</code> binder is part of the following pair
-type: it must appear right before the <code>(...)</code> of that pair type.</p>
+<p>Just like with functions, the <code>&lt;a, ...&gt;</code> binder belongs to one value item, this
+time inside the pair’s parentheses. Ordinary and implicit items can be mixed,
+as in <code>(Header, &lt;a&gt; a) Rest</code>.</p>
 <p>Here is a simple example. <code>AnyDrop</code> stores a value of some unknown type, plus a
 small “vtable” for dropping it (a boxed <a href="types/./choice.html">choice</a>):</p>
-<pre><code class="language-par">type AnyDrop = &lt;a&gt;(a) box choice {
+<pre><code class="language-par">type AnyDrop = (&lt;a&gt; a) box choice {
   .drop(a) =&gt; !,
 }
 </code></pre>
@@ -1717,7 +1723,7 @@ small “vtable” for dropping it (a boxed <a href="types/./choice.html">choice
 <h3 id="destruction-6"><a class="header" href="#destruction-6">Destruction</a></h3>
 <p>Dually, when you unpack an implicit-generic pair, you introduce a local type
 variable:</p>
-<pre><code class="language-par">let &lt;a&gt;(value) vtable = Example
+<pre><code class="language-par">let (&lt;a&gt; value) vtable = Example
 vtable.drop(value)
 </code></pre>
 <p>This is the “mirror image” of implicit-generic functions: there you introduce
@@ -2456,8 +2462,8 @@ Copying, closing, and chaining all become manual work.</p>
 
 import @core/List
 
-dec Map : &lt;a&gt;[List&lt;a&gt;] &lt;b&gt;[box [a] b] List&lt;b&gt;
-def Map = &lt;a&gt;[list] &lt;b&gt;[f] list.begin.case {
+dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
+def Map = [&lt;a&gt; list, &lt;b&gt; f] list.begin.case {
   .end! =&gt; .end!,
   .item(x) xs =&gt; .item(f(x)) xs.loop,
 }
@@ -2491,9 +2497,9 @@ import {
   @core/List
 }
 
-dec Filter : &lt;a: box&gt;[List&lt;a&gt;] [box [a] Bool] List&lt;a&gt;
+dec Filter : [&lt;a: box&gt; List&lt;a&gt;, box [a] Bool] List&lt;a&gt;
 
-def Filter = &lt;a: box&gt;[list] [predicate] list.begin.case {
+def Filter = [&lt;a: box&gt; list, predicate] list.begin.case {
   .end! =&gt; .end!,
   .item(x) xs =&gt; predicate(x).case {
     .true! =&gt; .item(x) xs.loop,
@@ -2521,12 +2527,12 @@ wrapping every element in a redundant <code>box</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="type-constraints"><a class="header" href="#type-constraints">Type Constraints</a></h1>
 <p>Generic code often needs to know a little bit about an unknown type.</p>
 <p>For example, this function can return its argument without knowing anything about <code>a</code>:</p>
-<pre><code class="language-par">dec Identity : &lt;a&gt;[a] a
-def Identity = &lt;a&gt;[x] x
+<pre><code class="language-par">dec Identity : [&lt;a&gt; a] a
+def Identity = [&lt;a&gt; x] x
 </code></pre>
 <p>But this one needs to use its value twice:</p>
-<pre><code class="language-par">dec Duplicate : &lt;a: box&gt;[a] (a, a)!
-def Duplicate = &lt;a: box&gt;[x] (x, x)!
+<pre><code class="language-par">dec Duplicate : [&lt;a: box&gt; a] (a, a)!
+def Duplicate = [&lt;a: box&gt; x] (x, x)!
 </code></pre>
 <p>The <code>: box</code> part is a <strong>type constraint</strong>. It says that the unknown type <code>a</code> must be non-linear,
 so values of that type may be reused or dropped.</p>
@@ -2548,13 +2554,13 @@ also <code>box</code>.</p>
 <pre><code class="language-par">dec ZeroOr : [type a: number, Bool, a] a
 </code></pre>
 <p>Implicit generic functions use angle-bracket binders:</p>
-<pre><code class="language-par">dec Sum : &lt;a: number&gt;[(a) a] a
+<pre><code class="language-par">dec Sum : [&lt;a: number&gt; (a) a] a
 </code></pre>
 <p>Existential types can constrain the hidden type:</p>
 <pre><code class="language-par">type SomeData = (type a: data) a
 </code></pre>
 <p>Implicit generic pairs can do the same:</p>
-<pre><code class="language-par">type DataWithText = &lt;a: data&gt;(a) String
+<pre><code class="language-par">type DataWithText = (&lt;a: data&gt; a) String
 </code></pre>
 <p>When you construct a value with a constrained explicit binder, the checked type must satisfy the
 same constraint:</p>
@@ -2570,8 +2576,8 @@ on that type.</p>
 <h2 id="the-box-constraint"><a class="header" href="#the-box-constraint">The <code>box</code> Constraint</a></h2>
 <p>The <code>box</code> constraint means values are non-linear. A value whose type is known only as <code>a: box</code> may
 be copied, reused, or dropped.</p>
-<pre><code class="language-par">dec KeepFirst : &lt;a: box&gt;[(a, a)!] a
-def KeepFirst = &lt;a: box&gt;[(first, second)!] first
+<pre><code class="language-par">dec KeepFirst : [&lt;a: box&gt; (a, a)!] a
+def KeepFirst = [&lt;a: box&gt; (first, second)!] first
 </code></pre>
 <p>In the example, <code>second</code> is not used. That is allowed because <code>a: box</code>.</p>
 <p>Types that satisfy <code>box</code> include:</p>
@@ -2592,14 +2598,14 @@ support:</p>
 <li>comparison operators: <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code></li>
 <li>data interpolation in template strings: <code>#{...}</code></li>
 </ul>
-<pre><code class="language-par">dec Min : &lt;a: data&gt;[(a) a] a
-def Min = &lt;a: data&gt;[(left) right] if {
+<pre><code class="language-par">dec Min : [&lt;a: data&gt; (a) a] a
+def Min = [&lt;a: data&gt; (left) right] if {
   left &lt;= right =&gt; left,
   else =&gt; right,
 }
 
-dec Label : &lt;a: data&gt;[a] String
-def Label = &lt;a: data&gt;[value] `value = #{value}`
+dec Label : [&lt;a: data&gt; a] String
+def Label = [&lt;a: data&gt; value] `value = #{value}`
 </code></pre>
 <p>The comparison operators use <code>@core/Data.Compare</code> under the hood. The <code>#{...}</code> template form uses
 <code>@core/Data.ToString</code>.</p>
@@ -2630,8 +2636,8 @@ the data value inside.</p>
 
 import @core/Number
 
-dec SumPair : &lt;a: number&gt;[(a) a] a
-def SumPair = &lt;a: number&gt;[(left) right] left + right
+dec SumPair : [&lt;a: number&gt; (a) a] a
+def SumPair = [&lt;a: number&gt; (left) right] left + right
 
 dec Zero : [type a: number] a
 def Zero = [type a: number] Number.Zero(type a)
@@ -2652,11 +2658,11 @@ everything from <code>number</code>, plus:</p>
 <li><code>-</code></li>
 <li><code>neg</code></li>
 </ul>
-<pre><code class="language-par">dec Difference : &lt;a: signed&gt;[(a) a] a
-def Difference = &lt;a: signed&gt;[(left) right] left - right
+<pre><code class="language-par">dec Difference : [&lt;a: signed&gt; (a) a] a
+def Difference = [&lt;a: signed&gt; (left) right] left - right
 
-dec Negate : &lt;a: signed&gt;[a] a
-def Negate = &lt;a: signed&gt;[value] neg value
+dec Negate : [&lt;a: signed&gt; a] a
+def Negate = [&lt;a: signed&gt; value] neg value
 </code></pre>
 <p>The signed types are:</p>
 <ul>
@@ -4875,8 +4881,8 @@ def PollSumTwo = [nums1, nums2] poll(nums1, nums2) {
 <p>Everything else remains the same.</p>
 <p>The empty <code>submit()</code> in the <code>.end!</code> branch now makes sense! Just because one of the lists has ended doesn’t mean there’s no more clients: there’s the other list!</p>
 <p><strong>Let’s now merge two lists into one:</strong></p>
-<pre><code class="language-par">dec MergeTwoLists : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
-def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
+<pre><code class="language-par">dec MergeTwoLists : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+def MergeTwoLists = [&lt;a&gt; left, right] poll(left, right) {
   list =&gt; list.case {
     .end! =&gt; submit(),
     .item(x) xs =&gt; .item(x) submit(xs),
@@ -4904,8 +4910,8 @@ def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
 }
 </code></pre>
 <p>Works like a charm:</p>
-<pre><code class="language-par">dec TreeToList : &lt;a&gt;[Tree&lt;a&gt;] List&lt;a&gt;
-def TreeToList = &lt;a&gt;[tree] poll(tree) {
+<pre><code class="language-par">dec TreeToList : [&lt;a&gt; Tree&lt;a&gt;] List&lt;a&gt;
+def TreeToList = [&lt;a&gt; tree] poll(tree) {
   tree =&gt; tree.case {
     .leaf x =&gt; .item(x) submit(),
     .node(l) r =&gt; submit(l, r),
@@ -4939,8 +4945,8 @@ poll(client1, client2) {
 
 import @core/List
 
-dec MergeTwoLists : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
-def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
+dec MergeTwoLists : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+def MergeTwoLists = [&lt;a&gt; left, right] poll(left, right) {
   list =&gt; list.case {
     .end! =&gt; submit(),
     .item(x) xs =&gt; .item(x) submit(xs),
@@ -4949,8 +4955,8 @@ def MergeTwoLists = &lt;a&gt;[left] [right] poll(left, right) {
 }
 </code></pre>
 <p>And also a tree:</p>
-<pre><code class="language-par">dec TreeToList : &lt;a&gt;[Tree&lt;a&gt;] List&lt;a&gt;
-def TreeToList = &lt;a&gt;[tree] poll(tree) {
+<pre><code class="language-par">dec TreeToList : [&lt;a&gt; Tree&lt;a&gt;] List&lt;a&gt;
+def TreeToList = [&lt;a&gt; tree] poll(tree) {
   tree =&gt; tree.case {
     .leaf x =&gt; .item(x) submit(),
     .node(l) r =&gt; submit(l, r),
@@ -4960,15 +4966,15 @@ def TreeToList = &lt;a&gt;[tree] poll(tree) {
 </code></pre>
 <p>Merging multiple sources of information this way is great when you need to aggregate from multiple, slow-producing sources into a single stream, where you can react immediately to every bit produced.</p>
 <p><strong>What about merging a list of lists?</strong></p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
 def MergeLists = ???
 </code></pre>
 <p>If we want to merge them in the order their items are produced, <strong>we run into a problem with <code>poll</code>/<code>submit</code>.</strong></p>
 <p>That’s because a pool requires all its clients to be of the same type. But if we put a <code>List&lt;List&lt;a&gt;&gt;</code> into a pool, we get back a <code>List&lt;List&lt;a&gt;&gt;</code>. We still don’t know which of the inner lists to poll from!</p>
 <blockquote>
 <p>We can actually solve this by combining <code>poll</code>/<code>submit</code> with <code>.begin</code>/<code>.loop</code>.</p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
-def MergeLists = &lt;a&gt;[lists] lists.begin.case {
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+def MergeLists = [&lt;a&gt; lists] lists.begin.case {
   .end! =&gt; .end!,
   .item(list) lists =&gt; poll(list, lists.loop) {
     list =&gt; list.case {
@@ -5021,8 +5027,8 @@ type Tree&lt;a&gt; = recursive either {
 </code></pre>
 <p>They allow the structure to <strong>dynamically spread into multiple agents,</strong> while the other branches handle the behavior of a single one: an individual list in this case.</p>
 <p>The transformation is quite simple:</p>
-<pre><code class="language-par">dec ListFan : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] ListFan&lt;a&gt;
-def ListFan = &lt;a&gt;[lists] lists.begin.case {
+<pre><code class="language-par">dec ListFan : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] ListFan&lt;a&gt;
+def ListFan = [&lt;a&gt; lists] lists.begin.case {
   .end! =&gt; .end!,
   .item(list) lists =&gt; .spawn(
     list.begin.case {
@@ -5051,8 +5057,8 @@ def ListFan = &lt;a&gt;[lists] lists.begin.case {
 </ul>
 <p><strong>Importantly, the transformation is <em>on-line:</em></strong> Each part of the input immediately produces a part of the output. As a result, no concurrency or timing information is lost, with Par’s concurrent execution model.</p>
 <p><strong>Now, we’re able to implement <code>MergeLists</code> easily:</strong></p>
-<pre><code class="language-par">dec MergeLists : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
-def MergeLists = &lt;a&gt;[lists] poll(ListFan(lists)) {
+<pre><code class="language-par">dec MergeLists : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+def MergeLists = [&lt;a&gt; lists] poll(ListFan(lists)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),
@@ -5092,7 +5098,7 @@ type Coquest = List&lt;a&gt;
 }
 </code></pre>
 <p>We used it for merging <code>List&lt;List&lt;a&gt;&gt;</code>, but nothing prevents us from using it standalone as well:</p>
-<pre><code class="language-par">dec ServeListFan : &lt;a&gt;[ListFan&lt;a&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec ServeListFan : [&lt;a&gt; ListFan&lt;a&gt;] List&lt;a&gt;
 def ServeListFan = ...
 </code></pre>
 <p>The code will be the same as for <code>MergeLists</code> in the <a href="nondeterminism/./fan_pattern.html#the-fan-transformation">previous chapter</a>.</p>
@@ -5258,8 +5264,8 @@ def Main: ! = ServeIds(chan server {
 <p>To implement such a server, we need to decide what to do with the value once all clients finish. Here, we just return it to the creator of the server.</p>
 <pre><code class="language-par">type MutexClient&lt;a&gt; = dual MutexServer&lt;a&gt;
 
-dec ShareMutex : &lt;a&gt;[a] [MutexClient&lt;a&gt;] a
-def ShareMutex = &lt;a&gt;[value] [clients] poll(clients) {
+dec ShareMutex : [&lt;a&gt; a, MutexClient&lt;a&gt;] a
+def ShareMutex = [&lt;a&gt; value, clients] poll(clients) {
   client =&gt; client.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),
@@ -5378,7 +5384,7 @@ def Main: ! = do {
 </blockquote>
 <h2 id="switching-from-produce-to-cancel"><a class="header" href="#switching-from-produce-to-cancel">Switching from “produce” to “cancel”</a></h2>
 <p>Now suppose we have many sources, and we want to merge them into one:</p>
-<pre><code class="language-par">dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+<pre><code class="language-par">dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
 </code></pre>
 <p>When the merged source is canceled, all underlying sources must be canceled too. That means our server needs two distinct modes:</p>
 <ul>
@@ -5417,14 +5423,14 @@ type SourceFan&lt;a&gt; = recursive either {
   }
 }
 
-dec SourceFan : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] SourceFan&lt;a&gt;
-def SourceFan = &lt;a&gt;[sources] sources.begin.case {
+dec SourceFan : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] SourceFan&lt;a&gt;
+def SourceFan = [&lt;a&gt; sources] sources.begin.case {
   .end! =&gt; .end!,
   .item(source) sources =&gt; .spawn(source) sources.loop,
 }
 </code></pre>
 <p>Now we can implement:</p>
-<pre><code class="language-par">dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+<pre><code class="language-par">dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
 </code></pre>
 <p>The key idea is that <code>MergeSources</code> has two modes:</p>
 <ul>
@@ -5432,7 +5438,7 @@ def SourceFan = &lt;a&gt;[sources] sources.begin.case {
 <li><strong>Cancel mode:</strong> once the consumer cancels, discard everything left in the pool.</li>
 </ul>
 <p>Here’s the overall structure:</p>
-<pre><code class="language-par">def MergeSources = &lt;a&gt;[sources] poll(SourceFan(sources)) {
+<pre><code class="language-par">def MergeSources = [&lt;a&gt; sources] poll(SourceFan(sources)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),
@@ -5483,8 +5489,8 @@ def SourceFan = &lt;a&gt;[sources] sources.begin.case {
 
 import @core/List
 
-dec MergeSources : &lt;a&gt;[List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
-def MergeSources = &lt;a&gt;[sources] poll(SourceFan(sources)) {
+dec MergeSources : [&lt;a&gt; List&lt;Source&lt;a&gt;&gt;] Source&lt;a&gt;
+def MergeSources = [&lt;a&gt; sources] poll(SourceFan(sources)) {
   fan =&gt; fan.case {
     .end! =&gt; submit(),
     .spawn(l) r =&gt; submit(l, r),

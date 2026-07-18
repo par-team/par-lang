@@ -182,29 +182,34 @@ def Swapped = Swap(type String, type Int, Pair)
 obvious from the value you are passing. For those cases, Par also has <strong>implicit
 generics</strong>.</p>
 <h2 id="syntax"><a class="header" href="#syntax">Syntax</a></h2>
-<p>Implicit generics are not a standalone type. The <code>&lt;a, ...&gt;</code> binder is an
-extension of a <strong><a href="./function.html">function</a> type</strong>: it must appear immediately
-before the <code>[...]</code> of that type.</p>
-<pre><code class="language-par">&lt;a, b&gt;[Arg] Res
+<p>Implicit generics are not a standalone type. The <code>&lt;a, ...&gt;</code> binder is part of
+one value item inside a <strong><a href="./function.html">function</a> type</strong>. It appears immediately
+before the argument type whose value will determine those type variables.</p>
+<pre><code class="language-par">[&lt;a, b&gt; Arg, Other] Res
 </code></pre>
-<p>You cannot write <code>&lt;a&gt;</code> in front of <code>either</code>, <code>choice</code>, <code>box</code>, or anything else.</p>
+<p>An item may have no binder, one binder, or a binder with several variables. This
+means implicit and ordinary arguments can share one pair of brackets:</p>
+<pre><code class="language-par">[A, &lt;b&gt; B, C] Res
+</code></pre>
+<p>You cannot use <code>&lt;a&gt;</code> outside a function or pair item list, or put it in front of
+<code>either</code>, <code>choice</code>, <code>box</code>, or another complete type.</p>
 <p>The key rule is local inference:</p>
 <p><strong>Implicit type variables are inferred only from the single argument
 immediately following the <code>&lt;...&gt;</code> binder.</strong></p>
-<p>This is also reflected in the syntax: the bracket right after <code>&lt;...&gt;</code> must
-contain exactly one argument type. If you need multiple value arguments, you
-still write a curried function type.</p>
-<p>So this is valid:</p>
-<pre><code class="language-par">dec Concat : &lt;a&gt;[List&lt;a&gt;] [List&lt;a&gt;] List&lt;a&gt;
+<p>The binder does not infer from the other items in the same brackets. For
+example, this function infers <code>a</code> from <code>left</code> only; <code>right</code> is checked afterward
+using the inferred <code>a</code>:</p>
+<pre><code class="language-par">dec Concat : [&lt;a&gt; List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
 </code></pre>
-<p>But this is not valid syntax:</p>
-<pre><code class="language-par">dec Concat : &lt;a&gt;[List&lt;a&gt;, List&lt;a&gt;] List&lt;a&gt;
+<p>Different items may introduce different variables:</p>
+<pre><code class="language-par">dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
 </code></pre>
-<p>When calling such a function, you can still pass all arguments at once:</p>
+<p>Callers pass the value arguments normally:</p>
 <pre><code class="language-par">Concat(left, right)
 </code></pre>
-<p>The type is still written in curried form, because inference must happen from
-that first argument alone.</p>
+<p>The surface list still represents sequential, nested function types. Attaching
+the binder to an item records exactly which one argument drives each local
+inference step.</p>
 <p>One more important point: there is no syntax for “manually specifying” implicit
 type arguments. When designing an API you choose, for each type variable,
 whether it is implicit or explicit:</p>
@@ -217,12 +222,12 @@ whether it is implicit or explicit:</p>
 <code>&lt;a: data&gt;</code>. The constraints themselves are covered in <a href="./constraints.html">Type Constraints</a>.</p>
 <h2 id="construction"><a class="header" href="#construction">Construction</a></h2>
 <p>Start with the <code>Swap</code> example, but make it implicit:</p>
-<pre><code class="language-par">dec Swap : &lt;a, b&gt;[(a, b)!] (b, a)!
+<pre><code class="language-par">dec Swap : [&lt;a, b&gt; (a, b)!] (b, a)!
 </code></pre>
 <p>To construct a value of this type, you also introduce the implicit type names
 at the term level, and then receive the value argument:</p>
-<pre><code class="language-par">dec Swap : &lt;a, b&gt;[(a, b)!] (b, a)!
-def Swap = &lt;a, b&gt;[pair]
+<pre><code class="language-par">dec Swap : [&lt;a, b&gt; (a, b)!] (b, a)!
+def Swap = [&lt;a, b&gt; pair]
   let (first, second)! = pair
   in (second, first)!
 </code></pre>
@@ -231,7 +236,7 @@ explicit <code>forall</code> generic are different types, and they do not subtyp
 another.</p>
 <p>You can also use implicit generics when the type variable is nested inside a
 larger argument:</p>
-<pre><code class="language-par">dec Flatten : &lt;a&gt;[List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
+<pre><code class="language-par">dec Flatten : [&lt;a&gt; List&lt;List&lt;a&gt;&gt;] List&lt;a&gt;
 </code></pre>
 <h2 id="destruction"><a class="header" href="#destruction">Destruction</a></h2>
 <p>To use an implicit generic, you call it like an ordinary function:</p>
@@ -256,7 +261,7 @@ the expected argument type to check expressions whose type is only partially
 known.</p>
 <p>A classic example is an anonymous function. The <code>box</code> here is not the point —
 it just happens that <code>Map</code> takes a boxed function.</p>
-<pre><code class="language-par">dec Map : &lt;a&gt;[List&lt;a&gt;] &lt;b&gt;[box [a] b] List&lt;b&gt;
+<pre><code class="language-par">dec Map : [&lt;a&gt; List&lt;a&gt;, &lt;b&gt; box [a] b] List&lt;b&gt;
 </code></pre>
 <p>The list argument infers <code>a</code>. When checking the mapper, <code>b</code> is still unknown,
 but the checker can still use the partial expected type <code>box [a] b</code>. That means
@@ -276,11 +281,12 @@ There is still no syntax for manually passing an implicit type argument.</p>
 <h2 id="implicit-generics-and-pairs"><a class="header" href="#implicit-generics-and-pairs">Implicit generics and pairs</a></h2>
 <p>Implicit generics also exist for <a href="./pair.html">pair</a> types. This is the implicit
 counterpart of <a href="./exists.html"><code>exists</code></a>.</p>
-<p>Just like with functions, the <code>&lt;a, ...&gt;</code> binder is part of the following pair
-type: it must appear right before the <code>(...)</code> of that pair type.</p>
+<p>Just like with functions, the <code>&lt;a, ...&gt;</code> binder belongs to one value item, this
+time inside the pair’s parentheses. Ordinary and implicit items can be mixed,
+as in <code>(Header, &lt;a&gt; a) Rest</code>.</p>
 <p>Here is a simple example. <code>AnyDrop</code> stores a value of some unknown type, plus a
 small “vtable” for dropping it (a boxed <a href="./choice.html">choice</a>):</p>
-<pre><code class="language-par">type AnyDrop = &lt;a&gt;(a) box choice {
+<pre><code class="language-par">type AnyDrop = (&lt;a&gt; a) box choice {
   .drop(a) =&gt; !,
 }
 </code></pre>
@@ -298,7 +304,7 @@ small “vtable” for dropping it (a boxed <a href="./choice.html">choice</a>):
 <h3 id="destruction-1"><a class="header" href="#destruction-1">Destruction</a></h3>
 <p>Dually, when you unpack an implicit-generic pair, you introduce a local type
 variable:</p>
-<pre><code class="language-par">let &lt;a&gt;(value) vtable = Example
+<pre><code class="language-par">let (&lt;a&gt; value) vtable = Example
 vtable.drop(value)
 </code></pre>
 <p>This is the “mirror image” of implicit-generic functions: there you introduce
