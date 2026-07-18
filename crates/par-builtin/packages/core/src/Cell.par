@@ -17,10 +17,10 @@ export {
 
   // Serves a value through a `Cell`.
   // Returns the final value when all clients are done.
-  dec Share : <a>[a] [dual Cell<a>] a
+  dec Share : [<a> a, dual Cell<a>] a
 }
 
-def Share = <a>[value] [client] poll(client) {
+def Share = [<a> value, client] poll(client) {
   session => session.case {
     .end! => submit(),
     .split(client1) client2 => submit(client1, client2),

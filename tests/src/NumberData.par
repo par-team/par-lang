@@ -65,7 +65,7 @@ def TestDataGenericFunctions: [Test] ! = [test]
 
 type Format = List<either {
   .str String,
-  .dat<a: data>(a)!,
+  .dat(<a: data> a)!,
 }>
 
 dec RenderFormat : [Format] String
@@ -75,7 +75,7 @@ def RenderFormat = [fmt] do {
     .item(i) => {
       i.case {
         .str s => { builder.add(s) }
-        .dat<a: data>(x)! => { builder.add(x->Data.ToString) }
+        .dat(<a: data> x)! => { builder.add(x->Data.ToString) }
       }
       fmt.loop
     }

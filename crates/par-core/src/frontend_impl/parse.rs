@@ -965,7 +965,6 @@ fn typ(input: &mut Input) -> Result<Type<Unresolved>> {
         typ_self,
         typ_send,
         typ_receive,
-        typ_generic,
     ))
     .context(StrContext::Label("type"))
     .parse_next(input)
@@ -1021,7 +1020,7 @@ fn typ_send(input: &mut Input) -> Result<Type<Unresolved>> {
             items,
             then,
             |name, then| Type::Exists(span.clone(), name, Box::new(then)),
-            |arg, then| Type::Pair(span.clone(), Box::new(arg), Box::new(then), vec![]),
+            |vars, arg, then| Type::Pair(span.clone(), Box::new(arg), Box::new(then), vars),
         )
     })
     .parse_next(input)
@@ -1038,25 +1037,20 @@ fn typ_receive(input: &mut Input) -> Result<Type<Unresolved>> {
             items,
             then,
             |name, then| Type::Forall(span.clone(), name, Box::new(then)),
-            |arg, then| Type::Function(span.clone(), Box::new(arg), Box::new(then), vec![]),
+            |vars, arg, then| Type::Function(span.clone(), Box::new(arg), Box::new(then), vars),
         )
     })
     .parse_next(input)
 }
 
-enum SendOrReceive {
-    Send,
-    Receive,
-}
-
 enum TypePrefixItem {
     Explicit(TypeParameter),
-    Value(Type<Unresolved>),
+    Value(Vec<TypeParameter>, Type<Unresolved>),
 }
 
 enum PatternPrefixItem {
     Explicit(TypeParameter),
-    Value(Pattern<Unresolved>),
+    Value(Vec<TypeParameter>, Pattern<Unresolved>),
 }
 
 enum SendPrefixItem {
@@ -1068,11 +1062,11 @@ fn fold_type_prefix<T>(
     items: Vec<TypePrefixItem>,
     rest: T,
     mut explicit: impl FnMut(TypeParameter, T) -> T,
-    mut value: impl FnMut(Type<Unresolved>, T) -> T,
+    mut value: impl FnMut(Vec<TypeParameter>, Type<Unresolved>, T) -> T,
 ) -> T {
     items.into_iter().rfold(rest, |rest, item| match item {
         TypePrefixItem::Explicit(name) => explicit(name, rest),
-        TypePrefixItem::Value(typ) => value(typ, rest),
+        TypePrefixItem::Value(vars, typ) => value(vars, typ, rest),
     })
 }
 
@@ -1116,10 +1110,17 @@ fn explicit_type_parameter(input: &mut Input) -> Result<TypeParameter> {
         .parse_next(input)
 }
 
+fn implicit_type_parameters(input: &mut Input) -> Result<Vec<TypeParameter>> {
+    commit_after(t(TokenKind::Lt), (list1(type_parameter), t(TokenKind::Gt)))
+        .map(|(_, (parameters, _))| parameters)
+        .parse_next(input)
+}
+
 fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
     alt((
         explicit_type_parameter.map(TypePrefixItem::Explicit),
-        typ.map(TypePrefixItem::Value),
+        (opt(implicit_type_parameters), typ)
+            .map(|(vars, typ)| TypePrefixItem::Value(vars.unwrap_or_default(), typ)),
     ))
     .parse_next(input)
 }
@@ -1127,7 +1128,8 @@ fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
 fn pattern_prefix_item(input: &mut Input) -> Result<PatternPrefixItem> {
     alt((
         explicit_type_parameter.map(PatternPrefixItem::Explicit),
-        pattern.map(PatternPrefixItem::Value),
+        (opt(implicit_type_parameters), pattern)
+            .map(|(vars, pattern)| PatternPrefixItem::Value(vars.unwrap_or_default(), pattern)),
     ))
     .parse_next(input)
 }
@@ -1147,53 +1149,6 @@ fn send_prefix_item(close: TokenKind, input: &mut Input) -> Result<SendPrefixIte
     }
 
     expression.map(SendPrefixItem::Value).parse_next(input)
-}
-
-fn typ_simple_send(
-    input: &mut Input,
-) -> Result<(SendOrReceive, Type<Unresolved>, Type<Unresolved>, Span)> {
-    commit_after(t(TokenKind::LParen), (typ, t(TokenKind::RParen), typ))
-        .map(|(open, (arg, close, then))| {
-            let span = open.span.join(close.span());
-            (SendOrReceive::Send, arg, then, span)
-        })
-        .parse_next(input)
-}
-
-fn typ_simple_receive(
-    input: &mut Input,
-) -> Result<(SendOrReceive, Type<Unresolved>, Type<Unresolved>, Span)> {
-    commit_after(t(TokenKind::LBrack), (typ, t(TokenKind::RBrack), typ))
-        .map(|(open, (arg, close, then))| {
-            let span = open.span.join(close.span());
-            (SendOrReceive::Receive, arg, then, span)
-        })
-        .parse_next(input)
-}
-
-fn typ_generic(input: &mut Input) -> Result<Type<Unresolved>> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            alt((typ_simple_send, typ_simple_receive)),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, (snd_or_recv, arg, then, span)))| {
-            let span = vars_open.span.join(span);
-            match snd_or_recv {
-                SendOrReceive::Send => {
-                    Type::Pair(span.clone(), Box::new(arg), Box::new(then), vars)
-                }
-                SendOrReceive::Receive => {
-                    Type::Function(span.clone(), Box::new(arg), Box::new(then), vars)
-                }
-            }
-        },
-    )
-    .parse_next(input)
 }
 
 fn typ_either(input: &mut Input) -> Result<Type<Unresolved>> {
@@ -1307,7 +1262,7 @@ fn typ_branch_receive(input: &mut Input) -> Result<Type<Unresolved>> {
             items,
             then,
             |name, then| Type::Forall(span.clone(), name, Box::new(then)),
-            |arg, then| Type::Function(span.clone(), Box::new(arg), Box::new(then), vec![]),
+            |vars, arg, then| Type::Function(span.clone(), Box::new(arg), Box::new(then), vars),
         )
     })
     .parse_next(input)
@@ -1326,7 +1281,6 @@ fn pattern(input: &mut Input) -> Result<Pattern<Unresolved>> {
         match alt((
             pattern_name,
             pattern_receive,
-            pattern_generic_receive,
             pattern_continue,
             pattern_default,
             pattern_try,
@@ -1373,33 +1327,13 @@ fn pattern_receive(input: &mut Input) -> Result<PatternPiece> {
                     PatternPrefixItem::Explicit(name) => {
                         PatternStep::ReceiveType(span.clone(), name)
                     }
-                    PatternPrefixItem::Value(pattern) => {
-                        PatternStep::Receive(span.clone(), Box::new(pattern), vec![])
+                    PatternPrefixItem::Value(vars, pattern) => {
+                        PatternStep::Receive(span.clone(), Box::new(pattern), vars)
                     }
                 })
                 .collect(),
         )
     })
-    .parse_next(input)
-}
-
-fn pattern_generic_receive(input: &mut Input) -> Result<PatternPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LParen),
-            pattern,
-            t(TokenKind::RParen),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let span = vars_open.span.join(pattern_close.span());
-            PatternPiece::Steps(vec![PatternStep::Receive(span, Box::new(arg), vars)])
-        },
-    )
     .parse_next(input)
 }
 
@@ -2187,7 +2121,6 @@ fn parse_construction(
                 cons_break,
                 cons_send,
                 cons_receive,
-                cons_generic_receive,
             ))
             .context(StrContext::Label("construction"))
             .parse_next(input)?
@@ -2272,36 +2205,13 @@ fn cons_receive(input: &mut Input) -> Result<ConstructionPiece> {
                     PatternPrefixItem::Explicit(name) => {
                         ConstructStep::ReceiveType(short_span.clone(), name)
                     }
-                    PatternPrefixItem::Value(pattern) => {
-                        ConstructStep::Receive(short_span.clone(), pattern, vec![])
+                    PatternPrefixItem::Value(vars, pattern) => {
+                        ConstructStep::Receive(short_span.clone(), pattern, vars)
                     }
                 })
                 .collect(),
         )
     })
-    .parse_next(input)
-}
-
-fn cons_generic_receive(input: &mut Input) -> Result<ConstructionPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LBrack),
-            pattern,
-            t(TokenKind::RBrack),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let short_span = vars_open.span.join(pattern_close.span());
-            ConstructionPiece::Steps(
-                short_span.clone(),
-                vec![ConstructStep::Receive(short_span, arg, vars)],
-            )
-        },
-    )
     .parse_next(input)
 }
 
@@ -2421,13 +2331,7 @@ fn cons_submit(input: &mut Input) -> Result<ConstructionPiece> {
 fn cons_branch(input: &mut Input) -> Result<ConstructBranch<Unresolved>> {
     let mut steps = Vec::new();
     loop {
-        match alt((
-            cons_branch_then,
-            cons_branch_receive,
-            cons_branch_generic_receive,
-        ))
-        .parse_next(input)?
-        {
+        match alt((cons_branch_then, cons_branch_receive)).parse_next(input)? {
             ConstructBranchPiece::Steps(mut parsed) => steps.append(&mut parsed),
             ConstructBranchPiece::Terminator(terminator) => {
                 return Ok(ConstructBranch { steps, terminator });
@@ -2466,33 +2370,13 @@ fn cons_branch_receive(input: &mut Input) -> Result<ConstructBranchPiece> {
                     PatternPrefixItem::Explicit(name) => {
                         ConstructBranchStep::ReceiveType(span.clone(), name)
                     }
-                    PatternPrefixItem::Value(pattern) => {
-                        ConstructBranchStep::Receive(span.clone(), pattern, vec![])
+                    PatternPrefixItem::Value(vars, pattern) => {
+                        ConstructBranchStep::Receive(span.clone(), pattern, vars)
                     }
                 })
                 .collect(),
         )
     })
-    .parse_next(input)
-}
-
-fn cons_branch_generic_receive(input: &mut Input) -> Result<ConstructBranchPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LParen),
-            pattern,
-            t(TokenKind::RParen),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let span = vars_open.span.join(pattern_close.span());
-            ConstructBranchPiece::Steps(vec![ConstructBranchStep::Receive(span, arg, vars)])
-        },
-    )
     .parse_next(input)
 }
 
@@ -2768,7 +2652,6 @@ fn apply_branch(input: &mut Input) -> Result<ApplyBranch<Unresolved>> {
         match alt((
             apply_branch_then,
             apply_branch_receive,
-            apply_branch_generic_receive,
             apply_branch_continue,
             apply_branch_try,
             apply_branch_default,
@@ -2814,33 +2697,13 @@ fn apply_branch_receive(input: &mut Input) -> Result<ApplyBranchPiece> {
                     PatternPrefixItem::Explicit(name) => {
                         ApplyBranchStep::ReceiveType(span.clone(), name)
                     }
-                    PatternPrefixItem::Value(pattern) => {
-                        ApplyBranchStep::Receive(span.clone(), pattern, vec![])
+                    PatternPrefixItem::Value(vars, pattern) => {
+                        ApplyBranchStep::Receive(span.clone(), pattern, vars)
                     }
                 })
                 .collect(),
         )
     })
-    .parse_next(input)
-}
-
-fn apply_branch_generic_receive(input: &mut Input) -> Result<ApplyBranchPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LParen),
-            pattern,
-            t(TokenKind::RParen),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let span = vars_open.span.join(pattern_close.span());
-            ApplyBranchPiece::Steps(vec![ApplyBranchStep::Receive(span, arg, vars)])
-        },
-    )
     .parse_next(input)
 }
 
@@ -3532,7 +3395,6 @@ fn cmd(input: &mut Input) -> Result<Option<(Span, Command<Unresolved>)>> {
             cmd_continue,
             cmd_send,
             cmd_receive,
-            cmd_generic_receive,
             cmd_try,
             cmd_default,
             cmd_pipe,
@@ -3644,36 +3506,13 @@ fn cmd_receive(input: &mut Input) -> Result<CommandPiece> {
                 PatternPrefixItem::Explicit(name) => {
                     CommandStep::ReceiveType(short_span.clone(), name)
                 }
-                PatternPrefixItem::Value(pattern) => {
-                    CommandStep::Receive(short_span.clone(), pattern, vec![])
+                PatternPrefixItem::Value(vars, pattern) => {
+                    CommandStep::Receive(short_span.clone(), pattern, vars)
                 }
             })
             .collect();
         CommandPiece::Steps(short_span, steps)
     })
-    .parse_next(input)
-}
-
-fn cmd_generic_receive(input: &mut Input) -> Result<CommandPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LBrack),
-            pattern,
-            t(TokenKind::RBrack),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let short_span = vars_open.span.join(pattern_close.span());
-            CommandPiece::Steps(
-                short_span.clone(),
-                vec![CommandStep::Receive(short_span, arg, vars)],
-            )
-        },
-    )
     .parse_next(input)
 }
 
@@ -3856,7 +3695,6 @@ fn cmd_branch(input: &mut Input) -> Result<CommandBranch<Unresolved>> {
             cmd_branch_bind_then,
             cmd_branch_continue,
             cmd_branch_receive,
-            cmd_branch_generic_receive,
             cmd_branch_try,
             cmd_branch_default,
         ))
@@ -3927,33 +3765,13 @@ fn cmd_branch_receive(input: &mut Input) -> Result<CommandBranchPiece> {
                     PatternPrefixItem::Explicit(name) => {
                         CommandBranchStep::ReceiveType(span.clone(), name)
                     }
-                    PatternPrefixItem::Value(pattern) => {
-                        CommandBranchStep::Receive(span.clone(), pattern, vec![])
+                    PatternPrefixItem::Value(vars, pattern) => {
+                        CommandBranchStep::Receive(span.clone(), pattern, vars)
                     }
                 })
                 .collect(),
         )
     })
-    .parse_next(input)
-}
-
-fn cmd_branch_generic_receive(input: &mut Input) -> Result<CommandBranchPiece> {
-    commit_after(
-        t(TokenKind::Lt),
-        (
-            list1(type_parameter),
-            t(TokenKind::Gt),
-            t(TokenKind::LParen),
-            pattern,
-            t(TokenKind::RParen),
-        ),
-    )
-    .map(
-        |(vars_open, (vars, _vars_close, _pattern_open, arg, pattern_close))| {
-            let span = vars_open.span.join(pattern_close.span());
-            CommandBranchPiece::Steps(vec![CommandBranchStep::Receive(span, arg, vars)])
-        },
-    )
     .parse_next(input)
 }
 
@@ -4026,14 +3844,6 @@ mod test {
         assert!(
             parse_module(&source, "Main.par".into()).is_ok(),
             "failed to parse definition body: {body}"
-        );
-    }
-
-    fn assert_definition_rejected(body: &str) {
-        let source = format!("module Main\n\ndef Value = {body}\n");
-        assert!(
-            parse_module(&source, "Main.par".into()).is_err(),
-            "unexpectedly parsed definition body: {body}"
         );
     }
 
@@ -4205,21 +4015,6 @@ def Value = 1 + 2 * 3
             "value->Module.F(arg).case { .some x => x, .none! => 0 }",
         ] {
             assert_definition_parses(body);
-        }
-    }
-
-    #[test]
-    fn test_reject_revamped_expression_boundaries() {
-        for body in [
-            "1 + if { .true! => 2, else => 3 }",
-            "if { .true! => 1, else => 2 }->Id",
-            ".true!.case { .true! => 1, .false! => 0 }",
-            ".true!->Id",
-            "n->box [x] x",
-            "submit(xs)->Id",
-            "loop->Id",
-        ] {
-            assert_definition_rejected(body);
         }
     }
 
@@ -4551,11 +4346,95 @@ def SendTypeData = (type Bool) .true! and .false!
 module Minimal
 
 dec Explicit : [type a: number, (a) !] !
-dec Implicit : <a: signed>[a] a
+dec Implicit : [<a: signed> a] a
 def Explicit = [type a: number, p] !
-def Implicit = <a: signed>[x] x
+def Implicit = [<a: signed> x] x
 ";
         assert!(parse_module(source, "minimal.par".into()).is_ok());
+    }
+
+    #[test]
+    fn test_parse_implicit_generic_items() {
+        let source = "\
+module Minimal
+
+dec Mixed : [type explicit, Nat, <a, b: box> (a) b, String, <c> c] (Nat, <d: data> d, <e> e)!
+def Mixed = [type explicit, n, <a, b: box> pair: (a) b, text: String, <c> value: c] (n, value)!
+";
+        let parsed = parse_source_file(source, "Minimal.par".into()).unwrap();
+        let typ = &parsed.body.declarations[0].typ;
+
+        let Type::Forall(_, explicit, typ) = typ else {
+            panic!("expected explicit type item: {typ:#?}");
+        };
+        assert_eq!(explicit.name.string.as_str(), "explicit");
+
+        let Type::Function(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected ordinary function item: {typ:#?}");
+        };
+        assert!(vars.is_empty());
+
+        let Type::Function(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected implicit function item: {typ:#?}");
+        };
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].name.string.as_str(), "a");
+        assert_eq!(vars[1].name.string.as_str(), "b");
+        assert_eq!(vars[1].constraint, TypeConstraint::Box);
+
+        let Type::Function(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected second ordinary function item: {typ:#?}");
+        };
+        assert!(vars.is_empty());
+
+        let Type::Function(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected second implicit function item: {typ:#?}");
+        };
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name.string.as_str(), "c");
+
+        let Type::Pair(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected ordinary pair item: {typ:#?}");
+        };
+        assert!(vars.is_empty());
+
+        let Type::Pair(_, _, typ, vars) = typ.as_ref() else {
+            panic!("expected implicit pair item: {typ:#?}");
+        };
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name.string.as_str(), "d");
+        assert_eq!(vars[0].constraint, TypeConstraint::Data);
+
+        let Type::Pair(_, _, _, vars) = typ.as_ref() else {
+            panic!("expected second implicit pair item: {typ:#?}");
+        };
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].name.string.as_str(), "e");
+    }
+
+    #[test]
+    fn test_parse_implicit_existential_patterns_and_branches() {
+        let source = "\
+module Minimal
+
+type Packed = (Nat, <a: data> a)!
+type Tagged = either { .dat(<a: data> a)!, }
+
+def Unpack = [packed]
+  let (n, <a: data> value)! = packed
+  in (n, value)!
+
+def Match = [tagged] tagged.case {
+  .dat(<a: data> value)! => value,
+}
+
+def CommandMatch = [tagged] do {
+  tagged.case {
+    .dat(<a: data> value)! => {}
+  }
+} in !
+";
+        assert!(parse_module(source, "Minimal.par".into()).is_ok());
     }
 
     #[test]

@@ -5,15 +5,15 @@ Generic code often needs to know a little bit about an unknown type.
 For example, this function can return its argument without knowing anything about `a`:
 
 ```par
-dec Identity : <a>[a] a
-def Identity = <a>[x] x
+dec Identity : [<a> a] a
+def Identity = [<a> x] x
 ```
 
 But this one needs to use its value twice:
 
 ```par
-dec Duplicate : <a: box>[a] (a, a)!
-def Duplicate = <a: box>[x] (x, x)!
+dec Duplicate : [<a: box> a] (a, a)!
+def Duplicate = [<a: box> x] (x, x)!
 ```
 
 The `: box` part is a **type constraint**. It says that the unknown type `a` must be non-linear,
@@ -48,7 +48,7 @@ dec ZeroOr : [type a: number, Bool, a] a
 Implicit generic functions use angle-bracket binders:
 
 ```par
-dec Sum : <a: number>[(a) a] a
+dec Sum : [<a: number> (a) a] a
 ```
 
 Existential types can constrain the hidden type:
@@ -60,7 +60,7 @@ type SomeData = (type a: data) a
 Implicit generic pairs can do the same:
 
 ```par
-type DataWithText = <a: data>(a) String
+type DataWithText = (<a: data> a) String
 ```
 
 When you construct a value with a constrained explicit binder, the checked type must satisfy the
@@ -87,8 +87,8 @@ The `box` constraint means values are non-linear. A value whose type is known on
 be copied, reused, or dropped.
 
 ```par
-dec KeepFirst : <a: box>[(a, a)!] a
-def KeepFirst = <a: box>[(first, second)!] first
+dec KeepFirst : [<a: box> (a, a)!] a
+def KeepFirst = [<a: box> (first, second)!] first
 ```
 
 In the example, `second` is not used. That is allowed because `a: box`.
@@ -114,14 +114,14 @@ support:
 - data interpolation in template strings: `#{...}`
 
 ```par
-dec Min : <a: data>[(a) a] a
-def Min = <a: data>[(left) right] if {
+dec Min : [<a: data> (a) a] a
+def Min = [<a: data> (left) right] if {
   left <= right => left,
   else => right,
 }
 
-dec Label : <a: data>[a] String
-def Label = <a: data>[value] `value = #{value}`
+dec Label : [<a: data> a] String
+def Label = [<a: data> value] `value = #{value}`
 ```
 
 The comparison operators use `@core/Data.Compare` under the hood. The `#{...}` template form uses
@@ -160,8 +160,8 @@ module Main
 
 import @core/Number
 
-dec SumPair : <a: number>[(a) a] a
-def SumPair = <a: number>[(left) right] left + right
+dec SumPair : [<a: number> (a) a] a
+def SumPair = [<a: number> (left) right] left + right
 
 dec Zero : [type a: number] a
 def Zero = [type a: number] Number.Zero(type a)
@@ -187,11 +187,11 @@ everything from `number`, plus:
 - `neg`
 
 ```par
-dec Difference : <a: signed>[(a) a] a
-def Difference = <a: signed>[(left) right] left - right
+dec Difference : [<a: signed> (a) a] a
+def Difference = [<a: signed> (left) right] left - right
 
-dec Negate : <a: signed>[a] a
-def Negate = <a: signed>[value] neg value
+dec Negate : [<a: signed> a] a
+def Negate = [<a: signed> value] neg value
 ```
 
 The signed types are:

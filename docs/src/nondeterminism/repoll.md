@@ -65,7 +65,7 @@ Here, the source can make progress on its own (it can produce `.item` or `.end!`
 Now suppose we have many sources, and we want to merge them into one:
 
 ```par
-dec MergeSources : <a>[List<Source<a>>] Source<a>
+dec MergeSources : [<a> List<Source<a>>] Source<a>
 ```
 
 When the merged source is canceled, all underlying sources must be canceled too. That means our server needs two distinct modes:
@@ -114,8 +114,8 @@ type SourceFan<a> = recursive either {
   }
 }
 
-dec SourceFan : <a>[List<Source<a>>] SourceFan<a>
-def SourceFan = <a>[sources] sources.begin.case {
+dec SourceFan : [<a> List<Source<a>>] SourceFan<a>
+def SourceFan = [<a> sources] sources.begin.case {
   .end! => .end!,
   .item(source) sources => .spawn(source) sources.loop,
 }
@@ -124,7 +124,7 @@ def SourceFan = <a>[sources] sources.begin.case {
 Now we can implement:
 
 ```par
-dec MergeSources : <a>[List<Source<a>>] Source<a>
+dec MergeSources : [<a> List<Source<a>>] Source<a>
 ```
 
 The key idea is that `MergeSources` has two modes:
@@ -134,7 +134,7 @@ The key idea is that `MergeSources` has two modes:
 Here's the overall structure:
 
 ```par
-def MergeSources = <a>[sources] poll(SourceFan(sources)) {
+def MergeSources = [<a> sources] poll(SourceFan(sources)) {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),
@@ -200,8 +200,8 @@ module Main
 
 import @core/List
 
-dec MergeSources : <a>[List<Source<a>>] Source<a>
-def MergeSources = <a>[sources] poll(SourceFan(sources)) {
+dec MergeSources : [<a> List<Source<a>>] Source<a>
+def MergeSources = [<a> sources] poll(SourceFan(sources)) {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),

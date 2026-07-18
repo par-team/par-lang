@@ -40,7 +40,7 @@ export {
 
   // Builds a `BoxMap` from `(key) value` pairs.
   // If a key appears more than once, the last pair wins.
-  dec FromList : <k: data, v: box>[List<(k) v>] BoxMap<k, v>
+  dec FromList : [<k: data, v: box> List<(k) v>] BoxMap<k, v>
 }
 
 def New = external
