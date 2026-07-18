@@ -245,8 +245,7 @@ import {
 
 dec HashesOrNothing : [Nat] String
 def HashesOrNothing = [n] chan result {
-  let isZero = n == 0
-  isZero.case {
+  {n == 0}.case {
     .true! =&gt; {
       result &lt;&gt; "&lt;nothing&gt;"
     }
@@ -267,8 +266,8 @@ def HashesOrNothing = [n] chan result {
 </code></pre>
 <p>Let’s break this down:</p>
 <ul>
-<li><code>n == 0</code> (aka <code>iszero</code>) returns a <code>Bool</code>, which is an <a href="../types/either.html"><code>either</code></a> with branches
-<code>.true!</code> and <code>.false!</code>.</li>
+<li><code>n == 0</code> returns a <code>Bool</code>, which is an <a href="../types/either.html"><code>either</code></a> with branches <code>.true!</code> and
+<code>.false!</code>. The braces let that temporary result be used directly as the subject of <code>.case</code>.</li>
 <li>In the <code>.true!</code> branch, we immediately perform a link — returning <code>"&lt;nothing&gt;"</code>. Note, that
 this <em>ends</em> the process.</li>
 <li>The <code>.false!</code> branch does nothing on its own — the real work happens after the <code>.case</code>.</li>

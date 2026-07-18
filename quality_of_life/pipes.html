@@ -179,7 +179,7 @@ def Square = [n: Nat] n * n
 <pre><code class="language-par">let result = Square(Add(3, Double(4)))  // = 121
 </code></pre>
 <p>With pipes you can say the same thing in the order you want to read it:</p>
-<pre><code class="language-par">let result = {3}
+<pre><code class="language-par">let result = 3
   -&gt; Add(Double(4))
   -&gt; Square
 </code></pre>
@@ -207,6 +207,16 @@ like <code>(args)</code> or <code>.case { ... }</code>. You can even rewrite the
 the whole expression becomes the operation:</p>
 <pre><code class="language-par">value -&gt; {Func(arg1)}(arg3)  // == Func(arg1, value, arg3)
 </code></pre>
+<p>Names and values such as <code>3</code>, <code>"text"</code>, <code>*(1, 2, 3)</code>, and <code>&lt;&lt;1 2 3&gt;&gt;</code> can
+start a pipe or another postfix operation directly. Compound expressions and
+constructions need braces in that position:</p>
+<pre><code class="language-par">{if { ready =&gt; value, else =&gt; fallback }}-&gt;Func
+{.true!}.case { .true! =&gt; yes, .false! =&gt; no }
+n-&gt;{box [x] x + n}
+</code></pre>
+<p>The braces turn the entire enclosed expression into one value before the
+postfix operation starts. They are also how you pipe a whole infix expression:
+<code>{1 + 2}-&gt;Func</code>. Without them, <code>1 + 2-&gt;Func</code> applies <code>Func</code> only to <code>2</code>.</p>
 <h2 id="pipes-as-commands"><a class="header" href="#pipes-as-commands">Pipes as commands</a></h2>
 <p>In process syntax every command “uses” the variable on its left and stores the
 result back into that same variable. Pipes follow the same rule, which means
