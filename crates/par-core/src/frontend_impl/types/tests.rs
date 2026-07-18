@@ -283,6 +283,91 @@ mod tests {
     }
 
     #[test]
+    fn test_implicit_generic_items_render_inside_pair_like_delimiters() {
+        let parameter = |name: &str, constraint| TypeParameter {
+            name: LocalName {
+                span: Span::None,
+                string: ArcStr::from(name),
+            },
+            constraint,
+        };
+
+        let function = Type::<Universal>::Function(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::Function(
+                Span::None,
+                Box::new(Type::string()),
+                Box::new(Type::Function(
+                    Span::None,
+                    Box::new(Type::var("b")),
+                    Box::new(Type::int()),
+                    vec![parameter("b", TypeConstraint::Box)],
+                )),
+                vec![],
+            )),
+            vec![parameter("a", TypeConstraint::Any)],
+        );
+        let mut rendered = String::new();
+        function
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "[<a> a, String, <b: box> b] Int");
+
+        let pair = Type::<Universal>::Pair(
+            Span::None,
+            Box::new(Type::nat()),
+            Box::new(Type::Pair(
+                Span::None,
+                Box::new(Type::var("a")),
+                Box::new(Type::Pair(
+                    Span::None,
+                    Box::new(Type::string()),
+                    Box::new(Type::break_()),
+                    vec![],
+                )),
+                vec![parameter("a", TypeConstraint::Data)],
+            )),
+            vec![],
+        );
+        rendered.clear();
+        pair.pretty_compact(&mut rendered, &TestNameWriter).unwrap();
+        assert_eq!(rendered, "(Nat, <a: data> a, String)!");
+    }
+
+    #[test]
+    fn test_implicit_generic_branch_items_render_compactly() {
+        let parameter = TypeParameter::any(LocalName {
+            span: Span::None,
+            string: ArcStr::from("a"),
+        });
+        let pair = Type::<Universal>::Pair(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::break_()),
+            vec![parameter.clone()],
+        );
+        let function = Type::<Universal>::Function(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::break_()),
+            vec![parameter],
+        );
+
+        let mut rendered = String::new();
+        Type::either(vec![("dat", pair)])
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "either {.dat(<a> a)!,}");
+
+        rendered.clear();
+        Type::choice(vec![("use", function)])
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "choice {.use(<a> a) => !,}");
+    }
+
+    #[test]
     fn test_pretty_compact_keeps_named_fixpoint_aliases_after_expansion() {
         let (defs, map_name) = alias_preserving_type_defs();
         let expanded = defs

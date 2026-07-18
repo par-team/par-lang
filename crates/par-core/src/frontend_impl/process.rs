@@ -1684,14 +1684,15 @@ impl<Typ, S: Clone + std::fmt::Display> Command<Typ, S> {
                 write!(f, ")")
             }
             Command::Receive(parameter, _, _, vars) => {
+                write!(f, "[")?;
                 if !vars.is_empty() {
                     write!(f, "<{}", vars[0])?;
                     for var in &vars[1..] {
                         write!(f, ", {}", var)?;
                     }
-                    write!(f, ">")?;
+                    write!(f, "> ")?;
                 }
-                write!(f, "[{}]", parameter)
+                write!(f, "{}]", parameter)
             }
             Command::Signal(chosen) => write!(f, ".{}", chosen),
             Command::Continue => write!(f, "?"),
@@ -1769,5 +1770,25 @@ struct CanonicalGlobalNameWriter;
 impl<S: std::fmt::Display> GlobalNameWriter<S> for CanonicalGlobalNameWriter {
     fn write_global_name<W: Write>(&self, f: &mut W, name: &GlobalName<S>) -> fmt::Result {
         write!(f, "{name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend_impl::language::Unresolved;
+    use arcstr::literal;
+
+    #[test]
+    fn implicit_receive_parameters_render_inside_brackets() {
+        let command = Command::<(), Unresolved>::Receive(
+            LocalName::from(literal!("value")),
+            None,
+            (),
+            vec![TypeParameter::any(LocalName::from(literal!("a")))],
+        );
+        let mut rendered = String::new();
+        command.pretty(&mut rendered, 0).unwrap();
+        assert_eq!(rendered, "[<a> value]");
     }
 }

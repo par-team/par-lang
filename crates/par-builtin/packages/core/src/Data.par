@@ -6,9 +6,9 @@ import {
 }
 
 export {
-  dec ToString : <a: data>[a] String
+  dec ToString : [<a: data> a] String
 
-  dec Compare : <a: data>[(a) a] Ordering
+  dec Compare : [<a: data> (a) a] Ordering
 }
 
 def ToString = external

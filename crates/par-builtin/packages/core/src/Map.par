@@ -33,7 +33,7 @@ export {
 
   // Builds a `Map` from `(key) value` pairs.
   // If a key appears more than once, the last pair wins.
-  dec FromList : [type v] <k: data>[List<(k) box v>] Map<k, v>
+  dec FromList : [type v, <k: data> List<(k) box v>] Map<k, v>
 }
 
 def New = external

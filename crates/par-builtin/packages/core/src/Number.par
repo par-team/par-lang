@@ -3,15 +3,15 @@ export module Number
 export {
   dec Zero : [type a: number] a
 
-  dec Add : <a: number>[(a) a] a
+  dec Add : [<a: number> (a) a] a
 
-  dec Sub : <a: signed>[(a) a] a
+  dec Sub : [<a: signed> (a) a] a
 
-  dec Mul : <a: number>[(a) a] a
+  dec Mul : [<a: number> (a) a] a
 
-  dec Div : <a: number>[(a) a] a
+  dec Div : [<a: number> (a) a] a
 
-  dec Neg : <a: signed>[a] a
+  dec Neg : [<a: signed> a] a
 }
 
 dec Zero_ : [type a: number, !] a

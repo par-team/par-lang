@@ -118,11 +118,11 @@ export {
   // Decode an optional value with a format. Missing columns return `.err`.
   // Designed for pipe chains:
   //   row->Sql.Field("age")->Sql.Decode(Sql.AsInt)
-  dec Decode : [Option<Value>] <a>[Format<a>] Try<Error, a>
+  dec Decode : [Option<Value>, <a> Format<a>] Try<Error, a>
 
   // Accept SQL NULL as `.none!`; otherwise parse with the provided format and
   // wrap the result in `.some`. Missing columns still error.
-  dec Nullable : <a>[Format<a>] Format<Option<a>>
+  dec Nullable : [<a> Format<a>] Format<Option<a>>
 
   // Required boolean format. A check, not a coercion, with one pragmatic
   // exception: `.int 0` and `.int 1` are accepted as booleans, because SQLite
@@ -187,12 +187,12 @@ def Field = [row, name] row.begin.case {
 // The `<a>` binder sits right before `[Format<a>]` so it is inferred from the
 // format argument (implicit generics infer only from the argument immediately
 // following the binder), while `Option<Value>` stays first for the pipe.
-def Decode = [option] <a>[format] option.case {
+def Decode = [option, <a> format] option.case {
   .some value => format.parse(value),
   .none! => .err "missing column",
 }
 
-def Nullable = <a>[format] box case {
+def Nullable = [<a> format] box case {
   .parse(value) => value.case {
     .null! => .ok .none!,
     else present => format.parse(present).case {

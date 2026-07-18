@@ -18,49 +18,49 @@ export {
   }
 
   // Extracts the `.ok` branch from a `Try<either {}, a>`.
-  dec Ok : <a>[Try<either {}, a>] a
+  dec Ok : [<a> Try<either {}, a>] a
 
   // Transforms the `.ok` value, if present.
-  dec Map : <e, a>[Try<e, a>] <b>[box [a] b] Try<e, b>
+  dec Map : [<e, a> Try<e, a>, <b> box [a] b] Try<e, b>
 
   // Transforms the `.err` value, if present.
-  dec MapErr : <e1, a>[Try<e1, a>] <e2>[box [e1] e2] Try<e2, a>
+  dec MapErr : [<e1, a> Try<e1, a>, <e2> box [e1] e2] Try<e2, a>
 
   // Transforms the `.ok` value with a computation that may itself fail.
-  dec FlatMap : <e, a>[Try<e, a>] <b>[box [a] Try<e, b>] Try<e, b>
+  dec FlatMap : [<e, a> Try<e, a>, <b> box [a] Try<e, b>] Try<e, b>
 
   // Keeps a successful value only if it satisfies the predicate, otherwise
   // replaces it with the provided error.
-  dec Filter : <e, a: box>[Try<e, a>] [box e, box [a] Bool] Try<e, a>
+  dec Filter : [<e, a: box> Try<e, a>, box e, box [a] Bool] Try<e, a>
 
   // Converts `.ok value` to a singleton list and `.err _` to an empty list.
-  dec ToList : <e: box, a>[Try<e, a>] List<a>
+  dec ToList : [<e: box, a> Try<e, a>] List<a>
 
   // Converts `.ok value` to `.some value` and `.err _` to `.none!`.
-  dec ToOption : <e: box, a>[Try<e, a>] Option<a>
+  dec ToOption : [<e: box, a> Try<e, a>] Option<a>
 }
 
-def Ok = <a>[result] result.case {
+def Ok = [<a> result] result.case {
   .ok value => value,
   .err impossible => impossible.case {},
 }
 
-def Map = <e, a>[result] <b>[f] result.case {
+def Map = [<e, a> result, <b> f] result.case {
   .ok a => .ok f(a),
   .err e => .err e,
 }
 
-def MapErr = <e1, a>[result] <e2>[f] result.case {
+def MapErr = [<e1, a> result, <e2> f] result.case {
   .ok a => .ok a,
   .err e => .err f(e),
 }
 
-def FlatMap = <e, a>[result] <b>[f] result.case {
+def FlatMap = [<e, a> result, <b> f] result.case {
   .ok a => f(a),
   .err e => .err e,
 }
 
-def Filter = <e, a: box>[result] [e1, p] result.case {
+def Filter = [<e, a: box> result, e1, p] result.case {
   .ok a => if {
     p(a) => .ok a,
     else => .err e1,
@@ -68,12 +68,12 @@ def Filter = <e, a: box>[result] [e1, p] result.case {
   .err e => .err e,
 }
 
-def ToList = <e: box, a>[result] result.case {
+def ToList = [<e: box, a> result] result.case {
   .ok a => .item(a) .end!,
   .err _ => .end!,
 }
 
-def ToOption = <e: box, a>[result] result.case {
+def ToOption = [<e: box, a> result] result.case {
   .ok a => .some a,
   .err _ => .none!,
 }

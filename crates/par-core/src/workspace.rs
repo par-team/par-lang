@@ -2970,7 +2970,7 @@ def Identity = [type a: number, x: a] x
         let source = "\
 module Main
 
-def SignedId : <a: signed>[a] a = <a: signed>[x] x
+def SignedId : [<a: signed> a] a = [<a: signed> x] x
 def Result = SignedId(5)
 ";
         let checked = checked_workspace_from_source(source);
@@ -2983,6 +2983,51 @@ def Result = SignedId(5)
             .unwrap();
 
         assert_eq!(checked.render_type_in_file(file, typ, 0), "Int");
+    }
+
+    #[test]
+    fn separate_implicit_items_infer_from_their_own_arguments() {
+        let source = "\
+module Main
+
+def ChooseSecond : [<a: box> a, <b> b] b = [<a: box> first, <b> second] second
+def Result = ChooseSecond(5, \"chosen\")
+";
+        let checked = checked_workspace_from_source(source);
+        let file = checked.workspace().sources().keys().next().unwrap();
+        let (_name, (_definition, typ)) = checked
+            .checked_module()
+            .definitions
+            .iter()
+            .find(|(name, _)| name.primary == "Result")
+            .unwrap();
+
+        assert_eq!(checked.render_type_in_file(file, typ, 0), "String");
+    }
+
+    #[test]
+    fn implicit_existential_item_infers_and_exposes_its_hidden_type() {
+        let source = "\
+module Main
+
+type Packed = (<a: box> a)!
+
+def PackedUnit : Packed = (!)!
+def Unpack : [Packed] ! = [packed]
+  let (<a: box> value)! = packed
+  in !
+def Result = Unpack(PackedUnit)
+";
+        let checked = checked_workspace_from_source(source);
+        let file = checked.workspace().sources().keys().next().unwrap();
+        let (_name, (_definition, typ)) = checked
+            .checked_module()
+            .definitions
+            .iter()
+            .find(|(name, _)| name.primary == "Result")
+            .unwrap();
+
+        assert_eq!(checked.render_type_in_file(file, typ, 0), "!");
     }
 
     #[test]
