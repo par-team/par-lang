@@ -25,7 +25,7 @@ let result = Square(Add(3, Double(4)))  // = 121
 파이프를 사용하면 같은 연산을 자연스럽게 읽을 수 있는 순서로 작성할 수 있다.
 
 ```par
-let result = {3}
+let result = 3
   -> Add(Double(4))
   -> Square
 ```
@@ -62,6 +62,16 @@ Account.Lookup(name)
 ```par
 value -> {Func(arg1)}(arg3)  // == Func(arg1, value, arg3)
 ```
+
+`3`, `"text"`, `*(1, 2, 3)`, `<<1 2 3>>` 따위의 이름이나 값 뒤에는 파이프나 다른 후위 연산자를 직접 연쇄할 수 있는 한편, 복합 식이나 생성 식의 경우에는 중괄호를 사용해야 한다.
+
+```par
+{if { ready => value, else => fallback }}->Func
+{.true!}.case { .true! => yes, .false! => no }
+n->{box [x] x + n}
+```
+
+위의 중괄호는 후위 연산자를 적용하기 전에 중괄호 안의 식 전체를 하나의 값으로 묶는 역할을 한다. 중위 연산자를 사용한 식도 이 방법을 사용해 `{1 + 2}->Func`와 같이 작성해야 하며, 중괄호를 생략한 `1 + 2->Func`의 경우에는 `Func`가 `2`에만 적용된다.
 
 ## 명령 형태의 파이프
 

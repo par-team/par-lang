@@ -99,7 +99,7 @@ $ par doc
 플레이그라운드는 자동 UI를 내장하고 있어 편리하게 코드를 작성해 보고 결과 값과 상호작용할 수 있다.
 
 ```
-$ par-lang playground
+$ par playground
 ```
 
 아래와 같은 창이 나타난다면 정상이다.

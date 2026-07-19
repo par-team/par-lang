@@ -65,7 +65,7 @@ type Source<a> = recursive either {
 이제 여러 소스를 하나로 합친다고 생각해 보자.
 
 ```par
-dec MergeSources : <a>[List<Source<a>>] Source<a>
+dec MergeSources : [<a> List<Source<a>>] Source<a>
 ```
 
 합친 소스를 취소했을 때는 하위 소스 역시 모두 취소해야 한다. 이제 서버에서는 두 가지 서로 다른 모드를 지원해야 한다.
@@ -114,8 +114,8 @@ type SourceFan<a> = recursive either {
   }
 }
 
-dec SourceFan : <a>[List<Source<a>>] SourceFan<a>
-def SourceFan = <a>[sources] sources.begin.case {
+dec SourceFan : [<a> List<Source<a>>] SourceFan<a>
+def SourceFan = [<a> sources] sources.begin.case {
   .end! => .end!,
   .item(source) sources => .spawn(source) sources.loop,
 }
@@ -124,17 +124,17 @@ def SourceFan = <a>[sources] sources.begin.case {
 이제 이 함수를 구현할 수 있다.
 
 ```par
-dec MergeSources : <a>[List<Source<a>>] Source<a>
+dec MergeSources : [<a> List<Source<a>>] Source<a>
 ```
 
-`MergeSource`를 구현할 때 두 가지 모드를 사용하는 것이 핵심이다.
+`MergeSources`를 구현할 때 두 가지 모드를 사용하는 것이 핵심이다.
 - **생산 모드**: 소스를 폴링하면서 원소를 계속 생산한다.
 - **취소 모드**: 사용자가 취소하면 그 즉시 풀에 남은 모든 소스를 취소한다.
 
 전체적인 구조는 다음과 같다.
 
 ```par
-def MergeSources = <a>[sources] poll(SourceFan(sources)) {
+def MergeSources = [<a> sources] poll(SourceFan(sources)) {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),
@@ -200,8 +200,8 @@ module Main
 
 import @core/List
 
-dec MergeSources : <a>[List<Source<a>>] Source<a>
-def MergeSources = <a>[sources] poll(SourceFan(sources)) {
+dec MergeSources : [<a> List<Source<a>>] Source<a>
+def MergeSources = [<a> sources] poll(SourceFan(sources)) {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),

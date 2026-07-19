@@ -99,7 +99,7 @@ def AddSymmetricPair = [(x, y)!] x + y
 dec SumList : [List<Int>] Int
 def SumList = [list] list.begin.case {
   .end!       => 0,
-  .item(x) xs => x + x.loop,
+  .item(x) xs => x + xs.loop,
 //     \____/<---- 이 부분이 패턴임
 }
 ```

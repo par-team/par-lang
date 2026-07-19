@@ -231,7 +231,7 @@ def NonEmptyOrError = [result] if {
 - 우선 `not result is .ok str`을 평가한다.
 - 우변의 `str == ""`은 좌변이 실패할 경우에만 평가된다.
 - 좌변이 실패하는 경우는 `result is .ok str`가 성공하는 경우와 일치한다.
-- 이 때문에 `str`가 첫 번째 조건지의 우변과 `else` 조건지에 들어오게 된다.
+- 이 때문에 `str`가 첫 번째 조건지에서 `or`의 우변과 `else` 조건지에 들어오게 된다.
 
 묶은 조건에도 동일하게 사용할 수 있다.
 

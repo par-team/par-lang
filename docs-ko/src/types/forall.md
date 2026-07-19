@@ -2,7 +2,7 @@
 
 *제네릭* 함수는 어떻게 만들 수 있을까? 제네릭 값은?
 
-[제네릭 타입](../structure/definitions_and_declarations.md)은 이미 배운 바가 있다. 예를 들어, 다른 언어에서 볼 수 있고 Par에서도 내장 타입으로 지원하는 일반적인 조건부 타입은 다음과 같이 작성할 수 있다.
+[제네릭 타입](../structure/definitions_and_declarations.md)은 이미 배운 바가 있다. 예를 들어, 다른 언어에서 볼 수 있고 Par에서도 내장 타입으로 지원하는 일반적인 옵션 타입은 다음과 같이 작성할 수 있다.
 
 ```par
 type Option<a> = either {

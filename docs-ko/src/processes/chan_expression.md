@@ -100,8 +100,7 @@ import {
 
 dec HashesOrNothing : [Nat] String
 def HashesOrNothing = [n] chan result {
-  let isZero = n == 0
-  isZero.case {
+  {n == 0}.case {
     .true! => {
       result <> "<nothing>"
     }
@@ -123,7 +122,7 @@ def HashesOrNothing = [n] chan result {
 
 코드를 분석해 보자.
 
-- `n == 0` (`iszero`)은 `Bool`을 반환하며, 이 값은 `.true!`와 `.false!` 분지가 있는 [분기](../types/either.md)이다.
+- `n == 0`은 `Bool`을 반환하며, 이 값은 `.true!`와 `.false!` 분지가 있는 [분기](../types/either.md)이다. 이때 임시 값을 `.case`의 주어로 직접 사용할 수 있도록 중괄호로 감싼다.
 - `.true!` 분지에서는 즉시 연결 명령을 수행하여 `"<nothing>"`을 반환한다. 이때 프로세스가 *종료*된다.
 - `.false!` 분지에서는 일단 아무것도 하지 않는다. 실제 작업은 `.case`문 이후에 수행된다.
 - `String.Builder`를 사용해 반환값을 생성하며, 이때 `Nat.Repeat`를 사용해 정확히 `n`회 반복한다.

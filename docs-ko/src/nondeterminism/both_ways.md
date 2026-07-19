@@ -13,7 +13,7 @@
 - **서버가 상호작용을 시작하는 동작**: `poll`/`submit` 문법에서는 클라이언트만이 준비 상태가 됨으로써 상호작용을 시작한다.
 - **비결정론적 통신 방향**: [이번 단원의 도입부](./README.md)에서 이미 설명했듯이, Par는 아직은 이 기능을 지원하지 **못한다**. 타입을 보면 항상 어느 쪽이 통신할 차례인지를 알 수 있다.
 
-## [생성에 의한 소멸](../processes/duality.md) 복습
+## [소멸에 의한 생성](../processes/duality.md) 복습
 
 초반에는 식 문법만을 다루는 것으로 시작했지만 가끔 [프로세스 문법](../process_syntax.md)으로 전환하는 것이 도움이 된다는 것을 배운 바가 있다. 특히 입출력 연산과 리스트나 트리 따위의 자료구조를 비동기로 생성하는 연산을 결합할 때가 이에 해당한다.
 
@@ -30,7 +30,7 @@ type ListFan<a> = recursive either {
 기존에는 `List<List<a>>`를 합친 결과로 사용했지만, 이 타입 자체를 단독으로 사용하지 말라는 법은 없다.
 
 ```par
-dec ServeListFan : <a>[ListFan<a>] List<a>
+dec ServeListFan : [<a> ListFan<a>] List<a>
 def ServeListFan = ...
 ```
 
@@ -225,8 +225,8 @@ type MutexServer<a> = iterative choice {
 ```par
 type MutexClient<a> = dual MutexServer<a>
 
-dec ShareMutex : <a>[a] [MutexClient<a>] a
-def ShareMutex = <a>[value] [clients] poll(clients) {
+dec ShareMutex : [<a> a, MutexClient<a>] a
+def ShareMutex = [<a> value, clients] poll(clients) {
   client => client.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),

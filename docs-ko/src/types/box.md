@@ -99,8 +99,8 @@ module Main
 
 import @core/List
 
-dec Map : <a>[List<a>] <b>[box [a] b] List<b>
-def Map = <a>[list] <b>[f] list.begin.case {
+dec Map : [<a> List<a>, <b> box [a] b] List<b>
+def Map = [<a> list, <b> f] list.begin.case {
   .end! => .end!,
   .item(x) xs => .item(f(x)) xs.loop,
 }
@@ -149,9 +149,9 @@ import {
   @core/List
 }
 
-dec Filter : <a: box>[List<a>] [box [a] Bool] List<a>
+dec Filter : [<a: box> List<a>, box [a] Bool] List<a>
 
-def Filter = <a: box>[list] [predicate] list.begin.case {
+def Filter = [<a: box> list, predicate] list.begin.case {
   .end! => .end!,
   .item(x) xs => predicate(x).case {
     .true! => .item(x) xs.loop,

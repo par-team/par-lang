@@ -13,10 +13,10 @@ Par에서는 **`poll`/`submit` 제어 구문** 하나로 문제를 해결할 수
 같은 풀 안에 있는 클라이언트는 모두 같은 타입을 가진다.
 
 풀 안의 클라이언트는 어떤 **동작을 수행할 수 있을 때까지 대기**한다.
-- [순서쌍](../types/pair.md)의 경우에는 값 송신에 해당한다.
-- [함수](../types/function.md)의 경우에는 값 수신에 해당한다.
-- [분기](../types/either.md)의 경우에는 선지 선택에 해당한다.
-- [선택](../types/choice.md)의 경우에는 분지 분기에 해당한다.
+- [순서쌍](../types/pair.md)의 경우에는 송신 명령에 해당한다.
+- [함수](../types/function.md)의 경우에는 수신 명령에 해당한다.
+- [분기](../types/either.md)의 경우에는 선택 명령에 해당한다.
+- [선택](../types/choice.md)의 경우에는 분기 명령에 해당한다.
 
 준비를 마친 클라이언트는 **풀에서 폴링**되어 폴러인 서버 프로세스에 전달된다. 서버가 이 클라이언트를 처리하고 나면 0개 이상의 신규 클라이언트를 **풀에 다시 제출**한 뒤 폴링을 계속한다.
 
@@ -152,8 +152,8 @@ def PollSumTwo = [nums1, nums2] poll(nums1, nums2) {
 **이번에는 두 리스트를 하나로 합쳐 보자.**
 
 ```par
-dec MergeTwoLists : <a>[List<a>] [List<a>] List<a>
-def MergeTwoLists = <a>[left] [right] poll(left, right) {
+dec MergeTwoLists : [<a> List<a>, List<a>] List<a>
+def MergeTwoLists = [<a> left, right] poll(left, right) {
   list => list.case {
     .end! => submit(),
     .item(x) xs => .item(x) submit(xs),
@@ -189,8 +189,8 @@ type Tree<a> = recursive either {
 누워서 떡 먹기다.
 
 ```par
-dec TreeToList : <a>[Tree<a>] List<a>
-def TreeToList = <a>[tree] poll(tree) {
+dec TreeToList : [<a> Tree<a>] List<a>
+def TreeToList = [<a> tree] poll(tree) {
   tree => tree.case {
     .leaf x => .item(x) submit(),
     .node(l) r => submit(l, r),

@@ -5,15 +5,15 @@
 예를 들어, 이 함수는 `a`에 대해 아무것도 모르더라도 인자를 그대로 반환하는 데 문제가 없지만...
 
 ```par
-dec Identity : <a>[a] a
-def Identity = <a>[x] x
+dec Identity : [<a> a] a
+def Identity = [<a> x] x
 ```
 
 이 함수는 인자를 두 번 사용해야 한다.
 
 ```par
-dec Duplicate : <a: box>[a] (a, a)!
-def Duplicate = <a: box>[x] (x, x)!
+dec Duplicate : [<a: box> a] (a, a)!
+def Duplicate = [<a: box> x] (x, x)!
 ```
 
 위 함수의 `: box` 부분이 **타입 제약**이다. 여기서는 알 수 없는 타입 `a`의 값을 재사용하거나 버릴 수 있도록 비선형이라는 제약을 추가하고 있다.
@@ -46,7 +46,7 @@ dec ZeroOr : [type a: number, Bool, a] a
 암시적 제네릭 함수에서는 부등호 대입자에 적는다.
 
 ```par
-dec Sum : <a: number>[(a) a] a
+dec Sum : [<a: number> (a) a] a
 ```
 
 존재 타입에서도 숨은 타입에 제약을 걸 수 있다.
@@ -58,7 +58,7 @@ type SomeData = (type a: data) a
 암시적 제네릭 순서쌍도 동일하다.
 
 ```par
-type DataWithText = <a: data>(a) String
+type DataWithText = (<a: data> a) String
 ```
 
 명시적 대입자에 제약이 있는 값을 생성할 때는 검사되는 타입에도 같은 제약을 추가해야 한다.
@@ -82,8 +82,8 @@ type Bad<a: box> = box a   // 오류
 `box`는 비선형인 값에 해당하는 제약이다. 타입에 대한 정보가 `a: box`뿐인 값은 복사·재사용하거나 버리는 것이 가능하다.
 
 ```par
-dec KeepFirst : <a: box>[(a, a)!] a
-def KeepFirst = <a: box>[(first, second)!] first
+dec KeepFirst : [<a: box> (a, a)!] a
+def KeepFirst = [<a: box> (first, second)!] first
 ```
 
 위의 예제에서는 `second`를 사용하지 않았으며, `a: box`에 의해 허용되는 동작이다.
@@ -107,14 +107,14 @@ def KeepFirst = <a: box>[(first, second)!] first
 - 템플릿 문자열에서 데이터 보간: `#{...}`
 
 ```par
-dec Min : <a: data>[(a) a] a
-def Min = <a: data>[(left) right] if {
+dec Min : [<a: data> (a) a] a
+def Min = [<a: data> (left) right] if {
   left <= right => left,
   else => right,
 }
 
-dec Label : <a: data>[a] String
-def Label = <a: data>[value] `value = #{value}`
+dec Label : [<a: data> a] String
+def Label = [<a: data> value] `value = #{value}`
 ```
 
 비교 연산자는 배후에서 `@core/Data.Compare`를 사용한다.`#{...}` 템플릿 보간은 `@core/Data.ToString`을 사용한다.
@@ -151,8 +151,8 @@ module Main
 
 import @core/Number
 
-dec SumPair : <a: number>[(a) a] a
-def SumPair = <a: number>[(left) right] left + right
+dec SumPair : [<a: number> (a) a] a
+def SumPair = [<a: number> (left) right] left + right
 
 dec Zero : [type a: number] a
 def Zero = [type a: number] Number.Zero(type a)
@@ -176,11 +176,11 @@ def Zero = [type a: number] Number.Zero(type a)
 - `neg`
 
 ```par
-dec Difference : <a: signed>[(a) a] a
-def Difference = <a: signed>[(left) right] left - right
+dec Difference : [<a: signed> (a) a] a
+def Difference = [<a: signed> (left) right] left - right
 
-dec Negate : <a: signed>[a] a
-def Negate = <a: signed>[value] neg value
+dec Negate : [<a: signed> a] a
+def Negate = [<a: signed> value] neg value
 ```
 
 부호 타입은 다음과 같다.

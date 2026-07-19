@@ -7,8 +7,8 @@ module Main
 
 import @core/List
 
-dec MergeTwoLists : <a>[List<a>] [List<a>] List<a>
-def MergeTwoLists = <a>[left] [right] poll(left, right) {
+dec MergeTwoLists : [<a> List<a>, List<a>] List<a>
+def MergeTwoLists = [<a> left, right] poll(left, right) {
   list => list.case {
     .end! => submit(),
     .item(x) xs => .item(x) submit(xs),
@@ -20,8 +20,8 @@ def MergeTwoLists = <a>[left] [right] poll(left, right) {
 트리 역시 리스트로 변환해 보았다.
 
 ```par
-dec TreeToList : <a>[Tree<a>] List<a>
-def TreeToList = <a>[tree] poll(tree) {
+dec TreeToList : [<a> Tree<a>] List<a>
+def TreeToList = [<a> tree] poll(tree) {
   tree => tree.case {
     .leaf x => .item(x) submit(),
     .node(l) r => submit(l, r),
@@ -35,7 +35,7 @@ def TreeToList = <a>[tree] poll(tree) {
 **그런데 리스트의 리스트는 어떻게 합쳐야 할까?**
 
 ```par
-dec MergeLists : <a>[List<List<a>>] List<a>
+dec MergeLists : [<a> List<List<a>>] List<a>
 def MergeLists = ???
 ```
 
@@ -46,8 +46,8 @@ def MergeLists = ???
 > 이 문제는 `poll`/`submit`과 `.begin`/`.loop`를 조합해서 해결할 수는 있다.
 >
 > ```par
-> dec MergeLists : <a>[List<List<a>>] List<a>
-> def MergeLists = <a>[lists] lists.begin.case {
+> dec MergeLists : [<a> List<List<a>>] List<a>
+> def MergeLists = [<a> lists] lists.begin.case {
 >   .end! => .end!,
 >   .item(list) lists => poll(list, lists.loop) {
 >     list => list.case {
@@ -118,13 +118,13 @@ type ListFan<a> = recursive either {
   .spawn(self) self,
 ```
 
-위의 두 분지로써 **자료구조를 동적으로 여러 행위자로 복제시키는 것**이 가능하며, 나머지 분지는 단일 행위자, 여기서는 리스트 하나의 동작을 구현한다.
+위의 두 분지로써 **자료구조를 동적으로 여러 행위자로 확장시키는 것**이 가능하며, 나머지 분지는 단일 행위자, 여기서는 리스트 하나의 동작을 구현한다.
 
 리스트의 팬 변환은 간단히 구현할 수 있다.
 
 ```par
-dec ListFan : <a>[List<List<a>>] ListFan<a>
-def ListFan = <a>[lists] lists.begin.case {
+dec ListFan : [<a> List<List<a>>] ListFan<a>
+def ListFan = [<a> lists] lists.begin.case {
   .end! => .end!,
   .item(list) lists => .spawn(
     list.begin.case {
@@ -149,8 +149,8 @@ def ListFan = <a>[lists] lists.begin.case {
 **이제는 `MergeLists`를 쉽게 구현할 수 있다.**
 
 ```par
-dec MergeLists : <a>[List<List<a>>] List<a>
-def MergeLists = <a>[lists] poll(ListFan(lists)) {
+dec MergeLists : [<a> List<List<a>>] List<a>
+def MergeLists = [<a> lists] poll(ListFan(lists)) {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),

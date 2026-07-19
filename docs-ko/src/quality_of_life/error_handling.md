@@ -355,8 +355,8 @@ writer.case {
 
 ```par
 let (try leftReader, try rightReader)! = (
-  leftPath.openFile,
-  rightPath.openFile,
+  Os.OpenFile(leftPath),
+  Os.OpenFile(rightPath),
 )!
 ```
 
@@ -542,7 +542,7 @@ def Main: ! = chan exit {
 
 ## 함수에서의 오류 전파
 
-지금까지의 예외에서는 오류를 출력하고 종료하는 터미널 오류 처리만을 다루었지만, 함수 내에서 발생한 오류를 호출자에게 전파해야 하는 경우도 있다. 파일 전체의 내용을 읽는 다음 유틸리티 함수를 살펴 보자.
+지금까지의 예제에서는 오류를 출력하고 종료하는 터미널 오류 처리만을 다루었지만, 함수 내에서 발생한 오류를 호출자에게 전파해야 하는 경우도 있다. 파일 전체의 내용을 읽는 다음 유틸리티 함수를 살펴 보자.
 
 ```par
 module Main
@@ -554,23 +554,17 @@ import {
 }
 
 dec ReadAll : [Os.Path] Try<Os.Error, Bytes>
-def ReadAll = [path] chan return {
-  catch e => { return <> .err e }
-  let try reader = Os.OpenFile(path)
-  let parser = Bytes.ParseReader(reader)
-  let try contents = parser.begin.case {
-    .empty! => .ok <<>>,
-    .some parser => parser.remainder,
-  }
-  return <> .ok contents
-}
+def ReadAll = [path]
+  catch e => .err e in
+  let try reader = Os.OpenFile(path) in
+  Bytes.ReadAll(reader)
 ```
 
-이 함수에서는 `path.openFile`로 얻은 분절된 `Bytes.Reader`를 `Bytes.ParseReader`를 사용해 파서로 변환한 뒤, 비어 있지 않은 파서 분지에서 남은 내용을 모두 읽어들인다. `catch` 블록에서는 발생하는 모든 오류를 `.err` 결과값으로 연결하여 전달하는 한편, 성공할 경우 파일의 내용을 `.ok` 결과값으로 연결한다.
+이 함수에서는 `Os.OpenFile(path)`로 파일을 연 뒤, `Bytes.ReadAll`로 분절된 `Bytes.Reader`를 하나의 `Bytes` 값으로 모아들인다. `catch` 블록에서는 발생하는 모든 오류를 `.err` 결과값으로 전달하는 한편, 성공할 경우 파일의 내용을 `.ok` 결과값으로 반환한다.
 
 ## `default`를 이용한 기본값 삽입
 
-조건부 값이 비어 있을 때, 굳이 분기하지 않고 폴백 값으로 대체만 하고 싶은 경우도 있다. `default` 문법 설탕으로 바로 이 동작을 구현할 수 있다.
+옵션 값이 비어 있을 때, 굳이 분기하지 않고 폴백 값으로 대체만 하고 싶은 경우도 있다. `default` 문법 설탕으로 바로 이 동작을 구현할 수 있다.
 
 이 문법은 `try`/`catch`와는 별개이다. `try`는 `Try` 값을 풀어내어 `.err`를 전파하고, `default`는 `Option` 값을 풀어내어 `.none!`을 대체하는 문법이다. `Try` 값에서 오류를 무시하고 싶다면 우선 `Try.ToOption`으로 변환해야 한다.
 

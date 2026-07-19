@@ -96,9 +96,9 @@ def FormatInt: CancellableFunction<Int, String> = case {
 def Number = Example.number  // = 42
 ```
 
-위에서는 `CancellableFunction<a, b>` 타입과 그 타입을 가지는 값인 `FormatInt`을 정의했다. [일반 함수](./function.md)는 선형이므로 반드시 호출해야 하지만, 이렇게 정의한 *조건부 함수*는 호출할지 말지를 선택할 수 있다.
+위에서는 `CancellableFunction<a, b>` 타입과 그 타입을 가지는 값인 `FormatInt`을 정의했다. [일반 함수](./function.md)는 선형이므로 반드시 호출해야 하지만, 이렇게 정의한 *취소 가능한 함수*는 호출할지 말지를 선택할 수 있다.
 
-이 타입을 사용해 조건부 값에 대한 *map* 함수를 정의할 수 있다.
+이 타입을 사용해 옵션 값에 대한 *map* 함수를 정의할 수 있다.
 
 ```par
 type Option<a> = either {
