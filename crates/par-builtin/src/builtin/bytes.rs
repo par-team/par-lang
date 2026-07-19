@@ -19,8 +19,8 @@ use crate::builtin::{
 };
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
-use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
+use par_runtime::{external_def, readback::Handle};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -33,27 +33,17 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::Bytes)
 });
 
-macro_rules! core_bytes_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Bytes",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Bytes.{
+        Builder => bytes_builder,
+        Parse => bytes_parser,
+        ParseReader => bytes_parser_from_reader,
+        Reader => bytes_reader,
+        EmptyReader => bytes_empty_reader,
+        PipeReader => bytes_pipe_reader,
+        Length => bytes_length,
+    }
 }
-
-core_bytes_external!("Builder", bytes_builder);
-core_bytes_external!("Parse", bytes_parser);
-core_bytes_external!("ParseReader", bytes_parser_from_reader);
-core_bytes_external!("Reader", bytes_reader);
-core_bytes_external!("EmptyReader", bytes_empty_reader);
-core_bytes_external!("PipeReader", bytes_pipe_reader);
-core_bytes_external!("Length", bytes_length);
 
 async fn bytes_builder(mut handle: Handle) {
     let mut buf = Vec::<u8>::new();

@@ -1,30 +1,20 @@
 //package: core
 use std::sync::Arc;
 
+use par_runtime::external_def;
 use tokio::sync::Mutex;
 
 use crate::builtin::list::readback_list;
 use arcstr::literal;
 use im::OrdMap;
 use par_runtime::readback::{Data, Handle};
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
 
-macro_rules! core_boxmap_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "BoxMap",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/BoxMap.{
+        New => boxmap_new,
+        FromList => boxmap_from_list,
+    }
 }
-
-core_boxmap_external!("New", boxmap_new);
-core_boxmap_external!("FromList", boxmap_from_list);
 
 async fn boxmap_new(handle: Handle) {
     provide_boxmap(handle, OrdMap::new());

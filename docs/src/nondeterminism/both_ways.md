@@ -30,7 +30,7 @@ type ListFan<a> = recursive either {
 We used it for merging `List<List<a>>`, but nothing prevents us from using it standalone as well:
 
 ```par
-dec ServeListFan : <a>[ListFan<a>] List<a>
+dec ServeListFan : [<a> ListFan<a>] List<a>
 def ServeListFan = ...
 ```
 
@@ -225,8 +225,8 @@ To implement such a server, we need to decide what to do with the value once all
 ```par
 type MutexClient<a> = dual MutexServer<a>
 
-dec ShareMutex : <a>[a] [MutexClient<a>] a
-def ShareMutex = <a>[value] [clients] poll(clients) {
+dec ShareMutex : [<a> a, MutexClient<a>] a
+def ShareMutex = [<a> value, clients] poll(clients) {
   client => client.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),

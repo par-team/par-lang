@@ -31,7 +31,7 @@ struct HandleLinker {
 
 pub struct Handle {
     linker: HandleLinker,
-    node: Box<Node<Linked>>,
+    node: Node<Linked>,
 }
 
 fn linked_pair() -> (Node<Linked>, Node<Linked>) {
@@ -46,14 +46,14 @@ impl Handle {
     fn new(&self, node: Node<Linked>) -> Self {
         Self {
             linker: self.linker.clone(),
-            node: Box::new(node),
+            node,
         }
     }
 
     pub fn from_node(arena: Arc<Arena<Linked>>, net: NetHandle, node: Node<Linked>) -> Self {
         Self {
             linker: HandleLinker { arena, net },
-            node: Box::new(node),
+            node,
         }
     }
 
@@ -67,10 +67,7 @@ impl Handle {
             package,
             Node::Linear(Linear::Value(Box::new(Value::Break))),
         );
-        Ok(Self {
-            linker,
-            node: Box::new(root),
-        })
+        Ok(Self { linker, node: root })
     }
 
     pub fn link_with(mut self, dual: Handle) {
@@ -81,9 +78,7 @@ impl Handle {
         // TODO add fast variant.
         self.linker.link(
             self.node,
-            Box::new(Node::Linear(Linear::Value(Box::new(Value::ExternalFn(
-                ext,
-            ))))),
+            Node::Linear(Linear::Value(Box::new(Value::ExternalFn(ext)))),
         );
     }
 
@@ -111,9 +106,9 @@ impl Handle {
     {
         self.linker.link(
             self.node,
-            Box::new(Node::Linear(Linear::Value(Box::new(Value::ExternalArc(
+            Node::Linear(Linear::Value(Box::new(Value::ExternalArc(
                 super::runtime::ExternalArc(Arc::new(move |handle| Box::pin(f(handle.handle)))),
-            ))))),
+            )))),
         );
     }
 
@@ -121,9 +116,7 @@ impl Handle {
         // TODO add fast variant.
         self.linker.link(
             self.node,
-            Box::new(Node::Linear(Linear::Value(Box::new(Value::Primitive(
-                primitive,
-            ))))),
+            Node::Linear(Linear::Value(Box::new(Value::Primitive(primitive)))),
         );
     }
 
@@ -137,7 +130,7 @@ impl Handle {
 
     pub fn provide_data(mut self, data: &Data) {
         let node = self.data_node(data);
-        self.linker.link(self.node, Box::new(node));
+        self.linker.link(self.node, node);
     }
 
     pub async fn primitive(mut self) -> Result<Primitive> {
@@ -164,9 +157,9 @@ impl Handle {
     pub fn send(&mut self) -> Self {
         let (left, left_h) = linked_pair();
         let (right, right_h) = linked_pair();
-        let par = core::mem::replace(&mut self.node, Box::new(left_h));
+        let par = core::mem::replace(&mut self.node, left_h);
         let times = Node::Linear(Linear::Value(Box::new(Value::Pair(left, right))));
-        self.linker.link(par, Box::new(times));
+        self.linker.link(par, times);
         self.new(right_h)
     }
 
@@ -179,22 +172,22 @@ impl Handle {
     }
 
     pub fn receive(&mut self) -> Self {
-        let node = mem::replace(self.node.as_mut(), Node::Empty);
+        let node = mem::replace(&mut self.node, Node::Empty);
         match self.linker.destruct(node) {
             Ok(value) => {
                 let Value::Pair(a, b) = value else {
                     unreachable!()
                 };
-                let _ = mem::replace(self.node.as_mut(), a);
+                let _ = mem::replace(&mut self.node, a);
                 return self.new(b);
             }
-            Err(node) => self.node = Box::new(node),
+            Err(node) => self.node = node,
         }
         let (left, left_h) = linked_pair();
         let (right, right_h) = linked_pair();
-        let times = core::mem::replace(&mut self.node, Box::new(left_h));
+        let times = core::mem::replace(&mut self.node, left_h);
         let par = Node::Linear(Linear::Par(Box::new(left), Box::new(right)));
-        self.linker.link(times, Box::new(par));
+        self.linker.link(times, par);
         self.new(right_h)
     }
 
@@ -203,7 +196,7 @@ impl Handle {
         let Value::Pair(left, right) = value else {
             return Err(Error::InvalidValue(value));
         };
-        self.node = Box::new(left);
+        self.node = left;
         self.new(right).data().await
     }
 
@@ -212,32 +205,28 @@ impl Handle {
         let Value::Pair(left, right) = value else {
             return Err(Error::InvalidValue(value));
         };
-        self.node = Box::new(left);
+        self.node = left;
         self.new(right).number().await
     }
 
     pub fn signal(&mut self, chosen: ArcStr) {
         let (payload, payload_h) = linked_pair();
-        let chosen = self
-            .linker
-            .arena
-            .interned(chosen.as_str())
-            .unwrap_or_else(|| {
-                // This happens when we send a signal that the program doesn't have
-                // and that also isn't present in the types
-                // It might still be handled by an "else" branch then
-                eprintln!(
-                    "Attempted to signal a non-interned string: `{}`
+        let chosen = self.linker.arena.interned(&chosen).unwrap_or_else(|| {
+            // This happens when we send a signal that the program doesn't have
+            // and that also isn't present in the types
+            // It might still be handled by an "else" branch then
+            eprintln!(
+                "Attempted to signal a non-interned string: `{}`
                 This is most likely type error with built in definitions.
                 Sending an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            });
+                chosen
+            );
+            self.linker.arena.empty_string()
+        });
         let either = Node::Linear(Linear::Value(Box::new(Value::Either(chosen, payload))));
-        let choice = core::mem::replace(&mut self.node, Box::new(payload_h));
-        self.linker.link(choice, Box::new(either));
+        let choice = core::mem::replace(&mut self.node, payload_h);
+        self.linker.link(choice, either);
     }
 
     pub async fn case(&mut self) -> ArcStr {
@@ -248,13 +237,13 @@ impl Handle {
         };
         *self = Handle {
             linker,
-            node: Box::new(payload),
+            node: payload,
         };
-        self.linker.arena.get(name).into()
+        self.linker.arena.get_arcstr(name).clone()
     }
 
     pub fn break_(mut self) {
-        match self.node.as_ref() {
+        match &self.node {
             Node::Global(_, global_index)
                 if matches!(
                     self.linker.arena.get(*global_index),
@@ -266,13 +255,13 @@ impl Handle {
             Node::Linear(Linear::Continue) => (),
             _ => {
                 let other = Node::Linear(Linear::Value(Box::new(Value::Break)));
-                self.linker.link(self.node, Box::new(other));
+                self.linker.link(self.node, other);
             }
         }
     }
 
     pub fn continue_(mut self) {
-        match self.node.as_ref() {
+        match &self.node {
             Node::Global(_, global_index)
                 if matches!(
                     self.linker.arena.get(*global_index),
@@ -284,28 +273,25 @@ impl Handle {
             Node::Linear(Linear::Value(value)) if matches!(value.as_ref(), Value::Break) => (),
             _ => {
                 let other = Node::Linear(Linear::Continue);
-                self.linker.link(self.node, Box::new(other));
+                self.linker.link(self.node, other);
             }
         }
     }
 
     pub fn erase(mut self) -> () {
         let (other, _) = self.linker.create_share_hole();
-        self.linker.link(self.node, Box::new(other))
+        self.linker.link(self.node, other)
     }
 
     pub fn duplicate(&mut self) -> Handle {
         let (other, shared) = self.linker.create_share_hole();
-        let node = core::mem::replace(
-            &mut self.node,
-            Box::new(Node::Shared(shared.clone())).into(),
-        );
-        self.linker.link(node, Box::new(other));
-        self.new(Node::Shared(shared).into())
+        let node = core::mem::replace(&mut self.node, Node::Shared(shared.clone()));
+        self.linker.link(node, other);
+        self.new(Node::Shared(shared))
     }
 
     async fn destruct(&mut self) -> Value<Node<Linked>, Linked> {
-        let node = mem::replace(self.node.as_mut(), Node::Empty);
+        let node = mem::replace(&mut self.node, Node::Empty);
         let node = self.linker.deref(node);
         match self.linker.destruct(node) {
             Ok(value) => {
@@ -313,8 +299,7 @@ impl Handle {
             }
             Err(node) => {
                 let (tx, rx) = oneshot::channel();
-                self.linker
-                    .link(Box::new(Node::Linear(Linear::Request(tx))), Box::new(node));
+                self.linker.link(Node::Linear(Linear::Request(tx)), node);
                 rx.await.unwrap()
             }
         }
@@ -338,19 +323,16 @@ impl Handle {
     }
 
     fn intern_signal(&self, chosen: &ArcStr) -> Index<Linked, str> {
-        self.linker
-            .arena
-            .interned(chosen.as_str())
-            .unwrap_or_else(|| {
-                eprintln!(
-                    "Attempted to provide non-interned signal data: `{}`
+        self.linker.arena.interned(&chosen).unwrap_or_else(|| {
+            eprintln!(
+                "Attempted to provide non-interned signal data: `{}`
                 This is most likely a type error with built in definitions.
                 Providing an empty signal instead, which will always trigger an `else` branch.
                 ",
-                    chosen
-                );
-                self.linker.arena.empty_string()
-            })
+                chosen
+            );
+            self.linker.arena.empty_string()
+        })
     }
 
     async fn data_from_value(&self, value: Value<Node<Linked>, Linked>) -> Result<Data> {
@@ -375,7 +357,7 @@ impl Handle {
 }
 
 impl Linker for HandleLinker {
-    fn link(&mut self, a: Box<Node<Linked>>, b: Box<Node<Linked>>) {
+    fn link(&mut self, a: Node<Linked>, b: Node<Linked>) {
         self.net.0.send(ReducerMessage::Redex(a, b)).unwrap()
     }
 

@@ -60,6 +60,10 @@ webbrowser = "1.0.6"
 [package.metadata.spellcheck]
 config = ".config/spellcheck.toml"
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mimalloc = "0.1.49"
 

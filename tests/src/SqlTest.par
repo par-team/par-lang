@@ -1,0 +1,621 @@
+module SqlTest
+
+import {
+  @core/Int
+  @core/List
+  @core/Option
+  @core/Stream
+  @core/String
+  @core/Test
+  @core/Time
+  @core/Try
+  @basic/Sql
+}
+
+// --- Decoding helpers -----------------------------------------------------
+
+dec UserLine : [Sql.Row] Try<Sql.Error, String>
+def UserLine = [row]
+  catch e => .err e in
+  let try name = row->Sql.Field("name")->Sql.Decode(Sql.AsText) in
+  let try age = row->Sql.Field("age")->Sql.Decode(Sql.AsInt) in
+  .ok `${name} is #{age}`
+
+dec IntField : [Sql.Row, String] Try<Sql.Error, Int>
+def IntField = [row, name] row->Sql.Field(name)->Sql.Decode(Sql.AsInt)
+
+// A transaction that updates a row and then violates a primary-key constraint,
+// so the database must roll back the update. Consumes the transaction.
+dec AttemptBadTx : [Sql.Transaction] Try<Sql.Error, !>
+def AttemptBadTx = [tx]
+  catch e => .err e in
+  do {
+    tx.execute("UPDATE t SET v = 20 WHERE id = 1", *()).try[_]
+    tx.execute("INSERT INTO t (id, v) VALUES (1, 30)", *()).try[_]
+    tx.commit.try
+  } in .ok!
+
+// --- Tests ----------------------------------------------------------------
+
+// Round-trip: create, parameterized insert, query stream, typed decode.
+def TestRoundTrip: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`round-trip should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE users (name TEXT, age INTEGER)", *())[try@db _]
+  db.execute(
+    "INSERT INTO users (name, age) VALUES (?, ?)",
+    *(.text "Alice", .int 30),
+  )[try@db _]
+  db.query("SELECT name, age FROM users", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      UserLine(row).case {
+        .ok line => { test.assert("round-trips Alice/30", line == "Alice is 30"); done! },
+        .err e => { test.assert(`decode failed: ${e}`, .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected exactly one row", .false!); done! },
+  }
+}
+
+// Execute reports affected rows; query returns all inserted rows.
+def TestExecuteAffected: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`execute should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE nums (n INTEGER)", *())[try@db _]
+  db.execute(
+    "INSERT INTO nums (n) VALUES (?), (?), (?)",
+    *(.int 1, .int 2, .int 3),
+  )[try@db affected]
+  db.query("SELECT n FROM nums ORDER BY n", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  let count = all->List.Length
+  test.assert("insert reports three affected rows", affected == 3)
+  test.assert("three rows returned", count == 3)
+  done!
+}
+
+// SQL NULL decodes to `.none!` via Nullable; a missing column errors.
+def TestNullableAndMissing: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`null test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE p (name TEXT, nickname TEXT)", *())[try@db _]
+  db.execute(
+    "INSERT INTO p (name, nickname) VALUES (?, ?)",
+    *(.text "Bob", .null!),
+  )[try@db _]
+  db.query("SELECT name, nickname FROM p", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      let nickname = row->Sql.Field("nickname")->Sql.Decode(Sql.Nullable(Sql.AsText))
+      let missing = row->Sql.Field("absent")->Sql.Decode(Sql.AsText)
+      let nickIsNone = nickname.case {
+        .ok option => option.case { .none! => .true!, .some _ => .false! },
+        .err _ => .false!,
+      }
+      let missingErrored = missing.case { .ok _ => .false!, .err _ => .true! }
+      test.assert("present SQL NULL decodes to none", nickIsNone)
+      test.assert("missing column errors", missingErrored)
+      done!
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// A committed transaction is durable.
+def TestTransactionCommit: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`commit should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE accounts (id INTEGER, balance INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO accounts (id, balance) VALUES (1, 100), (2, 0)", *())[try@db _]
+
+  db.transaction[try@db tx]
+  tx.execute(
+    "UPDATE accounts SET balance = balance - ? WHERE id = ?",
+    *(.int 50, .int 1),
+  ).try@db[_]
+  tx.execute(
+    "UPDATE accounts SET balance = balance + ? WHERE id = ?",
+    *(.int 50, .int 2),
+  ).try@db[_]
+  tx.commit.try@db
+
+  db.query("SELECT balance FROM accounts ORDER BY id", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  test.assert("two accounts remain", all->List.Length == 2)
+  all.case {
+    .item(row) _ => {
+      IntField(row, "balance").case {
+        .ok bal => { test.assert("committed transfer leaves sender at 50", bal == 50); done! },
+        .err e => { test.assert(`decode failed: ${e}`, .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected account rows", .false!); done! },
+  }
+}
+
+// A statement failure inside a transaction rolls back the whole transaction.
+def TestTransactionRollback: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`setup should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO t (id, v) VALUES (1, 10)", *())[try@db _]
+
+  db.transaction[try@db tx]
+  // Force the transaction to complete (and release its connection) before the
+  // verification query runs.
+  AttemptBadTx(tx).case {
+    .ok! => {
+      db.query("SELECT v FROM t WHERE id = 1", *())[try@db rows]
+      let try@db all = Stream.ToList(rows)
+      db.close
+      test.assert("conflicting transaction should have failed", .false!)
+      done!
+    },
+    .err _ => {
+      db.query("SELECT v FROM t WHERE id = 1", *())[try@db rows]
+      let try@db all = Stream.ToList(rows)
+      db.close
+      all.case {
+        .item(row) _ => {
+          IntField(row, "v").case {
+            .ok v => { test.assert("rolled-back update leaves v = 10", v == 10); done! },
+            .err e => { test.assert(`decode failed: ${e}`, .false!); done! },
+          }
+        },
+        .end! => { test.assert("row should still exist", .false!); done! },
+      }
+    },
+  }
+}
+
+// A query against a missing table fails at startup, in the outer `Try`.
+def TestQueryStartupError: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`setup should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+
+  db.query("SELECT * FROM does_not_exist", *())[result]
+  db.close
+
+  result.case {
+    .err _ => { test.assert("query on a missing table fails at startup", .true!); done! },
+    .ok stream => {
+      Stream.Cancel(stream).case { .ok! => {}, .err _ => {} }
+      test.assert("query on a missing table should have failed", .false!)
+      done!
+    },
+  }
+}
+
+// `.split` shares the same pool: closing one handle keeps the data reachable
+// through a sibling handle.
+def TestSplit: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`split test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE t (n INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO t (n) VALUES (42)", *())[try@db _]
+  db.split[sibling]
+  // Drop the sibling handle; the pool survives because `db` still holds it.
+  sibling.close
+
+  db.query("SELECT n FROM t", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      IntField(row, "n").case {
+        .ok n => { test.assert("a sibling pool handle sees the same data", n == 42); done! },
+        .err e => { test.assert(`decode failed: ${e}`, .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// Each supported column type decodes to the faithful `Value` variant.
+def TestColumnTypes: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`column-type test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE cells (i INTEGER, f REAL, t TEXT, b BLOB, z INTEGER)", *())[try@db _]
+  db.execute(
+    "INSERT INTO cells (i, f, t, b, z) VALUES (?, ?, ?, ?, ?)",
+    *(.int 7, .float 2.5, .text "hi", .bytes <<104 105>>, .null!),
+  )[try@db _]
+  db.query("SELECT i, f, t, b, z FROM cells", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      let intOk = row->Sql.Field("i")->Sql.Decode(Sql.AsInt).case {
+        .ok n => n == 7,
+        .err _ => .false!,
+      }
+      let floatOk = row->Sql.Field("f")->Sql.Decode(Sql.AsFloat).case {
+        .ok x => x == 2.5,
+        .err _ => .false!,
+      }
+      let textOk = row->Sql.Field("t")->Sql.Decode(Sql.AsText).case {
+        .ok s => s == "hi",
+        .err _ => .false!,
+      }
+      let bytesOk = row->Sql.Field("b")->Sql.Decode(Sql.AsBytes).case {
+        .ok bs => String.FromBytes(bs) == "hi",
+        .err _ => .false!,
+      }
+      let nullOk = row->Sql.Field("z")->Sql.Decode(Sql.Nullable(Sql.AsInt)).case {
+        .ok option => option.case { .none! => .true!, .some _ => .false! },
+        .err _ => .false!,
+      }
+      test.assert("integer column decodes to .int", intOk)
+      test.assert("real column decodes to .float", floatOk)
+      test.assert("text column decodes to .text", textOk)
+      test.assert("blob column decodes to .bytes", bytesOk)
+      test.assert("null column decodes to none", nullOk)
+      done!
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// `Timestamp` / `AsTimestamp` round-trip an instant through RFC 3339 text.
+def TestTimestampRoundTrip: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`timestamp test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  let instant = Time.FromRFC3339("2024-07-01T12:34:56Z").case {
+    .some i => i,
+    .none! => Time.Epoch,
+  }
+
+  db.execute("CREATE TABLE moments (at TEXT)", *())[try@db _]
+  db.execute("INSERT INTO moments (at) VALUES (?)", *(Sql.Timestamp(instant)))[try@db _]
+  db.query("SELECT at FROM moments", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      let decoded = row->Sql.Field("at")->Sql.Decode(Sql.AsTimestamp)
+      decoded.case {
+        .ok back => { test.assert("timestamp round-trips", Time.Compare(back, instant) is .equal!); done! },
+        .err e => { test.assert(`timestamp decode failed: ${e}`, .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// `DateTime` / `Date` round-trip civil values through fixed-layout ISO text.
+def TestCivilRoundTrip: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`civil test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  let zoned = Time.At(Time.UTC, 2024, 7, 1, 12, 34, 56).case {
+    .some z => z,
+    .none! => Time.InZone(Time.Epoch, Time.UTC),
+  }
+
+  db.execute("CREATE TABLE civil (local TEXT, day TEXT)", *())[try@db _]
+  db.execute(
+    "INSERT INTO civil (local, day) VALUES (?, ?)",
+    *(Sql.DateTime(zoned), Sql.Date(zoned)),
+  )[try@db _]
+  db.query("SELECT local, day FROM civil", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      let datetime = row->Sql.Field("local")->Sql.Decode(Sql.AsDateTime(Time.UTC))
+      let date = row->Sql.Field("day")->Sql.Decode(Sql.AsDate(Time.UTC))
+      let datetimeOk = datetime.case {
+        .ok z => z.format("%Y-%m-%dT%H:%M:%S") == "2024-07-01T12:34:56",
+        .err _ => .false!,
+      }
+      let dateOk = date.case {
+        .ok z => z.format("%Y-%m-%d") == "2024-07-01",
+        .err _ => .false!,
+      }
+      test.assert("datetime round-trips at second precision", datetimeOk)
+      test.assert("date round-trips", dateOk)
+      done!
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// Opening an unsupported/invalid URL returns an error rather than panicking.
+def TestOpenError: [Test] ! = [test]
+  Sql.Open("nonsense://localhost/db").case {
+    .ok db => do {
+      db.close
+      test.assert("an unsupported URL scheme should fail to open", .false!)
+    } in !,
+    .err _ => do {
+      test.assert("an unsupported URL scheme fails to open", .true!)
+    } in !,
+  }
+
+// SQLite stores booleans as integers; `AsBool` reads back both a value written
+// as `.bool` and a plain 0/1 integer.
+def TestBoolRoundTrip: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`bool test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE flags (id INTEGER, f INTEGER)", *())[try@db _]
+  db.execute(
+    "INSERT INTO flags (id, f) VALUES (1, ?), (2, ?)",
+    *(.bool .true!, .int 0),
+  )[try@db _]
+  db.query("SELECT f FROM flags ORDER BY id", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(first) rest => {
+      rest.case {
+        .item(second) _ => {
+          let trueOk = first->Sql.Field("f")->Sql.Decode(Sql.AsBool).case {
+            .ok b => b,
+            .err _ => .false!,
+          }
+          let falseOk = second->Sql.Field("f")->Sql.Decode(Sql.AsBool).case {
+            .ok b => b.case { .true! => .false!, .false! => .true! },
+            .err _ => .false!,
+          }
+          test.assert("a written .bool true reads back as true", trueOk)
+          test.assert("an integer 0 reads back as false", falseOk)
+          done!
+        },
+        .end! => { test.assert("expected two rows", .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected rows", .false!); done! },
+  }
+}
+
+// Temporal text written by SQL itself (space-separated, with or without
+// fractional seconds) decodes with the lenient formats, and zone-aware text in
+// the PostgreSQL cast form parses as a timestamp.
+def TestSqlWrittenTemporals: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`temporal test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE m (at TEXT, day TEXT, frac TEXT, stamp TEXT)", *())[try@db _]
+  db.execute(
+    "INSERT INTO m (at, day, frac, stamp) VALUES (datetime('now'), date('now'), ?, ?)",
+    *(.text "2024-07-01 12:34:56.789", .text "2024-07-01 12:34:56+00"),
+  )[try@db _]
+  db.query("SELECT at, day, frac, stamp FROM m", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  let expected = Time.FromRFC3339("2024-07-01T12:34:56Z").case {
+    .some i => i,
+    .none! => Time.Epoch,
+  }
+
+  all.case {
+    .item(row) _ => {
+      let atOk = row->Sql.Field("at")->Sql.Decode(Sql.AsDateTime(Time.UTC)).case {
+        .ok _ => .true!,
+        .err _ => .false!,
+      }
+      let dayOk = row->Sql.Field("day")->Sql.Decode(Sql.AsDate(Time.UTC)).case {
+        .ok _ => .true!,
+        .err _ => .false!,
+      }
+      let fracOk = row->Sql.Field("frac")->Sql.Decode(Sql.AsDateTime(Time.UTC)).case {
+        .ok z => z.format("%H:%M:%S") == "12:34:56",
+        .err _ => .false!,
+      }
+      let stampOk = row->Sql.Field("stamp")->Sql.Decode(Sql.AsTimestamp).case {
+        .ok i => Time.Compare(i, expected) is .equal!,
+        .err _ => .false!,
+      }
+      test.assert("datetime('now') text decodes as a date-time", atOk)
+      test.assert("date('now') text decodes as a date", dayOk)
+      test.assert("fractional-second text decodes", fracOk)
+      test.assert("space-separated zone-aware text decodes as a timestamp", stampOk)
+      done!
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// Cancelling a stream mid-results succeeds and returns its connection to the
+// pool: the in-memory database has only one connection, so a leaked connection
+// would make the follow-up statement fail.
+def TestCancelMidStream: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`cancel test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE nums (n INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO nums (n) VALUES (1), (2), (3)", *())[try@db _]
+  db.query("SELECT n FROM nums ORDER BY n", *())[try@db rows]
+
+  rows.case {
+    .end _ => {
+      db.close
+      test.assert("expected rows before cancelling", .false!)
+      done!
+    },
+    .item rows => {
+      rows.get[row]
+      let firstOk = IntField(row, "n").case { .ok n => n == 1, .err _ => .false! }
+      Stream.Cancel(rows).case {
+        .ok! => {
+          db.execute("INSERT INTO nums (n) VALUES (4)", *())[try@db inserted]
+          db.close
+          test.assert("first row read before cancel", firstOk)
+          test.assert("statement after cancel succeeds", inserted == 1)
+          done!
+        },
+        .err e => {
+          db.close
+          test.assert(`cancel failed: ${e}`, .false!)
+          done!
+        },
+      }
+    },
+  }
+}
+
+// Statements issued on one handle run in submission order even when their
+// results are never inspected.
+def TestExecuteOrdering: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`ordering test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE t (n INTEGER)", *())[_]
+  db.execute("INSERT INTO t (n) VALUES (1)", *())[_]
+  db.execute("UPDATE t SET n = n + 1", *())[_]
+  db.query("SELECT n FROM t", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      IntField(row, "n").case {
+        .ok n => { test.assert("uninspected statements ran in order", n == 2); done! },
+        .err e => { test.assert(`decode failed: ${e}`, .false!); done! },
+      }
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}
+
+// Binding an integer parameter beyond 64-bit range fails with an error instead
+// of panicking or truncating.
+def TestIntOutOfRange: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`out-of-range test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE nums (n INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO nums (n) VALUES (?)", *(.int 9223372036854775808))[result]
+  db.close
+
+  result.case {
+    .ok _ => { test.assert("out-of-range integer should fail to bind", .false!); done! },
+    .err _ => { test.assert("out-of-range integer fails to bind", .true!); done! },
+  }
+}
+
+// Rows keep duplicate column names; `Field` returns the first match.
+def TestDuplicateColumns: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`duplicate-column test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.query("SELECT 1 AS x, 2 AS x", *())[try@db rows]
+  let try@db all = Stream.ToList(rows)
+  db.close
+
+  all.case {
+    .item(row) _ => {
+      let len = row->List.Length
+      let firstOk = IntField(row, "x").case { .ok n => n == 1, .err _ => .false! }
+      test.assert("both duplicate columns are present", len == 2)
+      test.assert("Field returns the first duplicate", firstOk)
+      done!
+    },
+    .end! => { test.assert("expected a row", .false!); done! },
+  }
+}

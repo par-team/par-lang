@@ -90,8 +90,8 @@ type Iterator<e, a> = recursive choice {
   }
 }
 
-dec Lines : <e>[String.Parser<e>] Iterator<e, String>
-def Lines = <e>[parser] do { parser.begin } in case {
+dec Lines : [<e> String.Parser<e>] Iterator<e, String>
+def Lines = [<e> parser] do { parser.begin } in case {
   .close => parser.case {
     .empty! => .ok!,
     .ready parser => parser.close,
@@ -115,8 +115,8 @@ def Lines = <e>[parser] do { parser.begin } in case {
   }
 }
 
-dec Filter : <e, a>[Iterator<e, box a>] [box [a] Bool] Iterator<e, a>
-def Filter = <e, a>[iter] [predicate] do { iter.begin } in case {
+dec Filter : [<e, a> Iterator<e, box a>, box [a] Bool] Iterator<e, a>
+def Filter = [<e, a> iter, predicate] do { iter.begin } in case {
   .close => iter.close,
   .next => iter.next.case {
     .end result => .end result,
@@ -133,8 +133,8 @@ def Filter = <e, a>[iter] [predicate] do { iter.begin } in case {
   }
 }
 
-dec Enumerate1 : <e, a>[Iterator<e, a>] Iterator<e, (Nat) a>
-def Enumerate1 = <e, a>[iter] do {
+dec Enumerate1 : [<e, a> Iterator<e, a>] Iterator<e, (Nat) a>
+def Enumerate1 = [<e, a> iter] do {
   let index = 1
   iter.begin
 } in case {

@@ -6,8 +6,9 @@ use num_integer::Integer;
 use num_traits::Zero;
 use par_core::frontend::{ExternalTypeDef, PrimitiveType, Type};
 use par_core::source::Span;
+use par_runtime::external_def;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::registry::{DefinitionRef, PackageRef};
 
 inventory::submit!(ExternalTypeDef {
     path: DefinitionRef {
@@ -20,28 +21,18 @@ inventory::submit!(ExternalTypeDef {
     typ: Type::Primitive(Span::None, PrimitiveType::Nat)
 });
 
-macro_rules! core_nat_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::CORE,
-                path: &[],
-                module: "Nat",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @core/Nat.{
+        Mod => nat_mod,
+        Min => nat_min,
+        Max => nat_max,
+        Clamp => nat_clamp,
+        Repeat => nat_repeat,
+        RepeatLazy => nat_repeat_lazy,
+        Range => nat_range,
+        FromString => nat_from_string,
+    }
 }
-
-core_nat_external!("Mod", nat_mod);
-core_nat_external!("Min", nat_min);
-core_nat_external!("Max", nat_max);
-core_nat_external!("Clamp", nat_clamp);
-core_nat_external!("Repeat", nat_repeat);
-core_nat_external!("RepeatLazy", nat_repeat_lazy);
-core_nat_external!("Range", nat_range);
-core_nat_external!("FromString", nat_from_string);
 
 async fn nat_mod(mut handle: Handle) {
     let x = handle.receive().nat().await;
@@ -68,7 +59,7 @@ async fn nat_clamp(mut handle: Handle) {
     let min = handle.receive().nat().await;
     let max = handle.receive().nat().await;
     // int clamped to two nats is always nat, so we can ignore the sign.
-    let (_sign, clamped) = int.clamp(min.into(), max.into()).into_parts();
+    let (_sign, clamped) = int.min(max.into()).max(min.into()).into_parts();
     handle.provide_nat(clamped);
 }
 

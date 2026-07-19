@@ -230,8 +230,8 @@ def NewProgressTracker: ProgressTracker = do {
 
 // ---
 
-dec FanIn : <a>[List<List<a>>] List<a>
-def FanIn = <a>[lists] chan yield {
+dec FanIn : [<a> List<List<a>>] List<a>
+def FanIn = [<a> lists] chan yield {
   Cell.Share(yield, lists.begin.case {
     .end! => .end!,
     .item(list) lists => .split(list.begin.case {

@@ -8,45 +8,34 @@ use arcstr::literal;
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use num_bigint::BigUint;
-use par_runtime::primitive::ParString;
 use par_runtime::readback::Handle;
-use par_runtime::registry::{DefinitionRef, ExternalDef, PackageRef};
+use par_runtime::{external_def, primitive::ParString};
 use tokio::{
     fs::{self, DirEntry, File, OpenOptions, ReadDir},
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
 
-macro_rules! basic_os_external {
-    ($name:literal, $f:path $(, $arg:expr)*) => {
-        inventory::submit!(ExternalDef {
-            path: DefinitionRef {
-                package: PackageRef::BASIC,
-                path: &[],
-                module: "Os",
-                name: $name,
-            },
-            f: |handle| Box::pin($f(handle $(, $arg)*)),
-        });
-    };
+external_def! {
+    @basic/Os.{
+        Path => path_from_bytes,
+        Stdin => os_stdin,
+        Stdout => os_stdout,
+        Stderr => os_stderr,
+        OpenFile => os_open_file,
+        CreateOrReplaceFile => os_create_or_replace_file,
+        CreateNewFile => os_create_new_file,
+        AppendToFile => os_append_to_file,
+        CreateOrAppendToFile => os_create_or_append_to_file,
+        CreateDir => os_create_dir,
+        RemoveFile => os_remove_file,
+        RemoveDir => os_remove_dir,
+        MoveFile => os_move_file,
+        MoveDir => os_move_dir,
+        ListDir => os_list_dir,
+        TraverseDir => os_traverse_dir,
+        Env => envmap_new,
+    }
 }
-
-basic_os_external!("Path", path_from_bytes);
-basic_os_external!("Stdin", os_stdin);
-basic_os_external!("Stdout", os_stdout);
-basic_os_external!("Stderr", os_stderr);
-basic_os_external!("OpenFile", os_open_file);
-basic_os_external!("CreateOrReplaceFile", os_create_or_replace_file);
-basic_os_external!("CreateNewFile", os_create_new_file);
-basic_os_external!("AppendToFile", os_append_to_file);
-basic_os_external!("CreateOrAppendToFile", os_create_or_append_to_file);
-basic_os_external!("CreateDir", os_create_dir);
-basic_os_external!("RemoveFile", os_remove_file);
-basic_os_external!("RemoveDir", os_remove_dir);
-basic_os_external!("MoveFile", os_move_file);
-basic_os_external!("MoveDir", os_move_dir);
-basic_os_external!("ListDir", os_list_dir);
-basic_os_external!("TraverseDir", os_traverse_dir);
-basic_os_external!("Env", envmap_new);
 
 async fn path_from_bytes(mut handle: Handle) {
     let b = handle.receive().bytes().await;

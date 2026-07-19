@@ -30,7 +30,8 @@ url = "2.5.4"
 inventory = "0.3.22"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "signal"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "signal", "time"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "sqlite", "postgres", "mysql"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { version = "1.49.0", features = ["rt", "macros", "io-util"] }

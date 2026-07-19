@@ -13,10 +13,12 @@ use par_core::{
         set_miette_hook,
     },
     runtime::{Compiled, RuntimeCompilerError},
+    source::Span,
     testing::{AssertionResult, provide_test},
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
 use par_runtime::linker::Linked;
+use par_runtime::pkgid::{BuiltinPackage, PackageId};
 use par_runtime::spawn::TokioSpawn;
 
 use crate::package_utils::{
@@ -269,7 +271,7 @@ fn is_local_module(module: &str, local_modules: &[ModulePath]) -> bool {
 }
 
 fn test_single_definition(
-    _program: &CheckedWorkspace,
+    program: &CheckedWorkspace,
     rt_compiled: &Compiled<Linked>,
     test_name: &GlobalName<Universal>,
 ) -> TestResult {
@@ -291,7 +293,8 @@ fn test_single_definition(
         let ty = rt_compiled
             .get_type_of(test_name)
             .ok_or_else(|| format!("Type not found for test '{}'", missing_type_name))?;
-        run_test_with_test_type(rt_compiled, test_name, &ty).await
+        require_assignable_type(program, &ty, &test_type(), "[Test] !")?;
+        run_test(rt_compiled, test_name).await
     });
 
     let duration = start.elapsed();
@@ -308,7 +311,7 @@ fn test_single_definition(
 }
 
 fn run_single_definition(
-    _program: &CheckedWorkspace,
+    program: &CheckedWorkspace,
     rt_compiled: &Compiled<Linked>,
     run_name: &GlobalName<Universal>,
 ) -> TestResult {
@@ -327,9 +330,10 @@ fn run_single_definition(
     };
 
     let result = runtime.block_on(async {
-        let _ty = rt_compiled
+        let ty = rt_compiled
             .get_type_of(run_name)
             .ok_or_else(|| format!("Type not found for test '{}'", missing_type_name))?;
+        require_assignable_type(program, &ty, &Type::Break(Span::None), "!")?;
         let package = rt_compiled.code.get_with_name(run_name).unwrap();
 
         let (handle, fut) = par_runtime::start_and_instantiate(
@@ -355,10 +359,45 @@ fn run_single_definition(
     }
 }
 
-async fn run_test_with_test_type(
+fn test_type() -> Type<Universal> {
+    let test_name = GlobalName::new(
+        Span::None,
+        Universal {
+            package: PackageId::Builtin(BuiltinPackage::Core),
+            directories: vec![],
+            module: String::from("Test"),
+        },
+        String::from("Test"),
+    );
+    Type::Function(
+        Span::None,
+        Box::new(Type::Name(Span::None, test_name, vec![])),
+        Box::new(Type::Break(Span::None)),
+        vec![],
+    )
+}
+
+fn require_assignable_type(
+    program: &CheckedWorkspace,
+    actual: &Type<Universal>,
+    expected: &Type<Universal>,
+    expected_name: &str,
+) -> Result<(), String> {
+    let assignable = actual
+        .is_definitely_assignable_to(expected, &program.checked_module().type_defs)
+        .map_err(|error| format!("Failed to check definition type: {error:?}"))?;
+    if assignable {
+        Ok(())
+    } else {
+        Err(format!(
+            "Definition does not have the expected {expected_name} type"
+        ))
+    }
+}
+
+async fn run_test(
     rt_compiled: &Compiled<Linked>,
     name: &GlobalName<Universal>,
-    _ty: &Type<Universal>,
 ) -> Result<TestStatus, String> {
     let (sender, receiver) = mpsc::channel();
 

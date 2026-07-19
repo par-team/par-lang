@@ -4,7 +4,10 @@ use crate::language_server::feedback::{FeedbackBookKeeper, diagnostic_for_error}
 use crate::language_server::instance::Instance;
 use lsp_server::{Connection, ErrorCode};
 use lsp_types::notification::DidSaveTextDocument;
-use lsp_types::request::{DocumentSymbolRequest, ExecuteCommand, GotoDeclaration, GotoDefinition};
+use lsp_types::request::{
+    CodeLensRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDeclaration,
+    GotoDefinition,
+};
 use lsp_types::{self as lsp, InitializeParams, Uri};
 use par_builtin::get_builtin_source;
 use std::collections::HashMap;
@@ -69,6 +72,20 @@ impl<'c> LanguageServer<'c> {
                 self.handle_request_instance(request_id, &params.text_document.uri, |instance| {
                     instance.provide_document_symbols(&params)
                 })
+            }
+            CodeLensRequest::METHOD => {
+                let params = extract_request::<CodeLensRequest>(request);
+                self.handle_request_instance(request_id, &params.text_document.uri, |instance| {
+                    instance.provide_code_lenses(&params)
+                })
+            }
+            Completion::METHOD => {
+                let params = extract_request::<Completion>(request);
+                self.handle_request_instance(
+                    request_id,
+                    &params.text_document_position.text_document.uri,
+                    |instance| instance.provide_completion(&params),
+                )
             }
             GotoDeclaration::METHOD => {
                 let params = extract_request::<GotoDeclaration>(request);
@@ -251,11 +268,20 @@ impl<'c> LanguageServer<'c> {
 
 fn initialize_lsp(connection: &Connection) -> InitializeParams {
     let server_capabilities = lsp::ServerCapabilities {
+        position_encoding: Some(lsp::PositionEncodingKind::UTF16),
         text_document_sync: Some(lsp::TextDocumentSyncCapability::Kind(
             lsp::TextDocumentSyncKind::FULL,
         )),
         hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
         document_symbol_provider: Some(lsp::OneOf::Left(true)),
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
+        completion_provider: Some(lsp::CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![".".to_owned()]),
+            ..lsp::CompletionOptions::default()
+        }),
         declaration_provider: Some(lsp::DeclarationCapability::Simple(true)),
         definition_provider: Some(lsp::OneOf::Left(true)),
         execute_command_provider: Some(lsp::ExecuteCommandOptions {

@@ -10,4 +10,4 @@ pub mod readback;
 pub mod registry;
 pub mod spawn;
 
-pub use executor::start_and_instantiate;
+pub use executor::{start_and_instantiate, start_and_instantiate_with_stats};

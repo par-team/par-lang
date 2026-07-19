@@ -212,7 +212,8 @@ fn union_types_branching<S: Clone + Eq + std::hash::Hash>(
             span.clone(),
             crate::frontend_impl::language::TypeParameter {
                 name: name1.name.clone(),
-                constraint: name1.constraint.narrower(name2.constraint),
+                // Covariant in the constraint, unlike `Forall`.
+                constraint: name1.constraint.broader(name2.constraint),
             },
             Box::new(union_types(
                 typedefs,
@@ -386,7 +387,8 @@ fn intersect_types_branching<S: Clone + Eq + std::hash::Hash>(
             span.clone(),
             crate::frontend_impl::language::TypeParameter {
                 name: name1.name.clone(),
-                constraint: name1.constraint.broader(name2.constraint),
+                // Covariant in the constraint, unlike `Forall`.
+                constraint: name1.constraint.narrower(name2.constraint),
             },
             Box::new(intersect_types(
                 typedefs,

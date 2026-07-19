@@ -29,8 +29,8 @@ type SourceFan<e, a> = recursive either {
   }
 }
 
-dec SourceFanIn : <e, a>[List<Source<e, a>>] Source<(e) List<e>, a>
-def SourceFanIn = <e, a>[sources]
+dec SourceFanIn : [<e, a> List<Source<e, a>>] Source<(e) List<e>, a>
+def SourceFanIn = [<e, a> sources]
   let fan: SourceFan<e, a> = sources.begin.case {
     .end! => .end!,
     .item(source) sources => .split(do { source.begin } in .client case {

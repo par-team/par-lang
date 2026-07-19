@@ -116,8 +116,7 @@ import {
 
 dec HashesOrNothing : [Nat] String
 def HashesOrNothing = [n] chan result {
-  let isZero = n == 0
-  isZero.case {
+  {n == 0}.case {
     .true! => {
       result <> "<nothing>"
     }
@@ -139,8 +138,8 @@ def HashesOrNothing = [n] chan result {
 
 Let’s break this down:
 
-- `n == 0` (aka `iszero`) returns a `Bool`, which is an [`either`](../types/either.md) with branches
-  `.true!` and `.false!`.
+- `n == 0` returns a `Bool`, which is an [`either`](../types/either.md) with branches `.true!` and
+  `.false!`. The braces let that temporary result be used directly as the subject of `.case`.
 - In the `.true!` branch, we immediately perform a link — returning `"<nothing>"`. Note, that
   this _ends_ the process.
 - The `.false!` branch does nothing on its own — the real work happens after the `.case`.

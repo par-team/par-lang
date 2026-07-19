@@ -22,14 +22,24 @@ pub enum PollKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum Process<Typ, S> {
+pub struct Process<Typ, S> {
+    pub steps: Vec<Step<Typ, S>>,
+    pub terminator: Terminator<Typ, S>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ProcessBuilder<Typ, S> {
+    steps: Vec<Step<Typ, S>>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Step<Typ, S> {
     Let {
         span: Span,
         name: LocalName,
         annotation: Option<Type<S>>,
         typ: Typ,
         value: Arc<Expression<Typ, S>>,
-        then: Arc<Self>,
     },
     Do {
         span: Span,
@@ -37,6 +47,17 @@ pub enum Process<Typ, S> {
         usage: VariableUsage,
         typ: Typ,
         command: Command<Typ, S>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum Terminator<Typ, S> {
+    Do {
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        typ: Typ,
+        command: TerminalCommand<Typ, S>,
     },
     Poll {
         span: Span,
@@ -47,8 +68,8 @@ pub enum Process<Typ, S> {
         name: LocalName,
         name_typ: Typ,
         captures: Captures,
-        then: Arc<Self>,
-        else_: Arc<Self>,
+        then: Arc<Process<Typ, S>>,
+        else_: Arc<Process<Typ, S>>,
     },
     Submit {
         span: Span,
@@ -57,31 +78,34 @@ pub enum Process<Typ, S> {
         values: Vec<Arc<Expression<Typ, S>>>,
         captures: Captures,
     },
-    Block(Span, usize, Arc<Self>, Arc<Self>),
+    Block(Span, usize, Arc<Process<Typ, S>>, Arc<Process<Typ, S>>),
     Goto(Span, usize, Captures),
     Unreachable(Span),
 }
 
 #[derive(Clone, Debug)]
 pub enum Command<Typ, S> {
-    Noop(Arc<Process<Typ, S>>),
+    /// Validate and consume a bare command subject before continuing. This has no runtime
+    /// protocol effect, but preserves linearity diagnostics and hover information for source
+    /// command chains of the form `subject; next`.
+    Noop,
+    Send(Arc<Expression<Typ, S>>),
+    Receive(LocalName, Option<Type<S>>, Typ, Vec<TypeParameter>),
+    Signal(LocalName),
+    Continue,
+    SendType(Type<S>),
+    ReceiveType(TypeParameter),
+}
+
+#[derive(Clone, Debug)]
+pub enum TerminalCommand<Typ, S> {
     Link(Arc<Expression<Typ, S>>),
-    Send(Arc<Expression<Typ, S>>, Arc<Process<Typ, S>>),
-    Receive(
-        LocalName,
-        Option<Type<S>>,
-        Typ,
-        Arc<Process<Typ, S>>,
-        Vec<TypeParameter>,
-    ),
-    Signal(LocalName, Arc<Process<Typ, S>>),
     Case(
         Arc<[LocalName]>,
         Box<[Arc<Process<Typ, S>>]>,
         Option<Arc<Process<Typ, S>>>,
     ),
     Break,
-    Continue(Arc<Process<Typ, S>>),
     Begin {
         unfounded: bool,
         label: Option<LocalName>,
@@ -89,8 +113,6 @@ pub enum Command<Typ, S> {
         body: Arc<Process<Typ, S>>,
     },
     Loop(Option<LocalName>, LocalName, Captures),
-    SendType(Type<S>, Arc<Process<Typ, S>>),
-    ReceiveType(TypeParameter, Arc<Process<Typ, S>>),
 }
 
 #[derive(Clone, Debug)]
@@ -113,8 +135,16 @@ pub enum Expression<Typ, S> {
 
 impl<Typ, S> Spanning for Process<Typ, S> {
     fn span(&self) -> Span {
+        match self.steps.first() {
+            Some(Step::Let { span, .. } | Step::Do { span, .. }) => span.clone(),
+            None => self.terminator.span(),
+        }
+    }
+}
+
+impl<Typ, S> Spanning for Terminator<Typ, S> {
+    fn span(&self) -> Span {
         match self {
-            Self::Let { span, .. } => span.clone(),
             Self::Do { span, .. } => span.clone(),
             Self::Poll { span, .. } => span.clone(),
             Self::Submit { span, .. } => span.clone(),
@@ -125,112 +155,247 @@ impl<Typ, S> Spanning for Process<Typ, S> {
     }
 }
 
-impl<S: Clone> Process<(), S> {
-    pub fn optimize(&self) -> Arc<Self> {
-        match self {
-            Self::Let {
+impl<Typ, S> Process<Typ, S> {
+    pub fn new(steps: Vec<Step<Typ, S>>, terminator: Terminator<Typ, S>) -> Self {
+        Self { steps, terminator }
+    }
+
+    pub fn terminal(terminator: Terminator<Typ, S>) -> Arc<Self> {
+        Arc::new(Self::new(Vec::new(), terminator))
+    }
+
+    pub fn prepend(step: Step<Typ, S>, process: Arc<Self>) -> Arc<Self>
+    where
+        Typ: Clone,
+        S: Clone,
+    {
+        let process = Arc::unwrap_or_clone(process);
+        let mut steps = Vec::with_capacity(process.steps.len() + 1);
+        steps.push(step);
+        steps.extend(process.steps);
+        Arc::new(Self::new(steps, process.terminator))
+    }
+
+    pub fn let_step(
+        span: Span,
+        name: LocalName,
+        annotation: Option<Type<S>>,
+        typ: Typ,
+        value: Arc<Expression<Typ, S>>,
+        then: Arc<Self>,
+    ) -> Arc<Self>
+    where
+        Typ: Clone,
+        S: Clone,
+    {
+        Self::prepend(
+            Step::Let {
                 span,
                 name,
                 annotation,
                 typ,
-                value: expression,
-                then: process,
-            } => Arc::new(Self::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone(),
-                typ: typ.clone(),
-                value: expression.optimize(),
-                then: process.optimize(),
-            }),
-            Self::Do {
+                value,
+            },
+            then,
+        )
+    }
+
+    pub fn do_step(
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        typ: Typ,
+        command: Command<Typ, S>,
+        then: Arc<Self>,
+    ) -> Arc<Self>
+    where
+        Typ: Clone,
+        S: Clone,
+    {
+        Self::prepend(
+            Step::Do {
                 span,
                 name,
                 usage,
                 typ,
                 command,
-            } => Arc::new(Self::Do {
-                span: span.clone(),
-                name: name.clone(),
-                typ: typ.clone(),
-                usage: usage.clone(),
-                command: match command {
-                    Command::Noop(process) => Command::Noop(process.optimize()),
-                    Command::Link(expression) => {
-                        let expression = expression.optimize();
-                        match expression.optimize().as_ref() {
-                            Expression::Chan {
-                                chan_name: channel,
-                                chan_annotation: annotation,
-                                process,
-                                ..
-                            } => {
-                                if name == channel && annotation.is_none() {
-                                    return Arc::clone(process);
-                                } else {
-                                    return Arc::new(Process::Let {
-                                        span: span.clone(),
-                                        name: channel.clone(),
-                                        annotation: annotation.clone(),
-                                        typ: (),
-                                        value: Arc::new(Expression::Variable(
-                                            span.clone(),
-                                            name.clone(),
-                                            (),
-                                            VariableUsage::Unknown,
-                                        )),
-                                        then: Arc::clone(process),
-                                    });
-                                }
-                            }
-                            _ => Command::Link(expression),
-                        }
-                    }
-                    Command::Send(argument, process) => {
-                        Command::Send(argument.optimize(), process.optimize())
-                    }
-                    Command::Receive(parameter, annotation, typ, process, vars) => {
-                        Command::Receive(
+            },
+            then,
+        )
+    }
+
+    pub fn do_terminal(
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        typ: Typ,
+        command: TerminalCommand<Typ, S>,
+    ) -> Arc<Self> {
+        Self::terminal(Terminator::Do {
+            span,
+            name,
+            usage,
+            typ,
+            command,
+        })
+    }
+}
+
+impl<Typ, S> ProcessBuilder<Typ, S> {
+    pub fn new() -> Self {
+        Self { steps: Vec::new() }
+    }
+
+    pub fn push(&mut self, step: Step<Typ, S>) {
+        self.steps.push(step);
+    }
+
+    pub fn finish(self, terminator: Terminator<Typ, S>) -> Arc<Process<Typ, S>> {
+        Arc::new(Process::new(self.steps, terminator))
+    }
+
+    pub fn finish_with(self, process: Arc<Process<Typ, S>>) -> Arc<Process<Typ, S>>
+    where
+        Typ: Clone,
+        S: Clone,
+    {
+        let process = Arc::unwrap_or_clone(process);
+        let mut steps = self.steps;
+        steps.extend(process.steps);
+        Arc::new(Process::new(steps, process.terminator))
+    }
+}
+
+impl<S: Clone> Process<(), S> {
+    pub fn optimize(&self) -> Arc<Self> {
+        let mut steps = self
+            .steps
+            .iter()
+            .map(|step| match step {
+                Step::Let {
+                    span,
+                    name,
+                    annotation,
+                    typ,
+                    value,
+                } => Step::Let {
+                    span: span.clone(),
+                    name: name.clone(),
+                    annotation: annotation.clone(),
+                    typ: *typ,
+                    value: value.optimize(),
+                },
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ,
+                    command,
+                } => Step::Do {
+                    span: span.clone(),
+                    name: name.clone(),
+                    usage: usage.clone(),
+                    typ: *typ,
+                    command: match command {
+                        Command::Noop => Command::Noop,
+                        Command::Send(argument) => Command::Send(argument.optimize()),
+                        Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
                             parameter.clone(),
                             annotation.clone(),
-                            typ.clone(),
-                            process.optimize(),
+                            *typ,
                             vars.clone(),
+                        ),
+                        Command::Signal(chosen) => Command::Signal(chosen.clone()),
+                        Command::Continue => Command::Continue,
+                        Command::SendType(argument) => Command::SendType(argument.clone()),
+                        Command::ReceiveType(parameter) => Command::ReceiveType(parameter.clone()),
+                    },
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let terminator = match &self.terminator {
+            Terminator::Do {
+                span,
+                name,
+                usage,
+                typ,
+                command: TerminalCommand::Link(expression),
+            } => {
+                let expression = expression.optimize();
+                if let Expression::Chan {
+                    chan_name: channel,
+                    chan_annotation: annotation,
+                    process,
+                    ..
+                } = expression.as_ref()
+                {
+                    let nested = process.optimize();
+                    if name != channel || annotation.is_some() {
+                        steps.push(Step::Let {
+                            span: span.clone(),
+                            name: channel.clone(),
+                            annotation: annotation.clone(),
+                            typ: (),
+                            value: Arc::new(Expression::Variable(
+                                span.clone(),
+                                name.clone(),
+                                (),
+                                VariableUsage::Unknown,
+                            )),
+                        });
+                    }
+                    let nested = Arc::unwrap_or_clone(nested);
+                    steps.extend(nested.steps);
+                    nested.terminator
+                } else {
+                    Terminator::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        typ: *typ,
+                        command: TerminalCommand::Link(expression),
+                    }
+                }
+            }
+            Terminator::Do {
+                span,
+                name,
+                usage,
+                typ,
+                command,
+            } => Terminator::Do {
+                span: span.clone(),
+                name: name.clone(),
+                usage: usage.clone(),
+                typ: *typ,
+                command: match command {
+                    TerminalCommand::Link(_) => unreachable!(),
+                    TerminalCommand::Case(branches, processes, else_process) => {
+                        TerminalCommand::Case(
+                            Arc::clone(branches),
+                            processes.iter().map(|p| p.optimize()).collect(),
+                            else_process.as_ref().map(|p| p.optimize()),
                         )
                     }
-                    Command::Signal(chosen, process) => {
-                        Command::Signal(chosen.clone(), process.optimize())
-                    }
-                    Command::Case(branches, processes, else_process) => {
-                        let processes = processes.iter().map(|p| p.optimize()).collect();
-                        let else_process = else_process.clone().map(|p| p.optimize());
-                        Command::Case(Arc::clone(branches), processes, else_process)
-                    }
-                    Command::Break => Command::Break,
-                    Command::Continue(process) => Command::Continue(process.optimize()),
-                    Command::Begin {
+                    TerminalCommand::Break => TerminalCommand::Break,
+                    TerminalCommand::Begin {
                         unfounded,
                         label,
                         captures,
-                        body: process,
-                    } => Command::Begin {
-                        unfounded: unfounded.clone(),
+                        body,
+                    } => TerminalCommand::Begin {
+                        unfounded: *unfounded,
                         label: label.clone(),
                         captures: captures.clone(),
-                        body: process.optimize(),
+                        body: body.optimize(),
                     },
-                    Command::Loop(label, driver, captures) => {
-                        Command::Loop(label.clone(), driver.clone(), captures.clone())
-                    }
-                    Command::SendType(argument, process) => {
-                        Command::SendType(argument.clone(), process.optimize())
-                    }
-                    Command::ReceiveType(parameter, process) => {
-                        Command::ReceiveType(parameter.clone(), process.optimize())
+                    TerminalCommand::Loop(label, driver, captures) => {
+                        TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone())
                     }
                 },
-            }),
-            Self::Poll {
+            },
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -241,7 +406,7 @@ impl<S: Clone> Process<(), S> {
                 captures,
                 then,
                 else_,
-            } => Arc::new(Self::Poll {
+            } => Terminator::Poll {
                 span: span.clone(),
                 kind: kind.clone(),
                 driver: driver.clone(),
@@ -252,236 +417,30 @@ impl<S: Clone> Process<(), S> {
                 captures: captures.clone(),
                 then: then.optimize(),
                 else_: else_.optimize(),
-            }),
-            Self::Submit {
+            },
+            Terminator::Submit {
                 span,
                 driver,
                 point,
                 values,
                 captures,
-            } => Arc::new(Self::Submit {
+            } => Terminator::Submit {
                 span: span.clone(),
                 driver: driver.clone(),
                 point: point.clone(),
                 values: values.iter().map(|e| e.optimize()).collect(),
                 captures: captures.clone(),
-            }),
-            Self::Block(span, index, body, process) => Arc::new(Self::Block(
-                span.clone(),
-                *index,
-                body.optimize(),
-                process.optimize(),
-            )),
-            Self::Goto(span, index, caps) => {
-                Arc::new(Self::Goto(span.clone(), *index, caps.clone()))
+            },
+            Terminator::Block(span, index, body, process) => {
+                Terminator::Block(span.clone(), *index, body.optimize(), process.optimize())
             }
-            Self::Unreachable(span) => Arc::new(Self::Unreachable(span.clone())),
-        }
-    }
-    pub fn optimize_subject(&self, replace: Option<&LocalName>) -> Arc<Self> {
-        match self {
-            Process::Let {
-                span,
-                name,
-                annotation,
-                typ,
-                value,
-                then,
-            } => {
-                if let Expression::Variable(_span, var, _typ, usage) = value.as_ref() {
-                    if name == &LocalName::subject()
-                        && let VariableUsage::Move = usage
-                    {
-                        let replace = Some(var);
-                        let res = then.optimize_subject(replace);
-                        return res;
-                    }
+            Terminator::Goto(span, index, caps) => {
+                Terminator::Goto(span.clone(), *index, caps.clone())
+            }
+            Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+        };
 
-                    if let Some(replace) = replace
-                        && var == &LocalName::subject()
-                        && replace == name
-                    {
-                        let replace = None;
-                        let res = then.optimize_subject(replace);
-                        return res;
-                    }
-                }
-                let then_replace = if name == &LocalName::subject() {
-                    None
-                } else {
-                    replace
-                };
-                Arc::new(Process::Let {
-                    span: span.clone(),
-                    name: name.clone(),
-                    annotation: annotation.clone(),
-                    typ: typ.clone(),
-                    value: value.as_ref().optimize_subject(replace.clone()),
-                    then: then.optimize_subject(then_replace),
-                })
-            }
-            Self::Do {
-                span,
-                name,
-                usage,
-                typ,
-                command,
-            } => {
-                let name = if let Some(replace) = replace
-                    && name == &LocalName::subject()
-                {
-                    replace
-                } else {
-                    name
-                };
-                Arc::new(Self::Do {
-                    span: span.clone(),
-                    name: name.clone(),
-                    typ: typ.clone(),
-                    usage: usage.clone(),
-                    command: match command {
-                        Command::Noop(process) => Command::Noop(process.optimize_subject(replace)),
-                        Command::Link(expression) => {
-                            let expression = expression.optimize_subject(replace);
-                            Command::Link(expression)
-                        }
-                        Command::Send(argument, process) => Command::Send(
-                            argument.optimize_subject(replace),
-                            process.optimize_subject(replace),
-                        ),
-                        Command::Receive(parameter, annotation, typ, process, vars) => {
-                            Command::Receive(
-                                parameter.clone(),
-                                annotation.clone(),
-                                typ.clone(),
-                                process.optimize_subject(replace),
-                                vars.clone(),
-                            )
-                        }
-                        Command::Signal(chosen, process) => {
-                            Command::Signal(chosen.clone(), process.optimize_subject(replace))
-                        }
-                        Command::Case(branches, processes, else_process) => {
-                            let processes = processes
-                                .iter()
-                                .map(|p| p.optimize_subject(replace))
-                                .collect();
-                            let else_process =
-                                else_process.clone().map(|p| p.optimize_subject(replace));
-                            Command::Case(Arc::clone(branches), processes, else_process)
-                        }
-                        Command::Break => Command::Break,
-                        Command::Continue(process) => {
-                            Command::Continue(process.optimize_subject(replace))
-                        }
-                        Command::Begin {
-                            unfounded,
-                            label,
-                            captures,
-                            body: process,
-                        } => Command::Begin {
-                            unfounded: unfounded.clone(),
-                            label: label.clone(),
-                            captures: captures.clone(),
-                            body: process.optimize_subject(replace),
-                        },
-                        Command::Loop(label, driver, captures) => {
-                            let driver = if let Some(replace) = replace
-                                && driver == &LocalName::subject()
-                            {
-                                replace
-                            } else {
-                                driver
-                            };
-                            Command::Loop(label.clone(), driver.clone(), captures.clone())
-                        }
-                        Command::SendType(argument, process) => {
-                            Command::SendType(argument.clone(), process.optimize_subject(replace))
-                        }
-                        Command::ReceiveType(parameter, process) => Command::ReceiveType(
-                            parameter.clone(),
-                            process.optimize_subject(replace),
-                        ),
-                    },
-                })
-            }
-            Self::Poll {
-                span,
-                kind,
-                driver,
-                point,
-                clients,
-                name,
-                name_typ,
-                captures,
-                then,
-                else_,
-            } => {
-                let name = if let Some(replace) = replace
-                    && name == &LocalName::subject()
-                {
-                    replace
-                } else {
-                    name
-                };
-                let driver = if let Some(replace) = replace
-                    && driver == &LocalName::subject()
-                {
-                    replace
-                } else {
-                    driver
-                };
-
-                Arc::new(Self::Poll {
-                    span: span.clone(),
-                    kind: kind.clone(),
-                    driver: driver.clone(),
-                    point: point.clone(),
-                    clients: clients
-                        .iter()
-                        .map(|e| e.optimize_subject(replace))
-                        .collect(),
-                    name: name.clone(),
-                    name_typ: name_typ.clone(),
-                    captures: captures.clone(),
-                    then: then.optimize_subject(replace),
-                    else_: else_.optimize_subject(replace),
-                })
-            }
-            Self::Submit {
-                span,
-                driver,
-                point,
-                values,
-                captures,
-            } => {
-                let driver = if let Some(replace) = replace
-                    && driver == &LocalName::subject()
-                {
-                    replace
-                } else {
-                    driver
-                };
-
-                Arc::new(Self::Submit {
-                    span: span.clone(),
-                    driver: driver.clone(),
-                    point: point.clone(),
-                    values: values.iter().map(|e| e.optimize_subject(replace)).collect(),
-                    captures: captures.clone(),
-                })
-            }
-            Self::Block(span, index, body, process) => Arc::new(Self::Block(
-                span.clone(),
-                *index,
-                body.optimize_subject(replace),
-                process.optimize_subject(replace),
-            )),
-            Self::Goto(span, index, caps) => {
-                Arc::new(Self::Goto(span.clone(), *index, caps.clone()))
-            }
-            Self::Unreachable(span) => Arc::new(Self::Unreachable(span.clone())),
-        }
+        Arc::new(Process::new(steps, terminator))
     }
 }
 
@@ -492,29 +451,11 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
         docs: &Docs<S>,
         consume: &mut impl FnMut(Span, HoverInfo<S>),
     ) {
-        match self {
-            Process::Let {
-                name,
-                annotation,
-                typ,
-                value,
-                then,
-                ..
-            } => {
-                value.types_at_spans(program, docs, consume);
-                consume(name.span(), HoverInfo::named(name, typ.clone()));
-                if let Some(annotation) = annotation {
-                    annotation.types_at_spans(&program.type_defs, docs, consume);
-                }
-                then.types_at_spans(program, docs, consume);
-            }
-            Process::Do {
-                span,
-                name,
-                typ,
-                command,
-                ..
-            } => {
+        let consume_subject =
+            |span: &Span,
+             name: &LocalName,
+             typ: &Type<S>,
+             consume: &mut dyn FnMut(Span, HoverInfo<S>)| {
                 consume(name.span(), HoverInfo::named(name, typ.clone()));
                 if name == &LocalName::result() {
                     consume(
@@ -526,9 +467,48 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
                 } else {
                     consume(span.clone(), HoverInfo::named(name, typ.clone()));
                 }
+            };
+
+        for step in &self.steps {
+            match step {
+                Step::Let {
+                    name,
+                    annotation,
+                    typ,
+                    value,
+                    ..
+                } => {
+                    value.types_at_spans(program, docs, consume);
+                    consume(name.span(), HoverInfo::named(name, typ.clone()));
+                    if let Some(annotation) = annotation {
+                        annotation.types_at_spans(&program.type_defs, docs, consume);
+                    }
+                }
+                Step::Do {
+                    span,
+                    name,
+                    typ,
+                    command,
+                    ..
+                } => {
+                    consume_subject(span, name, typ, consume);
+                    command.types_at_spans(program, docs, consume);
+                }
+            }
+        }
+
+        match &self.terminator {
+            Terminator::Do {
+                span,
+                name,
+                typ,
+                command,
+                ..
+            } => {
+                consume_subject(span, name, typ, consume);
                 command.types_at_spans(program, docs, consume);
             }
-            Process::Poll {
+            Terminator::Poll {
                 clients,
                 name,
                 name_typ,
@@ -543,17 +523,16 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
                 then.types_at_spans(program, docs, consume);
                 else_.types_at_spans(program, docs, consume);
             }
-            Process::Submit { values, .. } => {
+            Terminator::Submit { values, .. } => {
                 for value in values {
                     value.types_at_spans(program, docs, consume);
                 }
             }
-            Process::Block(_, _, body, process) => {
+            Terminator::Block(_, _, body, process) => {
                 body.types_at_spans(program, docs, consume);
                 process.types_at_spans(program, docs, consume);
             }
-            Process::Goto(_, _, _) => {}
-            Process::Unreachable(_) => {}
+            Terminator::Goto(_, _, _) | Terminator::Unreachable(_) => {}
         }
     }
 }
@@ -561,20 +540,22 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
 impl<Typ, S> Command<Typ, S> {
     pub fn free_variables(&self) -> IndexSet<LocalName> {
         match self {
-            Command::Noop(process) => process.free_variables(),
-            Command::Link(expression) => expression.free_variables(),
-            Command::Send(argument, process) => {
-                let mut vars = argument.free_variables();
-                vars.extend(process.free_variables());
-                vars
-            }
-            Command::Receive(parameter, _annot, _typ, process, _vars) => {
-                let mut vars = process.free_variables();
-                vars.shift_remove(parameter);
-                vars
-            }
-            Command::Signal(_, process) => process.free_variables(),
-            Command::Case(_, processes, else_process) => {
+            Command::Noop => IndexSet::new(),
+            Command::Send(argument) => argument.free_variables(),
+            Command::Receive(..)
+            | Command::Signal(_)
+            | Command::Continue
+            | Command::SendType(_)
+            | Command::ReceiveType(_) => IndexSet::new(),
+        }
+    }
+}
+
+impl<Typ, S> TerminalCommand<Typ, S> {
+    pub fn free_variables(&self) -> IndexSet<LocalName> {
+        match self {
+            TerminalCommand::Link(expression) => expression.free_variables(),
+            TerminalCommand::Case(_, processes, else_process) => {
                 let mut vars: IndexSet<LocalName> =
                     processes.iter().flat_map(|p| p.free_variables()).collect();
                 if let Some(p) = else_process {
@@ -582,16 +563,13 @@ impl<Typ, S> Command<Typ, S> {
                 }
                 vars
             }
-            Command::Break => IndexSet::new(),
-            Command::Continue(process) => process.free_variables(),
-            Command::Begin { captures, body, .. } => {
+            TerminalCommand::Break => IndexSet::new(),
+            TerminalCommand::Begin { captures, body, .. } => {
                 let mut vars: IndexSet<LocalName> = captures.names.keys().cloned().collect();
                 vars.extend(body.free_variables());
                 vars
             }
-            Command::Loop(_, _, captures) => captures.names.keys().cloned().collect(),
-            Command::SendType(_, process) => process.free_variables(),
-            Command::ReceiveType(_, process) => process.free_variables(),
+            TerminalCommand::Loop(_, _, captures) => captures.names.keys().cloned().collect(),
         }
     }
 }
@@ -604,26 +582,33 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Command<Type<S>, S> {
         consume: &mut impl FnMut(Span, HoverInfo<S>),
     ) {
         match self {
-            Self::Noop(process) => {
-                process.types_at_spans(program, docs, consume);
-            }
-            Self::Link(expression) => {
-                expression.types_at_spans(program, docs, consume);
-            }
-            Self::Send(argument, process) => {
+            Self::Noop => {}
+            Self::Send(argument) => {
                 argument.types_at_spans(program, docs, consume);
-                process.types_at_spans(program, docs, consume);
             }
-            Self::Receive(param, annotation, param_type, process, _) => {
+            Self::Receive(param, annotation, param_type, _) => {
                 consume(param.span(), HoverInfo::named(param, param_type.clone()));
                 if let Some(annotation) = annotation {
                     annotation.types_at_spans(&program.type_defs, docs, consume);
                 }
-                process.types_at_spans(program, docs, consume);
             }
-            Self::Signal(_, process) => {
-                process.types_at_spans(program, docs, consume);
+            Self::Signal(_) | Self::Continue | Self::ReceiveType(_) => {}
+            Self::SendType(typ) => {
+                typ.types_at_spans(&program.type_defs, docs, consume);
             }
+        }
+    }
+}
+
+impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TerminalCommand<Type<S>, S> {
+    pub fn types_at_spans(
+        &self,
+        program: &CheckedModule<S>,
+        docs: &Docs<S>,
+        consume: &mut impl FnMut(Span, HoverInfo<S>),
+    ) {
+        match self {
+            Self::Link(expression) => expression.types_at_spans(program, docs, consume),
             Self::Case(_, branches, else_process) => {
                 for process in branches {
                     process.types_at_spans(program, docs, consume);
@@ -632,76 +617,13 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Command<Type<S>, S> {
                     process.types_at_spans(program, docs, consume);
                 }
             }
-            Self::Break => {}
-            Self::Continue(process) => {
-                process.types_at_spans(program, docs, consume);
-            }
-            Self::Begin { body, .. } => {
-                body.types_at_spans(program, docs, consume);
-            }
-            Self::Loop(_, _, _) => {}
-            Self::SendType(typ, process) => {
-                typ.types_at_spans(&program.type_defs, docs, consume);
-                process.types_at_spans(program, docs, consume);
-            }
-            Self::ReceiveType(_, process) => {
-                process.types_at_spans(program, docs, consume);
-            }
+            Self::Break | Self::Loop(..) => {}
+            Self::Begin { body, .. } => body.types_at_spans(program, docs, consume),
         }
     }
 }
 
 impl<S: Clone> Expression<(), S> {
-    pub(crate) fn optimize_subject(&self, replace: Option<&LocalName>) -> Arc<Expression<(), S>> {
-        match self {
-            Self::Global(span, name, typ) => {
-                Arc::new(Self::Global(span.clone(), name.clone(), typ.clone()))
-            }
-            Self::Variable(span, name, typ, usage) => {
-                let name = if let Some(replace) = replace
-                    && name == &LocalName::subject()
-                {
-                    replace
-                } else {
-                    name
-                };
-                Arc::new(Self::Variable(
-                    span.clone(),
-                    name.clone(),
-                    typ.clone(),
-                    usage.clone(),
-                ))
-            }
-            Self::Box(span, caps, expression, typ) => Arc::new(Self::Box(
-                span.clone(),
-                caps.clone(),
-                expression.optimize_subject(replace),
-                typ.clone(),
-            )),
-            Self::Chan {
-                span,
-                captures,
-                chan_name,
-                chan_annotation,
-                chan_type,
-                expr_type,
-                process,
-            } => Arc::new(Self::Chan {
-                span: span.clone(),
-                captures: captures.clone(),
-                chan_name: chan_name.clone(),
-                chan_annotation: chan_annotation.clone(),
-                chan_type: chan_type.clone(),
-                expr_type: expr_type.clone(),
-                process: process.optimize_subject(replace),
-            }),
-            Self::Primitive(span, value, typ) => {
-                Arc::new(Self::Primitive(span.clone(), value.clone(), typ.clone()))
-            }
-            Self::External(f, typ) => Arc::new(Self::External(f.clone(), typ.clone())),
-        }
-    }
-
     pub fn optimize(&self) -> Arc<Self> {
         match self {
             Self::Global(span, name, typ) => {
@@ -1055,36 +977,53 @@ impl<Typ: Clone, S> Expression<Typ, S> {
 
 impl<S: Clone> Process<Type<S>, S> {
     pub fn map_types(&self, f: &mut impl FnMut(Type<S>) -> Type<S>) -> Arc<Self> {
-        match self {
-            Process::Let {
-                span,
-                name,
-                annotation,
-                typ,
-                value,
-                then,
-            } => Arc::new(Process::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone().map(&mut *f),
-                typ: f(typ.clone()),
-                value: value.map_types(f),
-                then: then.map_types(f),
-            }),
-            Process::Do {
+        let steps = self
+            .steps
+            .iter()
+            .map(|step| match step {
+                Step::Let {
+                    span,
+                    name,
+                    annotation,
+                    typ,
+                    value,
+                } => Step::Let {
+                    span: span.clone(),
+                    name: name.clone(),
+                    annotation: annotation.clone().map(&mut *f),
+                    typ: f(typ.clone()),
+                    value: value.map_types(f),
+                },
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ,
+                    command,
+                } => Step::Do {
+                    span: span.clone(),
+                    name: name.clone(),
+                    usage: usage.clone(),
+                    typ: f(typ.clone()),
+                    command: command.map_types(f),
+                },
+            })
+            .collect();
+        let terminator = match &self.terminator {
+            Terminator::Do {
                 span,
                 name,
                 usage,
                 typ,
                 command,
-            } => Arc::new(Process::Do {
+            } => Terminator::Do {
                 span: span.clone(),
                 name: name.clone(),
                 usage: usage.clone(),
                 typ: f(typ.clone()),
                 command: command.map_types(f),
-            }),
-            Process::Poll {
+            },
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -1095,7 +1034,7 @@ impl<S: Clone> Process<Type<S>, S> {
                 captures,
                 then,
                 else_,
-            } => Arc::new(Process::Poll {
+            } => Terminator::Poll {
                 span: span.clone(),
                 kind: kind.clone(),
                 driver: driver.clone(),
@@ -1106,78 +1045,74 @@ impl<S: Clone> Process<Type<S>, S> {
                 captures: captures.clone(),
                 then: then.map_types(f),
                 else_: else_.map_types(f),
-            }),
-            Process::Submit {
+            },
+            Terminator::Submit {
                 span,
                 driver,
                 point,
                 values,
                 captures,
-            } => Arc::new(Process::Submit {
+            } => Terminator::Submit {
                 span: span.clone(),
                 driver: driver.clone(),
                 point: point.clone(),
                 values: map_expression_types_vec(values, f),
                 captures: captures.clone(),
-            }),
-            Process::Block(span, index, body, then) => Arc::new(Process::Block(
-                span.clone(),
-                *index,
-                body.map_types(f),
-                then.map_types(f),
-            )),
-            Process::Goto(span, index, captures) => {
-                Arc::new(Process::Goto(span.clone(), *index, captures.clone()))
+            },
+            Terminator::Block(span, index, body, then) => {
+                Terminator::Block(span.clone(), *index, body.map_types(f), then.map_types(f))
             }
-            Process::Unreachable(span) => Arc::new(Process::Unreachable(span.clone())),
-        }
+            Terminator::Goto(span, index, captures) => {
+                Terminator::Goto(span.clone(), *index, captures.clone())
+            }
+            Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+        };
+        Arc::new(Process::new(steps, terminator))
     }
 }
 
 impl<S: Clone> Command<Type<S>, S> {
     pub fn map_types(&self, f: &mut impl FnMut(Type<S>) -> Type<S>) -> Self {
         match self {
-            Command::Noop(process) => Command::Noop(process.map_types(f)),
-            Command::Link(expression) => Command::Link(expression.map_types(f)),
-            Command::Send(argument, process) => {
-                Command::Send(argument.map_types(f), process.map_types(f))
-            }
-            Command::Receive(parameter, annotation, typ, process, vars) => Command::Receive(
+            Command::Noop => Command::Noop,
+            Command::Send(argument) => Command::Send(argument.map_types(f)),
+            Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
                 parameter.clone(),
                 annotation.clone().map(&mut *f),
                 f(typ.clone()),
-                process.map_types(f),
                 vars.clone(),
             ),
-            Command::Signal(chosen, process) => {
-                Command::Signal(chosen.clone(), process.map_types(f))
-            }
-            Command::Case(branches, processes, else_process) => Command::Case(
+            Command::Signal(chosen) => Command::Signal(chosen.clone()),
+            Command::Continue => Command::Continue,
+            Command::SendType(argument) => Command::SendType(f(argument.clone())),
+            Command::ReceiveType(parameter) => Command::ReceiveType(parameter.clone()),
+        }
+    }
+}
+
+impl<S: Clone> TerminalCommand<Type<S>, S> {
+    pub fn map_types(&self, f: &mut impl FnMut(Type<S>) -> Type<S>) -> Self {
+        match self {
+            TerminalCommand::Link(expression) => TerminalCommand::Link(expression.map_types(f)),
+            TerminalCommand::Case(branches, processes, else_process) => TerminalCommand::Case(
                 Arc::clone(branches),
                 map_process_types_boxed_slice(processes, f),
                 else_process.as_ref().map(|process| process.map_types(f)),
             ),
-            Command::Break => Command::Break,
-            Command::Continue(process) => Command::Continue(process.map_types(f)),
-            Command::Begin {
+            TerminalCommand::Break => TerminalCommand::Break,
+            TerminalCommand::Begin {
                 unfounded,
                 label,
                 captures,
                 body,
-            } => Command::Begin {
+            } => TerminalCommand::Begin {
                 unfounded: *unfounded,
                 label: label.clone(),
                 captures: captures.clone(),
                 body: body.map_types(f),
             },
-            Command::Loop(label, driver, captures) => {
-                Command::Loop(label.clone(), driver.clone(), captures.clone())
-            }
-            Command::SendType(argument, process) => {
-                Command::SendType(f(argument.clone()), process.map_types(f))
-            }
-            Command::ReceiveType(parameter, process) => {
-                Command::ReceiveType(parameter.clone(), process.map_types(f))
+            TerminalCommand::Loop(label, driver, captures) => {
+                TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone())
             }
         }
     }
@@ -1258,23 +1193,53 @@ impl<S: Clone> Process<(), S> {
         self,
         f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
     ) -> Result<Process<(), T>, E> {
-        match self {
-            Process::Let {
-                span,
-                name,
-                annotation,
-                typ: (),
-                value,
-                then,
-            } => Self::map_global_names_let(span, name, annotation, value, then, f),
-            Process::Do {
+        let mut steps = Vec::with_capacity(self.steps.len());
+        for step in self.steps {
+            steps.push(match step {
+                Step::Let {
+                    span,
+                    name,
+                    annotation,
+                    typ: (),
+                    value,
+                } => Step::Let {
+                    span,
+                    name,
+                    annotation: annotation.map(|typ| typ.map_global_names(f)).transpose()?,
+                    typ: (),
+                    value: map_arc_expression(value, f)?,
+                },
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ: (),
+                    command,
+                } => Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ: (),
+                    command: command.map_global_names(f)?,
+                },
+            });
+        }
+
+        let terminator = match self.terminator {
+            Terminator::Do {
                 span,
                 name,
                 usage,
                 typ: (),
                 command,
-            } => Self::map_global_names_do(span, name, usage, command, f),
-            Process::Poll {
+            } => Terminator::Do {
+                span,
+                name,
+                usage,
+                typ: (),
+                command: command.map_global_names(f)?,
+            },
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -1285,114 +1250,41 @@ impl<S: Clone> Process<(), S> {
                 captures,
                 then,
                 else_,
-            } => Self::map_global_names_poll(
-                span, kind, driver, point, clients, name, captures, then, else_, f,
-            ),
-            Process::Submit {
+            } => Terminator::Poll {
+                span,
+                kind,
+                driver,
+                point,
+                clients: map_expression_vec(clients, f)?,
+                name,
+                name_typ: (),
+                captures,
+                then: map_arc_process(then, f)?,
+                else_: map_arc_process(else_, f)?,
+            },
+            Terminator::Submit {
                 span,
                 driver,
                 point,
                 values,
                 captures,
-            } => Self::map_global_names_submit(span, driver, point, values, captures, f),
-            Process::Block(span, index, body, then) => {
-                Self::map_global_names_block(span, index, body, then, f)
-            }
-            Process::Goto(span, index, captures) => Ok(Process::Goto(span, index, captures)),
-            Process::Unreachable(span) => Ok(Process::Unreachable(span)),
-        }
-    }
-
-    fn map_global_names_let<T, E>(
-        span: Span,
-        name: LocalName,
-        annotation: Option<Type<S>>,
-        value: Arc<Expression<(), S>>,
-        then: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Process<(), T>, E> {
-        Ok(Process::Let {
-            span,
-            name,
-            annotation: annotation.map(|typ| typ.map_global_names(f)).transpose()?,
-            typ: (),
-            value: map_arc_expression(value, f)?,
-            then: map_arc_process(then, f)?,
-        })
-    }
-
-    fn map_global_names_do<T, E>(
-        span: Span,
-        name: LocalName,
-        usage: VariableUsage,
-        command: Command<(), S>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Process<(), T>, E> {
-        Ok(Process::Do {
-            span,
-            name,
-            usage,
-            typ: (),
-            command: command.map_global_names(f)?,
-        })
-    }
-
-    fn map_global_names_poll<T, E>(
-        span: Span,
-        kind: PollKind,
-        driver: LocalName,
-        point: LocalName,
-        clients: Vec<Arc<Expression<(), S>>>,
-        name: LocalName,
-        captures: Captures,
-        then: Arc<Process<(), S>>,
-        else_: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Process<(), T>, E> {
-        Ok(Process::Poll {
-            span,
-            kind,
-            driver,
-            point,
-            clients: map_expression_vec(clients, f)?,
-            name,
-            name_typ: (),
-            captures,
-            then: map_arc_process(then, f)?,
-            else_: map_arc_process(else_, f)?,
-        })
-    }
-
-    fn map_global_names_submit<T, E>(
-        span: Span,
-        driver: LocalName,
-        point: LocalName,
-        values: Vec<Arc<Expression<(), S>>>,
-        captures: Captures,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Process<(), T>, E> {
-        Ok(Process::Submit {
-            span,
-            driver,
-            point,
-            values: map_expression_vec(values, f)?,
-            captures,
-        })
-    }
-
-    fn map_global_names_block<T, E>(
-        span: Span,
-        index: usize,
-        body: Arc<Process<(), S>>,
-        then: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Process<(), T>, E> {
-        Ok(Process::Block(
-            span,
-            index,
-            map_arc_process(body, f)?,
-            map_arc_process(then, f)?,
-        ))
+            } => Terminator::Submit {
+                span,
+                driver,
+                point,
+                values: map_expression_vec(values, f)?,
+                captures,
+            },
+            Terminator::Block(span, index, body, then) => Terminator::Block(
+                span,
+                index,
+                map_arc_process(body, f)?,
+                map_arc_process(then, f)?,
+            ),
+            Terminator::Goto(span, index, captures) => Terminator::Goto(span, index, captures),
+            Terminator::Unreachable(span) => Terminator::Unreachable(span),
+        };
+        Ok(Process::new(steps, terminator))
     }
 }
 
@@ -1402,140 +1294,54 @@ impl<S: Clone> Command<(), S> {
         f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
     ) -> Result<Command<(), T>, E> {
         match self {
-            Command::Noop(process) => Self::map_global_names_noop(process, f),
-            Command::Link(expression) => Self::map_global_names_link(expression, f),
-            Command::Send(argument, process) => Self::map_global_names_send(argument, process, f),
-            Command::Receive(parameter, annotation, (), process, vars) => {
-                Self::map_global_names_receive(parameter, annotation, process, vars, f)
+            Command::Noop => Ok(Command::Noop),
+            Command::Send(argument) => Ok(Command::Send(map_arc_expression(argument, f)?)),
+            Command::Receive(parameter, annotation, (), vars) => Ok(Command::Receive(
+                parameter,
+                annotation.map(|typ| typ.map_global_names(f)).transpose()?,
+                (),
+                vars,
+            )),
+            Command::Signal(chosen) => Ok(Command::Signal(chosen)),
+            Command::Continue => Ok(Command::Continue),
+            Command::SendType(argument) => Ok(Command::SendType(argument.map_global_names(f)?)),
+            Command::ReceiveType(parameter) => Ok(Command::ReceiveType(parameter)),
+        }
+    }
+}
+
+impl<S: Clone> TerminalCommand<(), S> {
+    pub fn map_global_names<T, E>(
+        self,
+        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
+    ) -> Result<TerminalCommand<(), T>, E> {
+        match self {
+            TerminalCommand::Link(expression) => {
+                Ok(TerminalCommand::Link(map_arc_expression(expression, f)?))
             }
-            Command::Signal(chosen, process) => Self::map_global_names_signal(chosen, process, f),
-            Command::Case(branches, processes, else_process) => {
-                Self::map_global_names_case(branches, processes, else_process, f)
-            }
-            Command::Break => Ok(Command::Break),
-            Command::Continue(process) => Self::map_global_names_continue(process, f),
-            Command::Begin {
+            TerminalCommand::Case(branches, processes, else_process) => Ok(TerminalCommand::Case(
+                branches,
+                map_process_boxed_slice(processes, f)?,
+                else_process
+                    .map(|process| map_arc_process(process, f))
+                    .transpose()?,
+            )),
+            TerminalCommand::Break => Ok(TerminalCommand::Break),
+            TerminalCommand::Begin {
                 unfounded,
                 label,
                 captures,
                 body,
-            } => Self::map_global_names_begin(unfounded, label, captures, body, f),
-            Command::Loop(label, driver, captures) => Ok(Command::Loop(label, driver, captures)),
-            Command::SendType(argument, process) => {
-                Self::map_global_names_send_type(argument, process, f)
-            }
-            Command::ReceiveType(parameter, process) => {
-                Self::map_global_names_receive_type(parameter, process, f)
+            } => Ok(TerminalCommand::Begin {
+                unfounded,
+                label,
+                captures,
+                body: map_arc_process(body, f)?,
+            }),
+            TerminalCommand::Loop(label, driver, captures) => {
+                Ok(TerminalCommand::Loop(label, driver, captures))
             }
         }
-    }
-
-    fn map_global_names_noop<T, E>(
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Noop(map_arc_process(process, f)?))
-    }
-
-    fn map_global_names_link<T, E>(
-        expression: Arc<Expression<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Link(map_arc_expression(expression, f)?))
-    }
-
-    fn map_global_names_send<T, E>(
-        argument: Arc<Expression<(), S>>,
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Send(
-            map_arc_expression(argument, f)?,
-            map_arc_process(process, f)?,
-        ))
-    }
-
-    fn map_global_names_receive<T, E>(
-        parameter: LocalName,
-        annotation: Option<Type<S>>,
-        process: Arc<Process<(), S>>,
-        vars: Vec<TypeParameter>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Receive(
-            parameter,
-            annotation.map(|typ| typ.map_global_names(f)).transpose()?,
-            (),
-            map_arc_process(process, f)?,
-            vars,
-        ))
-    }
-
-    fn map_global_names_signal<T, E>(
-        chosen: LocalName,
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Signal(chosen, map_arc_process(process, f)?))
-    }
-
-    fn map_global_names_case<T, E>(
-        branches: Arc<[LocalName]>,
-        processes: Box<[Arc<Process<(), S>>]>,
-        else_process: Option<Arc<Process<(), S>>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Case(
-            branches,
-            map_process_boxed_slice(processes, f)?,
-            else_process
-                .map(|process| map_arc_process(process, f))
-                .transpose()?,
-        ))
-    }
-
-    fn map_global_names_continue<T, E>(
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Continue(map_arc_process(process, f)?))
-    }
-
-    fn map_global_names_begin<T, E>(
-        unfounded: bool,
-        label: Option<LocalName>,
-        captures: Captures,
-        body: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::Begin {
-            unfounded,
-            label,
-            captures,
-            body: map_arc_process(body, f)?,
-        })
-    }
-
-    fn map_global_names_send_type<T, E>(
-        argument: Type<S>,
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::SendType(
-            argument.map_global_names(f)?,
-            map_arc_process(process, f)?,
-        ))
-    }
-
-    fn map_global_names_receive_type<T, E>(
-        parameter: TypeParameter,
-        process: Arc<Process<(), S>>,
-        f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
-    ) -> Result<Command<(), T>, E> {
-        Ok(Command::ReceiveType(
-            parameter,
-            map_arc_process(process, f)?,
-        ))
     }
 }
 
@@ -1653,21 +1459,13 @@ fn map_expression_vec<S: Clone, T, E>(
 
 impl<Typ, S> Process<Typ, S> {
     pub fn free_variables(&self) -> IndexSet<LocalName> {
-        match self {
-            Process::Let {
-                name, value, then, ..
-            } => {
-                let mut vars = then.free_variables();
-                vars.shift_remove(name);
-                vars.extend(value.free_variables());
-                vars
-            }
-            Process::Do { name, command, .. } => {
+        let mut vars = match &self.terminator {
+            Terminator::Do { name, command, .. } => {
                 let mut vars = command.free_variables();
                 vars.insert(name.clone());
                 vars
             }
-            Process::Poll {
+            Terminator::Poll {
                 driver,
                 clients,
                 name,
@@ -1688,7 +1486,7 @@ impl<Typ, S> Process<Typ, S> {
                 vars.extend(else_vars);
                 vars
             }
-            Process::Submit {
+            Terminator::Submit {
                 driver,
                 values,
                 captures,
@@ -1701,36 +1499,53 @@ impl<Typ, S> Process<Typ, S> {
                 }
                 vars
             }
-            Process::Block(_, _, _body, process) => process.free_variables(),
-            Process::Goto(_, _, caps) => caps.names.keys().cloned().collect(),
-            Process::Unreachable(_) => IndexSet::new(),
+            Terminator::Block(_, _, _body, process) => process.free_variables(),
+            Terminator::Goto(_, _, caps) => caps.names.keys().cloned().collect(),
+            Terminator::Unreachable(_) => IndexSet::new(),
+        };
+
+        for step in self.steps.iter().rev() {
+            match step {
+                Step::Let { name, value, .. } => {
+                    vars.shift_remove(name);
+                    vars.extend(value.free_variables());
+                }
+                Step::Do { name, command, .. } => {
+                    if let Command::Receive(parameter, ..) = command {
+                        vars.shift_remove(parameter);
+                    }
+                    vars.extend(command.free_variables());
+                    vars.insert(name.clone());
+                }
+            }
         }
+        vars
     }
 }
 
 impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
     pub fn pretty(&self, f: &mut impl Write, indent: usize) -> fmt::Result {
-        match self {
-            Self::Let {
-                span: _,
-                name,
-                annotation: _,
-                typ: _,
-                value: expression,
-                then: process,
-            } => {
-                indentation(f, indent)?;
-                write!(f, "let {} = ", name)?;
-                expression.pretty(f, indent)?;
-                process.pretty(f, indent)
+        for step in &self.steps {
+            indentation(f, indent)?;
+            match step {
+                Step::Let { name, value, .. } => {
+                    write!(f, "let {} = ", name)?;
+                    value.pretty(f, indent)?;
+                }
+                Step::Do { name, command, .. } => {
+                    write!(f, "{}", name)?;
+                    command.pretty(f, indent)?;
+                }
             }
+        }
 
-            Self::Unreachable(_) => {
-                indentation(f, indent)?;
+        indentation(f, indent)?;
+        match &self.terminator {
+            Terminator::Unreachable(_) => {
                 write!(f, "unreachable")
             }
 
-            Self::Poll {
+            Terminator::Poll {
                 kind,
                 driver,
                 point,
@@ -1740,7 +1555,6 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                 else_,
                 ..
             } => {
-                indentation(f, indent)?;
                 match kind {
                     PollKind::Poll => write!(f, "poll")?,
                     PollKind::Repoll => write!(f, "repoll")?,
@@ -1769,13 +1583,12 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                 Ok(())
             }
 
-            Self::Submit {
+            Terminator::Submit {
                 driver,
                 point,
                 values,
                 ..
             } => {
-                indentation(f, indent)?;
                 write!(f, "submit[{} -> {}](", driver, point)?;
                 if let Some(first) = values.first() {
                     first.pretty(f, indent)?;
@@ -1788,49 +1601,14 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                 Ok(())
             }
 
-            Self::Do {
-                span: _,
-                name: subject,
-                usage: _,
-                typ: _,
-                command,
-            } => {
-                indentation(f, indent)?;
-                write!(f, "{}", subject)?;
-
+            Terminator::Do { name, command, .. } => {
+                write!(f, "{}", name)?;
                 match command {
-                    Command::Noop(process) => process.pretty(f, indent),
-                    Command::Link(expression) => {
+                    TerminalCommand::Link(expression) => {
                         write!(f, " <> ")?;
                         expression.pretty(f, indent)
                     }
-
-                    Command::Send(argument, process) => {
-                        write!(f, "(")?;
-                        argument.pretty(f, indent)?;
-                        write!(f, ")")?;
-                        process.pretty(f, indent)
-                    }
-
-                    Command::Receive(parameter, _, _, process, vars) => {
-                        if !vars.is_empty() {
-                            write!(f, "<")?;
-                            write!(f, "{}", vars[0])?;
-                            for var in &vars[1..] {
-                                write!(f, ", {}", var)?;
-                            }
-                            write!(f, ">")?;
-                        }
-                        write!(f, "[{}]", parameter)?;
-                        process.pretty(f, indent)
-                    }
-
-                    Command::Signal(chosen, process) => {
-                        write!(f, ".{}", chosen)?;
-                        process.pretty(f, indent)
-                    }
-
-                    Command::Case(choices, branches, else_process) => {
+                    TerminalCommand::Case(choices, branches, else_process) => {
                         write!(f, ".case {{")?;
                         for (choice, process) in choices.iter().zip(branches.iter()) {
                             indentation(f, indent + 1)?;
@@ -1849,17 +1627,8 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                         indentation(f, indent)?;
                         write!(f, "}}")
                     }
-
-                    Command::Break => {
-                        write!(f, "!")
-                    }
-
-                    Command::Continue(process) => {
-                        write!(f, "?")?;
-                        process.pretty(f, indent)
-                    }
-
-                    Command::Begin {
+                    TerminalCommand::Break => write!(f, "!"),
+                    TerminalCommand::Begin {
                         unfounded,
                         label,
                         body: process,
@@ -1875,8 +1644,7 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                         }
                         process.pretty(f, indent)
                     }
-
-                    Command::Loop(label, driver, caps) => {
+                    TerminalCommand::Loop(label, driver, caps) => {
                         write!(f, ".loop")?;
                         if let Some(label) = label {
                             write!(f, "@{} ", label)?;
@@ -1888,23 +1656,10 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                         write!(f, "}}")?;
                         Ok(())
                     }
-
-                    Command::SendType(argument, process) => {
-                        write!(f, "(type ")?;
-                        argument.pretty(f, &CanonicalGlobalNameWriter, indent)?;
-                        write!(f, ")")?;
-                        process.pretty(f, indent)
-                    }
-
-                    Command::ReceiveType(parameter, process) => {
-                        write!(f, "[type {}]", parameter)?;
-                        process.pretty(f, indent)
-                    }
                 }
             }
 
-            Self::Block(_, index, body, process) => {
-                indentation(f, indent)?;
+            Terminator::Block(_, index, body, process) => {
                 write!(f, "block@{} {{", index)?;
                 body.pretty(f, indent + 1)?;
                 indentation(f, indent)?;
@@ -1912,10 +1667,41 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                 process.pretty(f, indent)
             }
 
-            Self::Goto(_, index, _) => {
-                indentation(f, indent)?;
+            Terminator::Goto(_, index, _) => {
                 write!(f, "goto@{}", index)
             }
+        }
+    }
+}
+
+impl<Typ, S: Clone + std::fmt::Display> Command<Typ, S> {
+    fn pretty(&self, f: &mut impl Write, indent: usize) -> fmt::Result {
+        match self {
+            Command::Noop => Ok(()),
+            Command::Send(argument) => {
+                write!(f, "(")?;
+                argument.pretty(f, indent)?;
+                write!(f, ")")
+            }
+            Command::Receive(parameter, _, _, vars) => {
+                write!(f, "[")?;
+                if !vars.is_empty() {
+                    write!(f, "<{}", vars[0])?;
+                    for var in &vars[1..] {
+                        write!(f, ", {}", var)?;
+                    }
+                    write!(f, "> ")?;
+                }
+                write!(f, "{}]", parameter)
+            }
+            Command::Signal(chosen) => write!(f, ".{}", chosen),
+            Command::Continue => write!(f, "?"),
+            Command::SendType(argument) => {
+                write!(f, "(type ")?;
+                argument.pretty(f, &CanonicalGlobalNameWriter, indent)?;
+                write!(f, ")")
+            }
+            Command::ReceiveType(parameter) => write!(f, "[type {}]", parameter),
         }
     }
 }
@@ -1984,5 +1770,25 @@ struct CanonicalGlobalNameWriter;
 impl<S: std::fmt::Display> GlobalNameWriter<S> for CanonicalGlobalNameWriter {
     fn write_global_name<W: Write>(&self, f: &mut W, name: &GlobalName<S>) -> fmt::Result {
         write!(f, "{name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend_impl::language::Unresolved;
+    use arcstr::literal;
+
+    #[test]
+    fn implicit_receive_parameters_render_inside_brackets() {
+        let command = Command::<(), Unresolved>::Receive(
+            LocalName::from(literal!("value")),
+            None,
+            (),
+            vec![TypeParameter::any(LocalName::from(literal!("a")))],
+        );
+        let mut rendered = String::new();
+        command.pretty(&mut rendered, 0).unwrap();
+        assert_eq!(rendered, "[<a> value]");
     }
 }

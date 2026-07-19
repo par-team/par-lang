@@ -158,13 +158,13 @@ export {
   dec InZone : [Instant, Zone] Zoned
 
   // Builds a civil date-time in a zone from its calendar fields:
-  // `At(zone)(year, month, day)(hour, minute, second)`. Returns `.none!` if the
+  // `At(zone, year, month, day, hour, minute, second)`. Returns `.none!` if the
   // fields do not denote a valid date and time.
-  dec At : [Zone] [Int, Nat, Nat] [Nat, Nat, Nat] Option<Zoned>
+  dec At : [Zone, Int, Nat, Nat, Nat, Nat, Nat] Option<Zoned>
 
-  // Parses a civil date-time in a zone using a strftime-style layout:
-  // `Parse(zone)(layout, text)`. Returns `.none!` if the text does not match.
-  dec Parse : [Zone] [String, String] Option<Zoned>
+  // Parses a civil date-time using a strftime-style layout:
+  // `text->Parse(layout, zone)`. Returns `.none!` if the text does not match.
+  dec Parse : [String, String, Zone] Option<Zoned>
 }
 
 // Internal externals (not exported)

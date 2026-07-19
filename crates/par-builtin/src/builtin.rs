@@ -18,6 +18,8 @@ mod number;
 #[cfg(not(target_family = "wasm"))]
 mod os;
 mod parser;
+#[cfg(not(target_family = "wasm"))]
+mod sql;
 mod string;
 mod time;
 mod url;
@@ -168,7 +170,6 @@ const CORE_SOURCE_FILES: &[BuiltinSourceFile] = &[
     },
 ];
 
-#[cfg(not(target_family = "wasm"))]
 const BASIC_SOURCE_FILES: &[BuiltinSourceFile] = &[
     BuiltinSourceFile {
         relative_path_from_src: "Console.par",
@@ -181,6 +182,10 @@ const BASIC_SOURCE_FILES: &[BuiltinSourceFile] = &[
     BuiltinSourceFile {
         relative_path_from_src: "Os.par",
         source: include_str!("../packages/basic/src/Os.par"),
+    },
+    BuiltinSourceFile {
+        relative_path_from_src: "Sql.par",
+        source: include_str!("../packages/basic/src/Sql.par"),
     },
 ];
 

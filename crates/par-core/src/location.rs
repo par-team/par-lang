@@ -8,7 +8,7 @@ pub struct Point {
     pub offset: u32,
     // 0-based
     pub row: u32,
-    // 0-based
+    /// Zero-based UTF-16 code units.
     pub column: u32,
 }
 

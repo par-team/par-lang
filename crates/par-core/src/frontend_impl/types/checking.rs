@@ -1,11 +1,13 @@
 use super::super::language::{LocalName, TypeConstraint, TypeParameter};
-use super::super::process::{Captures, Command, Expression, PollKind, Process, VariableUsage};
+use super::super::process::{
+    Captures, Command, Expression, PollKind, Process, Step, TerminalCommand, Terminator,
+    VariableUsage,
+};
 use super::context::{BlockPathContext, BlockScope, PollPointScope, PollScope};
 use super::core::{LoopId, Operation, Type, get_primitive_type};
 use super::error::TypeError;
 use super::lattice::union_types;
 use super::{Context, TypeDefs};
-use crate::frontend::TypeError::TypeMustBeKnownAtThisPoint;
 use crate::frontend_impl::types::implicit::{resolve_holes, substitute_holes};
 use crate::frontend_impl::types::lattice::intersect_types;
 use crate::location::Span;
@@ -19,6 +21,69 @@ use std::sync::Arc;
 enum ProcessAnalyzerMode {
     Check,
     Infer(LocalName),
+}
+
+/// A deferred step whose type depends on the type inferred for the process suffix.
+///
+/// Inference walks the process forward, recording these frames until it can infer the subject's
+/// type from the terminator. It then replays the frames in reverse to build the type outward and
+/// fill in the typed steps, using this explicit stack instead of recursive calls for each step.
+enum InferenceFrame<S> {
+    Alias {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        annotation: Option<Type<S>>,
+        variable_span: Span,
+        variable: LocalName,
+        usage: VariableUsage,
+    },
+    Noop {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+    },
+    Send {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        argument: Arc<Expression<Type<S>, S>>,
+        argument_type: Type<S>,
+    },
+    Receive {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        parameter: LocalName,
+        annotation: Option<Type<S>>,
+        parameter_type: Type<S>,
+        type_parameters: Vec<TypeParameter>,
+        failed: bool,
+    },
+    Signal {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        chosen: LocalName,
+    },
+    ReceiveType {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        parameter: TypeParameter,
+    },
+    SendTypeFailure {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+        argument: Type<S>,
+    },
 }
 impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     fn analyze_process(
@@ -96,37 +161,126 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         process: &Process<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Arc<Process<Type<S>, S>> {
-        match process {
-            Process::Let {
-                span,
-                name,
-                annotation,
-                typ: (),
-                value: expression,
-                then: process,
-            } => match annotation {
-                Some(annotated_type) => self.check_process_let_annotated(
+        let mut steps = Vec::with_capacity(process.steps.len());
+        for (index, step) in process.steps.iter().enumerate() {
+            match step {
+                Step::Let {
                     span,
                     name,
                     annotation,
-                    annotated_type,
-                    expression,
-                    process,
-                    emit,
-                ),
-                None => self
-                    .check_process_let_inferred(span, name, annotation, expression, process, emit),
-            },
+                    typ: (),
+                    value,
+                } => {
+                    let (value, typ) = match annotation {
+                        Some(typ) => {
+                            if let Err(error) = self.type_defs.validate_type(typ) {
+                                emit(error);
+                            }
+                            (self.check_expression(None, value, typ, emit), typ.clone())
+                        }
+                        None => self.infer_expression(None, value, emit),
+                    };
+                    if let Err(error) = self.put(span, name.clone(), typ.clone()) {
+                        emit(error);
+                    }
+                    steps.push(Step::Let {
+                        span: span.clone(),
+                        name: name.clone(),
+                        annotation: annotation.clone(),
+                        typ,
+                        value,
+                    });
+                }
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ: (),
+                    command,
+                } => {
+                    let typ = self
+                        .get_variable_or_error(span, name)
+                        .unwrap_or_else(|error| {
+                            emit(error);
+                            Type::Fail(span.clone())
+                        });
+                    if let Type::Hole(_, _, hole) | Type::DualHole(_, _, hole) = &typ {
+                        let is_dual = matches!(typ, Type::DualHole(..));
+                        let suffix = Process::new(
+                            process.steps[index..].to_vec(),
+                            process.terminator.clone(),
+                        );
+                        let (typed_suffix, inferred) = self.infer_process(&suffix, name, emit);
+                        if is_dual {
+                            hole.add_lower_bound(inferred.dual(Span::None));
+                        } else {
+                            hole.add_upper_bound(inferred);
+                        }
+                        let typed_suffix = Arc::unwrap_or_clone(typed_suffix);
+                        steps.extend(typed_suffix.steps);
+                        return Arc::new(Process::new(steps, typed_suffix.terminator));
+                    }
+                    let command = self.check_step_command(span, name, &typ, command, emit);
+                    steps.push(Step::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        typ,
+                        command,
+                    });
+                }
+            }
+        }
 
-            Process::Do {
+        let terminator = match &process.terminator {
+            Terminator::Do {
                 span,
-                name: object,
+                name,
                 usage,
                 typ: (),
                 command,
-            } => self.check_process_do(span, object, usage, command, emit),
-
-            Process::Poll {
+            } => {
+                let typ = self
+                    .get_variable_or_error(span, name)
+                    .unwrap_or_else(|error| {
+                        emit(error);
+                        Type::Fail(span.clone())
+                    });
+                let command = match &typ {
+                    Type::Hole(_, _, hole) => {
+                        let (command, inferred) =
+                            self.infer_terminal_command(span, name, command, emit);
+                        hole.add_upper_bound(inferred);
+                        command
+                    }
+                    Type::DualHole(_, _, hole) => {
+                        let (command, inferred) =
+                            self.infer_terminal_command(span, name, command, emit);
+                        hole.add_lower_bound(inferred.dual(Span::None));
+                        command
+                    }
+                    _ => {
+                        self.check_terminal_command(
+                            None,
+                            span,
+                            name,
+                            &typ,
+                            command,
+                            &ProcessAnalyzerMode::Check,
+                            emit,
+                        )
+                        .0
+                    }
+                };
+                Terminator::Do {
+                    span: span.clone(),
+                    name: name.clone(),
+                    usage: usage.clone(),
+                    typ,
+                    command,
+                }
+            }
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -140,109 +294,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             } => self.check_process_poll(
                 span, kind, driver, point, clients, name, captures, then, else_, emit,
             ),
-
-            Process::Submit {
+            Terminator::Submit {
                 span,
                 driver,
                 point,
                 values,
                 captures,
             } => self.check_process_submit(span, driver, point, values, captures, emit),
-
-            Process::Unreachable(span) => self.check_process_unreachable(span, emit),
-
-            Process::Block(span, index, body, then) => {
+            Terminator::Unreachable(span) => self.check_process_unreachable(span, emit),
+            Terminator::Block(span, index, body, then) => {
                 self.check_process_block(span, *index, body, then, emit)
             }
-
-            Process::Goto(span, index, caps) => self.check_process_goto(span, *index, caps, emit),
-        }
-    }
-
-    fn check_process_let_annotated(
-        &mut self,
-        span: &Span,
-        name: &LocalName,
-        annotation: &Option<Type<S>>,
-        annotated_type: &Type<S>,
-        expression: &Expression<(), S>,
-        process: &Process<(), S>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
-        if let Err(e) = self.type_defs.validate_type(annotated_type) {
-            emit(e);
-        }
-        let expression = self.check_expression(None, expression, annotated_type, emit);
-        let typ = annotated_type.clone();
-        if let Err(e) = self.put(span, name.clone(), typ.clone()) {
-            emit(e);
-        }
-        let process = self.check_process(process, emit);
-        Arc::new(Process::Let {
-            span: span.clone(),
-            name: name.clone(),
-            annotation: annotation.clone(),
-            typ,
-            value: expression,
-            then: process,
-        })
-    }
-
-    fn check_process_let_inferred(
-        &mut self,
-        span: &Span,
-        name: &LocalName,
-        annotation: &Option<Type<S>>,
-        expression: &Expression<(), S>,
-        process: &Process<(), S>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
-        let (expression, typ) = self.infer_expression(None, expression, emit);
-        if let Err(e) = self.put(span, name.clone(), typ.clone()) {
-            emit(e);
-        }
-        let process = self.check_process(process, emit);
-        Arc::new(Process::Let {
-            span: span.clone(),
-            name: name.clone(),
-            annotation: annotation.clone(),
-            typ,
-            value: expression,
-            then: process,
-        })
-    }
-
-    fn check_process_do(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        usage: &VariableUsage,
-        command: &Command<(), S>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
-        let typ = self
-            .get_variable_or_error(span, object)
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        let (command, _) = self.check_command(
-            None,
-            span,
-            object,
-            &typ,
-            command,
-            &ProcessAnalyzerMode::Check,
-            emit,
-        );
-
-        Arc::new(Process::Do {
-            span: span.clone(),
-            name: object.clone(),
-            usage: usage.clone(),
-            typ,
-            command,
-        })
+            Terminator::Goto(span, index, caps) => {
+                self.check_process_goto(span, *index, caps, emit)
+            }
+        };
+        Arc::new(Process::new(steps, terminator))
     }
 
     fn check_process_poll(
@@ -257,7 +324,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         then: &Process<(), S>,
         else_: &Process<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
+    ) -> Terminator<Type<S>, S> {
         let is_repoll = matches!(kind, PollKind::Repoll);
 
         let preserved_vars: IndexMap<_, _> = self
@@ -284,16 +351,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     ),
                     None => {
                         emit(TypeError::RepollOutsidePoll(span.clone()));
-                        return Arc::new(Process::Unreachable(span.clone()));
+                        return Terminator::Unreachable(span.clone());
                     }
                 };
             if poll_driver != *driver {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
-                return Arc::new(Process::Unreachable(span.clone()));
+                return Terminator::Unreachable(span.clone());
             }
             if self.get_variable(driver).is_none() {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
-                return Arc::new(Process::Unreachable(span.clone()));
+                return Terminator::Unreachable(span.clone());
             }
 
             let mut point_client_type = poll_points
@@ -385,7 +452,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         } else {
             if clients.is_empty() {
                 emit(TypeError::PollMustHaveAtLeastOneClient(span.clone()));
-                return Arc::new(Process::Unreachable(span.clone()));
+                return Terminator::Unreachable(span.clone());
             }
 
             let mut client_type = None;
@@ -431,7 +498,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     span.clone(),
                     client_type,
                 ));
-                return Arc::new(Process::Unreachable(span.clone()));
+                return Terminator::Unreachable(span.clone());
             };
 
             let pool_type = client_type.clone();
@@ -511,7 +578,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         self.variables.clear();
 
-        Arc::new(Process::Poll {
+        Terminator::Poll {
             span: span.clone(),
             kind: kind.clone(),
             driver: driver.clone(),
@@ -522,7 +589,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             captures: captures.clone(),
             then: typed_then,
             else_: typed_else,
-        })
+        }
     }
 
     fn check_process_submit(
@@ -533,7 +600,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         values: &[Arc<Expression<(), S>>],
         captures: &Captures,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
+    ) -> Terminator<Type<S>, S> {
         let (poll_pool_type, current_point_client_type, poll_point_client_type, preserved_vars) =
             match self.poll.as_ref() {
                 Some(poll) => {
@@ -560,7 +627,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 }
                 None => {
                     emit(TypeError::SubmitOutsidePoll(span.clone()));
-                    return Arc::new(Process::Unreachable(span.clone()));
+                    return Terminator::Unreachable(span.clone());
                 }
             };
 
@@ -638,20 +705,20 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         self.variables.clear();
 
-        Arc::new(Process::Submit {
+        Terminator::Submit {
             span: span.clone(),
             driver: driver.clone(),
             point: point.clone(),
             values: typed_values,
             captures: captures.clone(),
-        })
+        }
     }
 
     fn check_process_unreachable(
         &mut self,
         span: &Span,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
+    ) -> Terminator<Type<S>, S> {
         let impossible = Type::either(vec![]);
         let mut exhaustive = false;
         for typ in self.variables.values() {
@@ -670,7 +737,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             emit(TypeError::NonExhaustiveIf(span.clone()));
         }
         self.variables.clear();
-        Arc::new(Process::Unreachable(span.clone()))
+        Terminator::Unreachable(span.clone())
     }
 
     fn check_process_block(
@@ -680,7 +747,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         body: &Process<(), S>,
         then: &Process<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
+    ) -> Terminator<Type<S>, S> {
         let target_type_vars = self.type_defs.vars.clone();
         if self
             .blocks
@@ -705,12 +772,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         if scope.paths.is_empty() {
             self.type_defs = target_type_defs;
             // Ill-typed synthesized condition blocks can become unreachable during recovery.
-            return Arc::new(Process::Block(
+            return Terminator::Block(
                 span.clone(),
                 index,
-                Arc::new(Process::Unreachable(span.clone())),
+                Process::terminal(Terminator::Unreachable(span.clone())),
                 typed_then,
-            ));
+            );
         }
         let free = body.free_variables();
         let contexts = filter_block_path_contexts(&target_type_defs, span, scope.paths, emit);
@@ -723,7 +790,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         self.variables = saved;
         self.type_defs = target_type_defs;
 
-        Arc::new(Process::Block(span.clone(), index, typed_body, typed_then))
+        Terminator::Block(span.clone(), index, typed_body, typed_then)
     }
 
     fn check_process_goto(
@@ -732,675 +799,382 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         index: usize,
         caps: &Captures,
         _emit: &mut impl FnMut(TypeError<S>),
-    ) -> Arc<Process<Type<S>, S>> {
+    ) -> Terminator<Type<S>, S> {
         let entry = self.blocks.get_mut(&index).unwrap();
         entry.paths.push(BlockPathContext {
             variables: self.variables.clone(),
             type_vars: self.type_defs.vars.clone(),
         });
         self.variables.clear();
-        Arc::new(Process::Goto(span.clone(), index, caps.clone()))
+        Terminator::Goto(span.clone(), index, caps.clone())
     }
 
-    fn check_command(
-        &mut self,
-        inference_subject: Option<&LocalName>,
+    fn normalize_command_type(
+        &self,
         span: &Span,
-        object: &LocalName,
         typ: &Type<S>,
-        command: &Command<(), S>,
-        mode: &ProcessAnalyzerMode,
+        expand_iterative: bool,
+        expand_recursive: bool,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        if let Type::Name(_, name, args) = typ {
-            let expanded = self.type_defs.get(span, name, args).unwrap_or_else(|e| {
-                emit(e);
+    ) -> Type<S> {
+        let mut typ = typ.clone();
+        loop {
+            let next = match &typ {
+                Type::Name(_, name, args) => self.type_defs.get(span, name, args),
+                Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
+                Type::Box(_, inner) => Ok((**inner).clone()),
+                Type::DualBox(_, inner)
+                    if inner
+                        .satisfies_constraint(TypeConstraint::Box, &self.type_defs)
+                        .unwrap_or(false) =>
+                {
+                    Ok(inner.clone().dual(Span::None))
+                }
+                Type::Iterative {
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                    ..
+                } if expand_iterative => {
+                    Type::expand_iterative(span, asc, label, body, display_hint.0.as_ref())
+                }
+                Type::Recursive {
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                    ..
+                } if expand_recursive => {
+                    Type::expand_recursive(asc, label, body, display_hint.0.as_ref())
+                }
+                _ => break,
+            }
+            .unwrap_or_else(|error| {
+                emit(error);
                 Type::Fail(span.clone())
             });
-            return self.check_command(
-                inference_subject,
-                span,
-                object,
-                &expanded,
-                command,
-                mode,
-                emit,
-            );
-        }
-        if let Type::DualName(_, name, args) = typ {
-            let expanded = self
-                .type_defs
-                .get_dual(span, name, args)
-                .unwrap_or_else(|e| {
-                    emit(e);
-                    Type::Fail(span.clone())
-                });
-            return self.check_command(
-                inference_subject,
-                span,
-                object,
-                &expanded,
-                command,
-                mode,
-                emit,
-            );
-        }
-        if let Type::Box(_, inner) = typ {
-            return self.check_command(inference_subject, span, object, inner, command, mode, emit);
-        }
-        if let Type::DualBox(_, inner) = typ {
-            if inner
-                .satisfies_constraint(TypeConstraint::Box, &self.type_defs)
-                .unwrap_or(false)
-            {
-                return self.check_command(
-                    inference_subject,
-                    span,
-                    object,
-                    &inner.clone().dual(Span::None),
-                    command,
-                    mode,
-                    emit,
-                );
+            if next == typ {
+                break;
             }
+            typ = next;
         }
-        if !matches!(command, Command::Link(_)) {
-            if let Type::Iterative {
-                asc: top_asc,
-                label: top_label,
-                body,
-                display_hint,
-                ..
-            } = typ
-            {
-                let expanded =
-                    Type::expand_iterative(span, top_asc, top_label, body, display_hint.0.as_ref())
-                        .unwrap_or_else(|e| {
-                            emit(e);
-                            Type::Fail(span.clone())
-                        });
-                return self.check_command(
-                    inference_subject,
-                    span,
-                    object,
-                    &expanded,
-                    command,
-                    mode,
-                    emit,
-                );
-            }
-        }
-        if !matches!(command, Command::Begin { .. } | Command::Loop(_, _, _)) {
-            if let Type::Recursive {
-                asc: top_asc,
-                label: top_label,
-                body,
-                display_hint,
-                ..
-            } = typ
-            {
-                let expanded =
-                    Type::expand_recursive(top_asc, top_label, body, display_hint.0.as_ref())
-                        .unwrap_or_else(|e| {
-                            emit(e);
-                            Type::Fail(span.clone())
-                        });
-                return self.check_command(
-                    inference_subject,
-                    span,
-                    object,
-                    &expanded,
-                    command,
-                    mode,
-                    emit,
-                );
-            }
-        }
-
-        self.check_command_normalized(inference_subject, span, object, typ, command, mode, emit)
+        typ
     }
 
-    fn check_command_normalized(
+    fn check_step_command(
+        &mut self,
+        span: &Span,
+        object: &LocalName,
+        typ: &Type<S>,
+        command: &Command<(), S>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Command<Type<S>, S> {
+        let typ = self.normalize_command_type(span, typ, true, true, emit);
+        match command {
+            Command::Noop => {
+                self.put(span, object.clone(), typ).ok();
+                Command::Noop
+            }
+            Command::Send(argument) => {
+                let (argument_type, then_type, vars) = match &typ {
+                    Type::Function(_, argument_type, then_type, vars) => (
+                        (**argument_type).clone(),
+                        (**then_type).clone(),
+                        vars.as_slice(),
+                    ),
+                    _ => {
+                        if !matches!(typ, Type::Fail(_)) {
+                            emit(TypeError::InvalidOperation(
+                                span.clone(),
+                                Operation::Send,
+                                typ.clone(),
+                            ));
+                        }
+                        let fail = Type::Fail(span.clone());
+                        (fail.clone(), fail, &[] as &[TypeParameter])
+                    }
+                };
+                let (argument, then_type) = if vars.is_empty() {
+                    (
+                        self.check_expression(None, argument, &argument_type, emit),
+                        then_type,
+                    )
+                } else {
+                    let (argument_type, holes) = substitute_holes(&argument_type, vars)
+                        .unwrap_or_else(|error| {
+                            emit(error);
+                            (Type::Fail(span.clone()), HashMap::new())
+                        });
+                    let argument = self.check_expression(None, argument, &argument_type, emit);
+                    let inferred = resolve_holes(span, vars, &self.type_defs, holes)
+                        .unwrap_or_else(|error| {
+                            emit(error);
+                            vars.iter()
+                                .map(|var| (var.name.clone(), Type::Fail(span.clone())))
+                                .collect()
+                        });
+                    let argument =
+                        argument.map_types(&mut |typ| typ.substitute_inferred_holes(&inferred));
+                    let then_type = then_type
+                        .substitute(inferred.iter().map(|(name, typ)| (name, typ)).collect())
+                        .unwrap_or_else(|error| {
+                            emit(error);
+                            Type::Fail(span.clone())
+                        });
+                    (argument, then_type)
+                };
+                self.put(span, object.clone(), then_type).ok();
+                Command::Send(argument)
+            }
+            Command::Receive(parameter, annotation, (), type_parameters) => {
+                let (param_type, then_type, expected_parameters) = match &typ {
+                    Type::Pair(_, param_type, then_type, parameters)
+                        if parameters.len() == type_parameters.len() =>
+                    {
+                        (
+                            (**param_type).clone(),
+                            (**then_type).clone(),
+                            parameters.clone(),
+                        )
+                    }
+                    _ => {
+                        if !matches!(typ, Type::Fail(_)) {
+                            emit(TypeError::InvalidOperation(
+                                span.clone(),
+                                Operation::Receive {
+                                    generics: type_parameters.len(),
+                                },
+                                typ.clone(),
+                            ));
+                        }
+                        let fail = Type::Fail(span.clone());
+                        (fail.clone(), fail, type_parameters.clone())
+                    }
+                };
+                let type_parameters =
+                    self.resolve_type_parameters(type_parameters, &expected_parameters, emit);
+                let substitutions: BTreeMap<_, _> = expected_parameters
+                    .iter()
+                    .map(|parameter| &parameter.name)
+                    .zip(
+                        type_parameters
+                            .iter()
+                            .map(|parameter| Type::Var(Span::None, parameter.name.clone())),
+                    )
+                    .collect();
+                let param_type = param_type
+                    .substitute(substitutions.iter().map(|(k, v)| (*k, v)).collect())
+                    .unwrap_or_else(|error| {
+                        emit(error);
+                        Type::Fail(span.clone())
+                    });
+                let then_type = then_type
+                    .substitute(substitutions.iter().map(|(k, v)| (*k, v)).collect())
+                    .unwrap_or_else(|error| {
+                        emit(error);
+                        Type::Fail(span.clone())
+                    });
+                self.type_defs.extend_vars(type_parameters.iter().cloned());
+                if let Some(annotation) = annotation {
+                    if let Err(error) = self.type_defs.validate_type(annotation) {
+                        emit(error);
+                    }
+                    if let Err(error) =
+                        param_type.check_assignable(span, annotation, &self.type_defs)
+                    {
+                        emit(error);
+                    }
+                }
+                self.put(span, parameter.clone(), param_type.clone()).ok();
+                self.put(span, object.clone(), then_type).ok();
+                Command::Receive(
+                    parameter.clone(),
+                    annotation.clone(),
+                    param_type,
+                    type_parameters,
+                )
+            }
+            Command::Signal(chosen) => {
+                let branch_type = match &typ {
+                    Type::Choice(_, branches) => {
+                        branches.get(chosen).cloned().unwrap_or_else(|| {
+                            emit(TypeError::InvalidBranch(
+                                span.clone(),
+                                chosen.clone(),
+                                typ.clone(),
+                            ));
+                            Type::Fail(span.clone())
+                        })
+                    }
+                    _ => {
+                        if !matches!(typ, Type::Fail(_)) {
+                            emit(TypeError::InvalidOperation(
+                                span.clone(),
+                                Operation::Signal,
+                                typ.clone(),
+                            ));
+                        }
+                        Type::Fail(span.clone())
+                    }
+                };
+                self.put(span, object.clone(), branch_type).ok();
+                Command::Signal(chosen.clone())
+            }
+            Command::Continue => {
+                if !matches!(typ, Type::Break(_) | Type::Fail(_)) {
+                    emit(TypeError::InvalidOperation(
+                        span.clone(),
+                        Operation::Continue,
+                        typ,
+                    ));
+                }
+                Command::Continue
+            }
+            Command::SendType(argument) => {
+                let then_type = match &typ {
+                    Type::Forall(_, parameter, then_type) => {
+                        self.check_type_constraint(span, parameter, argument, emit);
+                        then_type
+                            .clone()
+                            .substitute(BTreeMap::from([(&parameter.name, argument)]))
+                            .unwrap_or_else(|error| {
+                                emit(error);
+                                Type::Fail(span.clone())
+                            })
+                    }
+                    _ => {
+                        if !matches!(typ, Type::Fail(_)) {
+                            emit(TypeError::InvalidOperation(
+                                span.clone(),
+                                Operation::SendType,
+                                typ,
+                            ));
+                        }
+                        Type::Fail(span.clone())
+                    }
+                };
+                self.put(span, object.clone(), then_type).ok();
+                Command::SendType(argument.clone())
+            }
+            Command::ReceiveType(parameter) => {
+                let (parameter, then_type) = match &typ {
+                    Type::Exists(_, expected, then_type) => {
+                        let parameter = self.resolve_type_parameter(parameter, expected, emit);
+                        let then_type = then_type
+                            .clone()
+                            .substitute(BTreeMap::from([(
+                                &expected.name,
+                                &Type::Var(span.clone(), parameter.name.clone()),
+                            )]))
+                            .unwrap_or_else(|error| {
+                                emit(error);
+                                Type::Fail(span.clone())
+                            });
+                        (parameter, then_type)
+                    }
+                    _ => {
+                        if !matches!(typ, Type::Fail(_)) {
+                            emit(TypeError::InvalidOperation(
+                                span.clone(),
+                                Operation::ReceiveType,
+                                typ,
+                            ));
+                        }
+                        (parameter.clone(), Type::Fail(span.clone()))
+                    }
+                };
+                self.type_defs.insert_var(parameter.clone());
+                self.put(span, object.clone(), then_type).ok();
+                Command::ReceiveType(parameter)
+            }
+        }
+    }
+
+    fn check_terminal_command(
         &mut self,
         inference_subject: Option<&LocalName>,
         span: &Span,
         object: &LocalName,
         typ: &Type<S>,
-        command: &Command<(), S>,
+        command: &TerminalCommand<(), S>,
         mode: &ProcessAnalyzerMode,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        match typ {
-            Type::Hole(_span, _name, hole) => {
-                if let Some(inference_subject) = inference_subject {
-                    emit(TypeMustBeKnownAtThisPoint(
-                        span.clone(),
-                        inference_subject.clone(),
-                    ));
-                    let fail = Type::Fail(span.clone());
-                    self.put(span, object.clone(), fail.clone()).ok();
-                    let (cmd, typ) = self.infer_command(span, object, command, emit);
-                    hole.add_upper_bound(typ);
-                    return (cmd, Some(fail));
-                }
-                let (cmd, typ) = self.infer_command(span, object, command, emit);
-                hole.add_upper_bound(typ);
-                return (cmd, None);
-            }
-            Type::DualHole(_span, _name, hole) => {
-                if let Some(inference_subject) = inference_subject {
-                    emit(TypeMustBeKnownAtThisPoint(
-                        span.clone(),
-                        inference_subject.clone(),
-                    ));
-                    let fail = Type::Fail(span.clone());
-                    self.put(span, object.clone(), fail.clone()).ok();
-                    let (cmd, typ) = self.infer_command(span, object, command, emit);
-                    hole.add_lower_bound(typ.dual(Span::None));
-                    return (cmd, None);
-                }
-                let (cmd, typ) = self.infer_command(span, object, command, emit);
-                hole.add_lower_bound(typ.dual(Span::None));
-                return (cmd, None);
-            }
-            _ => {}
-        };
+    ) -> (TerminalCommand<Type<S>, S>, Option<Type<S>>) {
+        let typ = self.normalize_command_type(
+            span,
+            typ,
+            !matches!(command, TerminalCommand::Link(_)),
+            !matches!(
+                command,
+                TerminalCommand::Begin { .. } | TerminalCommand::Loop(..)
+            ),
+            emit,
+        );
         match command {
-            Command::Noop(process) => {
-                self.put(span, object.clone(), typ.clone()).ok();
-                let (process, inferred) = self.analyze_process(process, mode, emit);
-                (Command::Noop(process), inferred)
-            }
-            Command::Link(expression) => self.check_command_link(span, typ, expression, emit),
-            Command::Send(argument, process) => {
-                self.check_command_send(span, object, typ, argument, process, mode, emit)
-            }
-            Command::Receive(parameter, annotation, (), process, type_parameters) => self
-                .check_command_receive(
-                    span,
-                    object,
-                    typ,
-                    parameter,
-                    annotation,
-                    process,
-                    type_parameters,
-                    mode,
+            TerminalCommand::Link(expression) => {
+                let expression = self.check_expression(
+                    inference_subject,
+                    expression,
+                    &typ.clone().dual(Span::None),
                     emit,
-                ),
-            Command::Signal(chosen, process) => {
-                self.check_command_signal(span, object, typ, chosen, process, mode, emit)
+                );
+                if let Err(error) = self.cannot_have_obligations(span) {
+                    emit(error);
+                }
+                (TerminalCommand::Link(expression), None)
             }
-            Command::Case(branches, processes, else_process) => self.check_command_case(
+            TerminalCommand::Case(branches, processes, else_process) => self.check_command_case(
                 span,
                 object,
-                typ,
+                &typ,
                 branches,
                 processes,
                 else_process,
                 mode,
                 emit,
             ),
-            Command::Break => {
-                let Type::Continue(_) = typ else {
-                    if !matches!(typ, Type::Fail(_)) {
-                        emit(TypeError::InvalidOperation(
-                            span.clone(),
-                            Operation::Break,
-                            typ.clone(),
-                        ));
-                    }
-                    return (Command::Break, None);
-                };
-                if let Err(e) = self.cannot_have_obligations(span) {
-                    emit(e);
+            TerminalCommand::Break => {
+                if !matches!(typ, Type::Continue(_) | Type::Fail(_)) {
+                    emit(TypeError::InvalidOperation(
+                        span.clone(),
+                        Operation::Break,
+                        typ,
+                    ));
                 }
-                (Command::Break, None)
+                if let Err(error) = self.cannot_have_obligations(span) {
+                    emit(error);
+                }
+                (TerminalCommand::Break, None)
             }
-            Command::Continue(process) => {
-                self.check_command_continue(span, typ, process, mode, emit)
-            }
-            Command::Begin {
+            TerminalCommand::Begin {
                 unfounded,
                 label,
                 captures,
-                body: process,
+                body,
             } => self.check_command_begin(
                 inference_subject,
                 span,
                 object,
-                typ,
+                &typ,
                 *unfounded,
                 label,
                 captures,
-                process,
+                body,
                 mode,
                 emit,
             ),
-            Command::Loop(label, driver, captures) => self.check_command_loop(
+            TerminalCommand::Loop(label, driver, captures) => self.check_command_loop(
                 inference_subject,
                 span,
                 object,
-                typ,
+                &typ,
                 label,
                 driver,
                 captures,
                 emit,
             ),
-            Command::SendType(argument, process) => {
-                self.check_command_send_type(span, object, typ, argument, process, mode, emit)
-            }
-            Command::ReceiveType(parameter, process) => {
-                self.check_command_receive_type(span, object, typ, parameter, process, mode, emit)
-            }
         }
-    }
-
-    fn check_command_link(
-        &mut self,
-        span: &Span,
-        typ: &Type<S>,
-        expression: &Arc<Expression<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let expression =
-            self.check_expression(None, expression, &typ.clone().dual(Span::None), emit);
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-        (Command::Link(expression), None)
-    }
-
-    fn check_command_send(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        typ: &Type<S>,
-        argument: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Function(_, argument_type, then_type, vars) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::Send,
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            let argument = self.check_expression(None, argument, &fail, emit);
-            self.put(span, object.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::Send(argument, process), inferred);
-        };
-        if vars.is_empty() {
-            self.check_command_send_plain(
-                span,
-                object,
-                argument,
-                process,
-                argument_type,
-                then_type,
-                mode,
-                emit,
-            )
-        } else {
-            self.check_command_send_generic(
-                span,
-                object,
-                argument,
-                process,
-                argument_type,
-                then_type,
-                vars,
-                mode,
-                emit,
-            )
-        }
-    }
-
-    fn check_command_send_generic(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        argument: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        argument_type: &Type<S>,
-        then_type: &Type<S>,
-        vars: &[TypeParameter],
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let (argument_type, holes_map) =
-            substitute_holes(argument_type, vars).unwrap_or_else(|e| {
-                emit(e);
-                (Type::Fail(span.clone()), HashMap::new())
-            });
-        let argument = self.check_expression(None, argument, &argument_type, emit);
-        let inferred_holes =
-            resolve_holes(span, vars, &self.type_defs, holes_map).unwrap_or_else(|e| {
-                emit(e);
-                vars.iter()
-                    .map(|var| (var.name.clone(), Type::Fail(span.clone())))
-                    .collect()
-            });
-        let argument =
-            argument.map_types(&mut |typ| typ.substitute_inferred_holes(&inferred_holes));
-        let then_type = then_type
-            .clone()
-            .substitute(inferred_holes.iter().map(|(k, v)| (k, v)).collect())
-            .unwrap_or_else(|e: TypeError<S>| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        self.finish_check_command_send(span, object, argument, process, then_type, mode, emit)
-    }
-
-    fn check_command_send_plain(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        argument: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        argument_type: &Type<S>,
-        then_type: &Type<S>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let argument = self.check_expression(None, argument, argument_type, emit);
-        self.finish_check_command_send(
-            span,
-            object,
-            argument,
-            process,
-            then_type.clone(),
-            mode,
-            emit,
-        )
-    }
-
-    fn finish_check_command_send(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        argument: Arc<Expression<Type<S>, S>>,
-        process: &Arc<Process<(), S>>,
-        then_type: Type<S>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        if let Err(e) = self.put(span, object.clone(), then_type) {
-            emit(e);
-        }
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (Command::Send(argument, process), inferred_types)
-    }
-
-    fn check_command_receive(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        typ: &Type<S>,
-        parameter: &LocalName,
-        annotation: &Option<Type<S>>,
-        process: &Arc<Process<(), S>>,
-        type_parameters: &[TypeParameter],
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Pair(_, param_type, then_type, type_names) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::Receive {
-                        generics: type_parameters.len(),
-                    },
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            self.put(span, parameter.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (
-                Command::Receive(
-                    parameter.clone(),
-                    annotation.clone(),
-                    fail,
-                    process,
-                    type_parameters.to_vec(),
-                ),
-                inferred,
-            );
-        };
-
-        if type_parameters.len() != type_names.len() {
-            emit(TypeError::InvalidOperation(
-                span.clone(),
-                Operation::Receive {
-                    generics: type_parameters.len(),
-                },
-                typ.clone(),
-            ));
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            self.put(span, parameter.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (
-                Command::Receive(
-                    parameter.clone(),
-                    annotation.clone(),
-                    fail,
-                    process,
-                    type_parameters.to_vec(),
-                ),
-                inferred,
-            );
-        }
-
-        if type_names.is_empty() {
-            self.check_command_receive_plain(
-                span,
-                object,
-                parameter,
-                annotation,
-                process,
-                type_names,
-                param_type,
-                then_type,
-                type_parameters,
-                mode,
-                emit,
-            )
-        } else {
-            self.check_command_receive_generic(
-                span,
-                object,
-                parameter,
-                annotation,
-                process,
-                type_names,
-                param_type,
-                then_type,
-                type_parameters,
-                mode,
-                emit,
-            )
-        }
-    }
-
-    fn check_command_receive_generic(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        parameter: &LocalName,
-        annotation: &Option<Type<S>>,
-        process: &Arc<Process<(), S>>,
-        type_names: &[TypeParameter],
-        param_type: &Type<S>,
-        then_type: &Type<S>,
-        type_parameters: &[TypeParameter],
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let type_parameters = self.resolve_type_parameters(type_parameters, type_names, emit);
-        let type_vars: Vec<Type<S>> = type_parameters
-            .iter()
-            .map(|v| Type::Var(Span::None, v.name.clone()))
-            .collect();
-        let then_type = then_type
-            .clone()
-            .substitute(
-                type_names
-                    .iter()
-                    .map(|name| &name.name)
-                    .zip(type_vars.iter())
-                    .collect(),
-            )
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        let param_type = param_type
-            .clone()
-            .substitute(
-                type_names
-                    .iter()
-                    .map(|name| &name.name)
-                    .zip(type_vars.iter())
-                    .collect(),
-            )
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        self.finish_check_command_receive(
-            span,
-            object,
-            parameter,
-            annotation,
-            process,
-            &type_parameters,
-            param_type,
-            then_type,
-            mode,
-            emit,
-        )
-    }
-
-    fn check_command_receive_plain(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        parameter: &LocalName,
-        annotation: &Option<Type<S>>,
-        process: &Arc<Process<(), S>>,
-        type_names: &[TypeParameter],
-        param_type: &Type<S>,
-        then_type: &Type<S>,
-        type_parameters: &[TypeParameter],
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let type_parameters = self.resolve_type_parameters(type_parameters, type_names, emit);
-        self.finish_check_command_receive(
-            span,
-            object,
-            parameter,
-            annotation,
-            process,
-            &type_parameters,
-            param_type.clone(),
-            then_type.clone(),
-            mode,
-            emit,
-        )
-    }
-
-    fn finish_check_command_receive(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        parameter: &LocalName,
-        annotation: &Option<Type<S>>,
-        process: &Arc<Process<(), S>>,
-        type_parameters: &[TypeParameter],
-        param_type: Type<S>,
-        then_type: Type<S>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        self.type_defs.extend_vars(type_parameters.iter().cloned());
-
-        if let Some(annotated_type) = annotation {
-            if let Err(e) = self.type_defs.validate_type(annotated_type) {
-                emit(e);
-            }
-            if let Err(e) = param_type.check_assignable(span, annotated_type, &self.type_defs) {
-                emit(e);
-            }
-        }
-        if let Err(e) = self.put(span, parameter.clone(), param_type.clone()) {
-            emit(e);
-        }
-        if let Err(e) = self.put(span, object.clone(), then_type) {
-            emit(e);
-        }
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (
-            Command::Receive(
-                parameter.clone(),
-                annotation.clone(),
-                param_type,
-                process,
-                type_parameters.to_vec(),
-            ),
-            inferred_types,
-        )
-    }
-
-    fn check_command_signal(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        typ: &Type<S>,
-        chosen: &LocalName,
-        process: &Arc<Process<(), S>>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Choice(_, branches) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::Signal,
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::Signal(chosen.clone(), process), inferred);
-        };
-        let Some(branch_type) = branches.get(chosen) else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidBranch(
-                    span.clone(),
-                    chosen.clone(),
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::Signal(chosen.clone(), process), inferred);
-        };
-        if let Err(e) = self.put(span, object.clone(), branch_type.clone()) {
-            emit(e);
-        }
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (Command::Signal(chosen.clone(), process), inferred_types)
     }
 
     fn check_command_case(
@@ -1413,7 +1187,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         else_process: &Option<Arc<Process<(), S>>>,
         mode: &ProcessAnalyzerMode,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
+    ) -> (TerminalCommand<Type<S>, S>, Option<Type<S>>) {
         let Type::Either(_, branch_types) = typ else {
             if !matches!(typ, Type::Fail(_)) {
                 emit(TypeError::InvalidOperation(
@@ -1439,7 +1213,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 typed
             });
             return (
-                Command::Case(
+                TerminalCommand::Case(
                     branches.clone(),
                     typed_processes.into_boxed_slice(),
                     typed_else,
@@ -1493,7 +1267,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
 
         (
-            Command::Case(
+            TerminalCommand::Case(
                 Arc::clone(branches),
                 Box::from(typed_processes),
                 typed_else_process,
@@ -1575,29 +1349,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         };
     }
 
-    fn check_command_continue(
-        &mut self,
-        span: &Span,
-        typ: &Type<S>,
-        process: &Arc<Process<(), S>>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Break(_) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::Continue,
-                    typ.clone(),
-                ));
-            }
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::Continue(process), inferred);
-        };
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (Command::Continue(process), inferred_types)
-    }
-
     fn check_command_begin(
         &mut self,
         inference_subject: Option<&LocalName>,
@@ -1610,7 +1361,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         process: &Arc<Process<(), S>>,
         mode: &ProcessAnalyzerMode,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
+    ) -> (TerminalCommand<Type<S>, S>, Option<Type<S>>) {
         if let Some(inference_subject) = inference_subject {
             emit(TypeError::TypeMustBeKnownAtThisPoint(
                 span.clone(),
@@ -1620,7 +1371,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             self.put(span, object.clone(), fail.clone()).ok();
             let (process, inferred) = self.analyze_process(process, mode, emit);
             return (
-                Command::Begin {
+                TerminalCommand::Begin {
                     unfounded,
                     label: label.clone(),
                     captures: captures.clone(),
@@ -1648,7 +1399,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             self.put(span, object.clone(), fail.clone()).ok();
             let (process, inferred) = self.analyze_process(process, mode, emit);
             return (
-                Command::Begin {
+                TerminalCommand::Begin {
                     unfounded,
                     label: label.clone(),
                     captures: captures.clone(),
@@ -1695,7 +1446,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         let (process, _inferred_type) = self.analyze_process(process, mode, emit);
         (
-            Command::Begin {
+            TerminalCommand::Begin {
                 unfounded,
                 label: label.clone(),
                 captures: captures.clone(),
@@ -1715,7 +1466,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         driver: &LocalName,
         captures: &Captures,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
+    ) -> (TerminalCommand<Type<S>, S>, Option<Type<S>>) {
         if !matches!(typ, Type::Recursive { .. }) {
             if !matches!(typ, Type::Fail(_)) {
                 emit(TypeError::InvalidOperation(
@@ -1725,13 +1476,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 ));
             }
             return (
-                Command::Loop(label.clone(), driver.clone(), captures.clone()),
+                TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone()),
                 None,
             );
         }
         let Some((driver_type, variables)) = self.loop_points.get(label).cloned() else {
             emit(TypeError::NoSuchLoopPoint(span.clone(), label.clone()));
-            return (Command::Break, None);
+            return (TerminalCommand::Break, None);
         };
         if let Err(e) = self.put(span, driver.clone(), typ.clone()) {
             emit(e);
@@ -1781,91 +1532,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
 
         (
-            Command::Loop(label.clone(), driver.clone(), captures.clone()),
+            TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone()),
             inferred_loop.or(Some(Type::Self_(span.clone(), label.clone()))),
-        )
-    }
-
-    fn check_command_send_type(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        typ: &Type<S>,
-        argument: &Type<S>,
-        process: &Arc<Process<(), S>>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Forall(_, type_name, then_type) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::SendType,
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::SendType(argument.clone(), process), inferred);
-        };
-        self.check_type_constraint(span, type_name, argument, emit);
-        let then_type = then_type
-            .clone()
-            .substitute(BTreeMap::from([(&type_name.name, argument)]))
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        if let Err(e) = self.put(span, object.clone(), then_type) {
-            emit(e);
-        }
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (Command::SendType(argument.clone(), process), inferred_types)
-    }
-
-    fn check_command_receive_type(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        typ: &Type<S>,
-        parameter: &TypeParameter,
-        process: &Arc<Process<(), S>>,
-        mode: &ProcessAnalyzerMode,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Option<Type<S>>) {
-        let Type::Exists(_, type_name, then_type) = typ else {
-            if !matches!(typ, Type::Fail(_)) {
-                emit(TypeError::InvalidOperation(
-                    span.clone(),
-                    Operation::ReceiveType,
-                    typ.clone(),
-                ));
-            }
-            let fail = Type::Fail(span.clone());
-            self.put(span, object.clone(), fail.clone()).ok();
-            let (process, inferred) = self.analyze_process(process, mode, emit);
-            return (Command::ReceiveType(parameter.clone(), process), inferred);
-        };
-        let parameter = self.resolve_type_parameter(parameter, type_name, emit);
-        let then_type = then_type
-            .clone()
-            .substitute(BTreeMap::from([(
-                &type_name.name,
-                &Type::Var(span.clone(), parameter.name.clone()),
-            )]))
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-        self.type_defs.insert_var(parameter.clone());
-        if let Err(e) = self.put(span, object.clone(), then_type) {
-            emit(e);
-        }
-        let (process, inferred_types) = self.analyze_process(process, mode, emit);
-        (
-            Command::ReceiveType(parameter.clone(), process),
-            inferred_types,
         )
     }
 
@@ -1875,45 +1543,418 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
-        match process {
-            Process::Let {
+        let mut subject = inference_subject.clone();
+        let mut typed_steps = vec![None; process.steps.len()];
+        let mut frames = Vec::new();
+        let mut completed_suffix = None;
+
+        for (index, step) in process.steps.iter().enumerate() {
+            match step {
+                Step::Let {
+                    span,
+                    name,
+                    annotation,
+                    typ: (),
+                    value,
+                } => {
+                    if annotation.is_none()
+                        && let Expression::Variable(variable_span, variable, (), usage) =
+                            value.as_ref()
+                        && *variable == subject
+                        && matches!(usage, VariableUsage::Move)
+                    {
+                        frames.push(InferenceFrame::Alias {
+                            index,
+                            span: span.clone(),
+                            name: name.clone(),
+                            annotation: annotation.clone(),
+                            variable_span: variable_span.clone(),
+                            variable: variable.clone(),
+                            usage: usage.clone(),
+                        });
+                        subject = name.clone();
+                        continue;
+                    }
+
+                    let (value, typ) = match annotation {
+                        Some(typ) => (
+                            self.check_expression(Some(&subject), value, typ, emit),
+                            typ.clone(),
+                        ),
+                        None => self.infer_expression(Some(&subject), value, emit),
+                    };
+                    if let Err(error) = self.put(span, name.clone(), typ.clone()) {
+                        emit(error);
+                    }
+                    typed_steps[index] = Some(Step::Let {
+                        span: span.clone(),
+                        name: name.clone(),
+                        annotation: annotation.clone(),
+                        typ,
+                        value,
+                    });
+                }
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ: (),
+                    command,
+                } if *name == subject => match command {
+                    Command::Noop => frames.push(InferenceFrame::Noop {
+                        index,
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                    }),
+                    Command::Send(argument) => {
+                        let (argument, argument_type) =
+                            self.infer_expression(Some(&subject), argument, emit);
+                        frames.push(InferenceFrame::Send {
+                            index,
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: usage.clone(),
+                            argument,
+                            argument_type,
+                        });
+                    }
+                    Command::Receive(parameter, annotation, (), type_parameters) => {
+                        self.type_defs.extend_vars(type_parameters.iter().cloned());
+                        let (parameter_type, failed) = match annotation {
+                            Some(typ) => (typ.clone(), false),
+                            None => {
+                                emit(TypeError::ParameterTypeMustBeKnown(
+                                    span.clone(),
+                                    parameter.clone(),
+                                ));
+                                (Type::Fail(span.clone()), true)
+                            }
+                        };
+                        if let Err(error) =
+                            self.put(span, parameter.clone(), parameter_type.clone())
+                        {
+                            emit(error);
+                        }
+                        frames.push(InferenceFrame::Receive {
+                            index,
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: usage.clone(),
+                            parameter: parameter.clone(),
+                            annotation: annotation.clone(),
+                            parameter_type,
+                            type_parameters: type_parameters.clone(),
+                            failed,
+                        });
+                    }
+                    Command::Signal(chosen) => frames.push(InferenceFrame::Signal {
+                        index,
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        chosen: chosen.clone(),
+                    }),
+                    Command::Continue => {
+                        typed_steps[index] = Some(Step::Do {
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: usage.clone(),
+                            typ: Type::Break(span.clone()),
+                            command: Command::Continue,
+                        });
+                        let suffix = Process::new(
+                            process.steps[index + 1..].to_vec(),
+                            process.terminator.clone(),
+                        );
+                        let suffix = Arc::unwrap_or_clone(self.check_process(&suffix, emit));
+                        for (offset, step) in suffix.steps.into_iter().enumerate() {
+                            typed_steps[index + 1 + offset] = Some(step);
+                        }
+                        completed_suffix = Some((suffix.terminator, Type::Break(span.clone())));
+                        break;
+                    }
+                    Command::SendType(argument) => {
+                        emit(TypeError::TypeMustBeKnownAtThisPoint(
+                            span.clone(),
+                            subject.clone(),
+                        ));
+                        frames.push(InferenceFrame::SendTypeFailure {
+                            index,
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: usage.clone(),
+                            argument: argument.clone(),
+                        });
+                    }
+                    Command::ReceiveType(parameter) => {
+                        self.type_defs.insert_var(parameter.clone());
+                        frames.push(InferenceFrame::ReceiveType {
+                            index,
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: usage.clone(),
+                            parameter: parameter.clone(),
+                        });
+                    }
+                },
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ: (),
+                    command,
+                } => {
+                    let typ = self
+                        .get_variable_or_error(span, name)
+                        .unwrap_or_else(|error| {
+                            emit(error);
+                            Type::Fail(span.clone())
+                        });
+                    let command = self.check_step_command(span, name, &typ, command, emit);
+                    typed_steps[index] = Some(Step::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        typ,
+                        command,
+                    });
+                }
+            }
+        }
+
+        let (terminator, mut inferred_type) = match completed_suffix {
+            Some(completed) => completed,
+            None => self.infer_terminator(&process.terminator, &subject, emit),
+        };
+
+        for frame in frames.into_iter().rev() {
+            match frame {
+                InferenceFrame::Alias {
+                    index,
+                    span,
+                    name,
+                    annotation,
+                    variable_span,
+                    variable,
+                    usage,
+                } => {
+                    typed_steps[index] = Some(Step::Let {
+                        span,
+                        name,
+                        annotation,
+                        typ: inferred_type.clone(),
+                        value: Arc::new(Expression::Variable(
+                            variable_span,
+                            variable,
+                            inferred_type.clone(),
+                            usage,
+                        )),
+                    });
+                }
+                InferenceFrame::Noop {
+                    index,
+                    span,
+                    name,
+                    usage,
+                } => {
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::Noop,
+                    });
+                }
+                InferenceFrame::Send {
+                    index,
+                    span,
+                    name,
+                    usage,
+                    argument,
+                    argument_type,
+                } => {
+                    inferred_type = Type::Function(
+                        span.clone(),
+                        Box::new(argument_type),
+                        Box::new(inferred_type),
+                        vec![],
+                    );
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::Send(argument),
+                    });
+                }
+                InferenceFrame::Receive {
+                    index,
+                    span,
+                    name,
+                    usage,
+                    parameter,
+                    annotation,
+                    parameter_type,
+                    type_parameters,
+                    failed,
+                } => {
+                    inferred_type = if failed {
+                        Type::Fail(span.clone())
+                    } else {
+                        Type::Pair(
+                            span.clone(),
+                            Box::new(parameter_type.clone()),
+                            Box::new(inferred_type),
+                            type_parameters.clone(),
+                        )
+                    };
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::Receive(
+                            parameter,
+                            annotation,
+                            parameter_type,
+                            type_parameters,
+                        ),
+                    });
+                }
+                InferenceFrame::Signal {
+                    index,
+                    span,
+                    name,
+                    usage,
+                    chosen,
+                } => {
+                    inferred_type = Type::Choice(
+                        span.clone(),
+                        BTreeMap::from([(chosen.clone(), inferred_type)]),
+                    );
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::Signal(chosen),
+                    });
+                }
+                InferenceFrame::ReceiveType {
+                    index,
+                    span,
+                    name,
+                    usage,
+                    parameter,
+                } => {
+                    inferred_type =
+                        Type::Exists(span.clone(), parameter.clone(), Box::new(inferred_type));
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::ReceiveType(parameter),
+                    });
+                }
+                InferenceFrame::SendTypeFailure {
+                    index,
+                    span,
+                    name,
+                    usage,
+                    argument,
+                } => {
+                    inferred_type = Type::Fail(span.clone());
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::SendType(argument),
+                    });
+                }
+            }
+        }
+
+        let typed_steps = typed_steps
+            .into_iter()
+            .map(|step| step.expect("inference should type every process step"))
+            .collect();
+        (
+            Arc::new(Process::new(typed_steps, terminator)),
+            inferred_type,
+        )
+    }
+
+    fn infer_terminator(
+        &mut self,
+        terminator: &Terminator<(), S>,
+        inference_subject: &LocalName,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
+        match terminator {
+            Terminator::Do {
                 span,
                 name,
-                annotation,
-                typ: (),
-                value: expression,
-                then: process,
-            } => match annotation {
-                Some(annotated_type) => self.infer_process_let_annotated(
-                    span,
-                    name,
-                    annotation,
-                    annotated_type,
-                    expression,
-                    process,
-                    inference_subject,
-                    emit,
-                ),
-                None => self.infer_process_let_inferred(
-                    span,
-                    name,
-                    annotation,
-                    expression,
-                    process,
-                    inference_subject,
-                    emit,
-                ),
-            },
-
-            Process::Do {
-                span,
-                name: object,
                 usage,
                 typ: (),
                 command,
-            } => self.infer_process_do(span, object, usage, command, inference_subject, emit),
-
-            Process::Poll {
+            } if name == inference_subject => {
+                let (command, typ) =
+                    self.infer_terminal_command(span, inference_subject, command, emit);
+                (
+                    Terminator::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        typ: typ.clone(),
+                        command,
+                    },
+                    typ,
+                )
+            }
+            Terminator::Do {
+                span,
+                name,
+                usage,
+                typ: (),
+                command,
+            } => {
+                let typ = self
+                    .get_variable_or_error(span, name)
+                    .unwrap_or_else(|error| {
+                        emit(error);
+                        Type::Fail(span.clone())
+                    });
+                let (command, inferred) = self.check_terminal_command(
+                    Some(inference_subject),
+                    span,
+                    name,
+                    &typ,
+                    command,
+                    &ProcessAnalyzerMode::Infer(inference_subject.clone()),
+                    emit,
+                );
+                let inferred = inferred.unwrap_or_else(|| {
+                    emit(TypeError::TypeMustBeKnownAtThisPoint(
+                        span.clone(),
+                        inference_subject.clone(),
+                    ));
+                    Type::Fail(span.clone())
+                });
+                (
+                    Terminator::Do {
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                        typ,
+                        command,
+                    },
+                    inferred,
+                )
+            }
+            Terminator::Poll {
                 span,
                 kind,
                 driver,
@@ -1937,8 +1978,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 inference_subject,
                 emit,
             ),
-
-            Process::Submit {
+            Terminator::Submit {
                 span,
                 driver,
                 point,
@@ -1953,159 +1993,51 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 inference_subject,
                 emit,
             ),
-
-            Process::Unreachable(span) => self.infer_process_unreachable(span, emit),
-
-            Process::Block(span, index, body, then) => {
+            Terminator::Unreachable(span) => self.infer_process_unreachable(span, emit),
+            Terminator::Block(span, index, body, then) => {
                 self.infer_process_block(span, *index, body, then, inference_subject, emit)
             }
-
-            Process::Goto(span, index, caps) => self.infer_process_goto(span, *index, caps, emit),
+            Terminator::Goto(span, index, captures) => {
+                self.infer_process_goto(span, *index, captures, emit)
+            }
         }
     }
 
-    fn infer_process_let_annotated(
+    fn infer_terminal_command(
         &mut self,
         span: &Span,
-        name: &LocalName,
-        annotation: &Option<Type<S>>,
-        annotated_type: &Type<S>,
-        expression: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        inference_subject: &LocalName,
+        subject: &LocalName,
+        command: &TerminalCommand<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
-        let expression =
-            self.check_expression(Some(inference_subject), expression, annotated_type, emit);
-        self.finish_infer_process_let(
-            span,
-            name,
-            annotation,
-            annotated_type.clone(),
-            expression,
-            process,
-            inference_subject,
-            emit,
-        )
-    }
-
-    fn infer_process_let_inferred(
-        &mut self,
-        span: &Span,
-        name: &LocalName,
-        annotation: &Option<Type<S>>,
-        expression: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        inference_subject: &LocalName,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
-        let (expression, typ) = self.infer_expression(Some(inference_subject), expression, emit);
-        self.finish_infer_process_let(
-            span,
-            name,
-            annotation,
-            typ,
-            expression,
-            process,
-            inference_subject,
-            emit,
-        )
-    }
-
-    fn finish_infer_process_let(
-        &mut self,
-        span: &Span,
-        name: &LocalName,
-        annotation: &Option<Type<S>>,
-        typ: Type<S>,
-        expression: Arc<Expression<Type<S>, S>>,
-        process: &Arc<Process<(), S>>,
-        inference_subject: &LocalName,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
-        if let Err(e) = self.put(span, name.clone(), typ.clone()) {
-            emit(e);
+    ) -> (TerminalCommand<Type<S>, S>, Type<S>) {
+        match command {
+            TerminalCommand::Link(expression) => {
+                let (expression, typ) = self.infer_expression(Some(subject), expression, emit);
+                if let Err(error) = self.cannot_have_obligations(span) {
+                    emit(error);
+                }
+                (TerminalCommand::Link(expression), typ.dual(Span::None))
+            }
+            TerminalCommand::Case(branches, processes, else_process) => {
+                self.infer_command_case(span, subject, branches, processes, else_process, emit)
+            }
+            TerminalCommand::Break => {
+                if let Err(error) = self.cannot_have_obligations(span) {
+                    emit(error);
+                }
+                (TerminalCommand::Break, Type::Continue(span.clone()))
+            }
+            TerminalCommand::Begin { .. } => {
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    subject.clone(),
+                ));
+                (TerminalCommand::Break, Type::Fail(span.clone()))
+            }
+            TerminalCommand::Loop(label, driver, captures) => {
+                self.infer_command_loop(span, label, driver, captures, emit)
+            }
         }
-        let (process, subject_type) = self.infer_process(process, inference_subject, emit);
-        (
-            Arc::new(Process::Let {
-                span: span.clone(),
-                name: name.clone(),
-                annotation: annotation.clone(),
-                typ,
-                value: expression,
-                then: process,
-            }),
-            subject_type,
-        )
-    }
-
-    fn infer_process_do(
-        &mut self,
-        span: &Span,
-        object: &LocalName,
-        usage: &VariableUsage,
-        command: &Command<(), S>,
-        inference_subject: &LocalName,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
-        if object == inference_subject {
-            let (command, typ) = self.infer_command(span, inference_subject, command, emit);
-            return (
-                Arc::new(Process::Do {
-                    span: span.clone(),
-                    name: object.clone(),
-                    usage: usage.clone(),
-                    typ: typ.clone(),
-                    command,
-                }),
-                typ,
-            );
-        }
-        let typ = self
-            .get_variable_or_error(span, object)
-            .unwrap_or_else(|e| {
-                emit(e);
-                Type::Fail(span.clone())
-            });
-
-        let (command, inferred_type) = self.check_command(
-            Some(inference_subject),
-            span,
-            object,
-            &typ,
-            command,
-            &ProcessAnalyzerMode::Infer(inference_subject.clone()),
-            emit,
-        );
-
-        let Some(inferred_type) = inferred_type else {
-            emit(TypeError::TypeMustBeKnownAtThisPoint(
-                span.clone(),
-                inference_subject.clone(),
-            ));
-            return (
-                Arc::new(Process::Do {
-                    span: span.clone(),
-                    name: object.clone(),
-                    usage: usage.clone(),
-                    typ,
-                    command,
-                }),
-                Type::Fail(span.clone()),
-            );
-        };
-
-        (
-            Arc::new(Process::Do {
-                span: span.clone(),
-                name: object.clone(),
-                usage: usage.clone(),
-                typ,
-                command,
-            }),
-            inferred_type,
-        )
     }
 
     fn infer_process_poll(
@@ -2121,7 +2053,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         else_: &Arc<Process<(), S>>,
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
         let is_repoll = matches!(kind, PollKind::Repoll);
 
         let preserved_vars: IndexMap<_, _> = self
@@ -2149,7 +2081,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     None => {
                         emit(TypeError::RepollOutsidePoll(span.clone()));
                         return (
-                            Arc::new(Process::Unreachable(span.clone())),
+                            Terminator::Unreachable(span.clone()),
                             Type::Fail(span.clone()),
                         );
                     }
@@ -2157,7 +2089,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if poll_driver != *driver {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
                 return (
-                    Arc::new(Process::Unreachable(span.clone())),
+                    Terminator::Unreachable(span.clone()),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2165,7 +2097,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if self.get_variable(driver).is_none() {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
                 return (
-                    Arc::new(Process::Unreachable(span.clone())),
+                    Terminator::Unreachable(span.clone()),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2260,7 +2192,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if clients.is_empty() {
                 emit(TypeError::PollMustHaveAtLeastOneClient(span.clone()));
                 return (
-                    Arc::new(Process::Unreachable(span.clone())),
+                    Terminator::Unreachable(span.clone()),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2310,7 +2242,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     client_type,
                 ));
                 return (
-                    Arc::new(Process::Unreachable(span.clone())),
+                    Terminator::Unreachable(span.clone()),
                     Type::Fail(span.clone()),
                 );
             };
@@ -2393,7 +2325,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         self.variables.clear();
 
         (
-            Arc::new(Process::Poll {
+            Terminator::Poll {
                 span: span.clone(),
                 kind: kind.clone(),
                 driver: driver.clone(),
@@ -2404,7 +2336,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 captures: captures.clone(),
                 then: typed_then,
                 else_: typed_else,
-            }),
+            },
             intersect_types(&self.type_defs, span, &then_type, &else_type).unwrap_or_else(|e| {
                 emit(e);
                 Type::Fail(span.clone())
@@ -2421,7 +2353,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         captures: &Captures,
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
         let (poll_pool_type, current_point_client_type, poll_point_client_type, preserved_vars) =
             match self.poll.as_ref() {
                 Some(poll) => {
@@ -2449,7 +2381,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 None => {
                     emit(TypeError::SubmitOutsidePoll(span.clone()));
                     return (
-                        Arc::new(Process::Unreachable(span.clone())),
+                        Terminator::Unreachable(span.clone()),
                         Type::Fail(span.clone()),
                     );
                 }
@@ -2530,13 +2462,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         self.variables.clear();
 
         (
-            Arc::new(Process::Submit {
+            Terminator::Submit {
                 span: span.clone(),
                 driver: driver.clone(),
                 point: point.clone(),
                 values: typed_values,
                 captures: captures.clone(),
-            }),
+            },
             Type::choice(vec![]),
         )
     }
@@ -2545,7 +2477,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         &mut self,
         span: &Span,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
         let impossible = Type::either(vec![]);
         let mut exhaustive = false;
         for typ in self.variables.values() {
@@ -2564,10 +2496,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             emit(TypeError::NonExhaustiveIf(span.clone()));
         }
         self.variables.clear();
-        (
-            Arc::new(Process::Unreachable(span.clone())),
-            Type::choice(vec![]),
-        )
+        (Terminator::Unreachable(span.clone()), Type::choice(vec![]))
     }
 
     fn infer_process_block(
@@ -2578,7 +2507,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         then: &Arc<Process<(), S>>,
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
         let target_type_vars = self.type_defs.vars.clone();
         if self
             .blocks
@@ -2604,12 +2533,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             self.type_defs = target_type_defs;
             // Ill-typed synthesized condition blocks can become unreachable during recovery.
             return (
-                Arc::new(Process::Block(
+                Terminator::Block(
                     span.clone(),
                     index,
-                    Arc::new(Process::Unreachable(span.clone())),
+                    Process::terminal(Terminator::Unreachable(span.clone())),
                     typed_then,
-                )),
+                ),
                 then_type,
             );
         }
@@ -2637,7 +2566,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             });
 
         (
-            Arc::new(Process::Block(span.clone(), index, typed_body, typed_then)),
+            Terminator::Block(span.clone(), index, typed_body, typed_then),
             final_type,
         )
     }
@@ -2648,7 +2577,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         index: usize,
         caps: &Captures,
         _emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
         let entry = self.blocks.get_mut(&index).unwrap();
         entry.paths.push(BlockPathContext {
             variables: self.variables.clone(),
@@ -2656,165 +2585,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         });
         self.variables.clear();
         (
-            Arc::new(Process::Goto(span.clone(), index, caps.clone())),
+            Terminator::Goto(span.clone(), index, caps.clone()),
             Type::choice(vec![]),
-        )
-    }
-
-    pub(crate) fn infer_command(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        command: &Command<(), S>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        match command {
-            Command::Noop(process) => {
-                let (process, typ) = self.infer_process(process, subject, emit);
-                (Command::Noop(process), typ)
-            }
-            Command::Link(expression) => self.infer_command_link(span, subject, expression, emit),
-            Command::Send(argument, process) => {
-                self.infer_command_send(span, subject, argument, process, emit)
-            }
-            Command::Receive(parameter, annotation, (), process, vars) => self
-                .infer_command_receive(span, subject, parameter, annotation, process, vars, emit),
-            Command::Signal(chosen, process) => {
-                self.infer_command_signal(span, subject, chosen, process, emit)
-            }
-            Command::Case(branches, processes, else_process) => {
-                self.infer_command_case(span, subject, branches, processes, else_process, emit)
-            }
-            Command::Break => {
-                if let Err(e) = self.cannot_have_obligations(span) {
-                    emit(e);
-                }
-                (Command::Break, Type::Continue(span.clone()))
-            }
-            Command::Continue(process) => self.infer_command_continue(span, process, emit),
-            Command::Begin { .. } => {
-                emit(TypeError::TypeMustBeKnownAtThisPoint(
-                    span.clone(),
-                    subject.clone(),
-                ));
-                (Command::Break, Type::Fail(span.clone()))
-            }
-            Command::Loop(label, driver, captures) => {
-                self.infer_command_loop(span, label, driver, captures, emit)
-            }
-            Command::SendType(_, _) => {
-                emit(TypeError::TypeMustBeKnownAtThisPoint(
-                    span.clone(),
-                    subject.clone(),
-                ));
-                (Command::Break, Type::Fail(span.clone()))
-            }
-            Command::ReceiveType(parameter, process) => {
-                self.infer_command_receive_type(span, subject, parameter, process, emit)
-            }
-        }
-    }
-
-    fn infer_command_link(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        expression: &Arc<Expression<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        let (expression, typ) = self.infer_expression(Some(subject), expression, emit);
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-        (Command::Link(expression), typ.dual(Span::None))
-    }
-
-    fn infer_command_send(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        argument: &Arc<Expression<(), S>>,
-        process: &Arc<Process<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        let (argument, arg_type) = self.infer_expression(Some(subject), argument, emit);
-        let (process, then_type) = self.infer_process(process, subject, emit);
-        (
-            Command::Send(argument, process),
-            Type::Function(
-                span.clone(),
-                Box::new(arg_type),
-                Box::new(then_type),
-                vec![],
-            ),
-        )
-    }
-
-    fn infer_command_receive(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        parameter: &LocalName,
-        annotation: &Option<Type<S>>,
-        process: &Arc<Process<(), S>>,
-        vars: &[TypeParameter],
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        self.type_defs.extend_vars(vars.iter().cloned());
-        let Some(param_type) = annotation else {
-            emit(TypeError::ParameterTypeMustBeKnown(
-                span.clone(),
-                parameter.clone(),
-            ));
-            let fail = Type::Fail(span.clone());
-            if let Err(e) = self.put(span, parameter.clone(), fail.clone()) {
-                emit(e);
-            }
-            let (process, _then_type) = self.infer_process(process, subject, emit);
-            return (
-                Command::Receive(
-                    parameter.clone(),
-                    annotation.clone(),
-                    fail,
-                    process,
-                    vars.to_vec(),
-                ),
-                Type::Fail(span.clone()),
-            );
-        };
-        if let Err(e) = self.put(span, parameter.clone(), param_type.clone()) {
-            emit(e);
-        }
-        let (process, then_type) = self.infer_process(process, subject, emit);
-        (
-            Command::Receive(
-                parameter.clone(),
-                annotation.clone(),
-                param_type.clone(),
-                process,
-                vars.to_vec(),
-            ),
-            Type::Pair(
-                span.clone(),
-                Box::new(param_type.clone()),
-                Box::new(then_type),
-                vars.to_vec(),
-            ),
-        )
-    }
-
-    fn infer_command_signal(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        chosen: &LocalName,
-        process: &Arc<Process<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        let (process, then_type) = self.infer_process(process, subject, emit);
-        (
-            Command::Signal(chosen.clone(), process),
-            Type::Choice(span.clone(), BTreeMap::from([(chosen.clone(), then_type)])),
         )
     }
 
@@ -2826,7 +2598,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         processes: &Box<[Arc<Process<(), S>>]>,
         else_process: &Option<Arc<Process<(), S>>>,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
+    ) -> (TerminalCommand<Type<S>, S>, Type<S>) {
         if else_process.is_some() {
             emit(TypeError::TypeMustBeKnownAtThisPoint(
                 span.clone(),
@@ -2846,7 +2618,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 process
             });
             return (
-                Command::Case(Arc::clone(branches), Box::from(typed_processes), typed_else),
+                TerminalCommand::Case(Arc::clone(branches), Box::from(typed_processes), typed_else),
                 Type::Fail(span.clone()),
             );
         }
@@ -2864,19 +2636,9 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
 
         (
-            Command::Case(Arc::clone(branches), Box::from(typed_processes), None),
+            TerminalCommand::Case(Arc::clone(branches), Box::from(typed_processes), None),
             Type::Either(span.clone(), branch_types),
         )
-    }
-
-    fn infer_command_continue(
-        &mut self,
-        span: &Span,
-        process: &Arc<Process<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        let process = self.check_process(process, emit);
-        (Command::Continue(process), Type::Break(span.clone()))
     }
 
     fn infer_command_loop(
@@ -2886,10 +2648,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         driver: &LocalName,
         captures: &Captures,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
+    ) -> (TerminalCommand<Type<S>, S>, Type<S>) {
         let Some((driver_type, variables)) = self.loop_points.get(label).cloned() else {
             emit(TypeError::NoSuchLoopPoint(span.clone(), label.clone()));
-            return (Command::Break, Type::Fail(span.clone()));
+            return (TerminalCommand::Break, Type::Fail(span.clone()));
         };
 
         for (var, type_at_begin) in variables.as_ref() {
@@ -2917,24 +2679,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
 
         (
-            Command::Loop(label.clone(), driver.clone(), captures.clone()),
+            TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone()),
             driver_type,
-        )
-    }
-
-    fn infer_command_receive_type(
-        &mut self,
-        span: &Span,
-        subject: &LocalName,
-        parameter: &TypeParameter,
-        process: &Arc<Process<(), S>>,
-        emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Command<Type<S>, S>, Type<S>) {
-        self.type_defs.insert_var(parameter.clone());
-        let (process, then_type) = self.infer_process(process, subject, emit);
-        (
-            Command::ReceiveType(parameter.clone(), process),
-            Type::Exists(span.clone(), parameter.clone(), Box::new(then_type)),
         )
     }
 
@@ -3576,4 +3322,81 @@ fn merge_path_contexts<S: Clone + Eq + std::hash::Hash>(
         merged_variables.insert(name.clone(), acc);
     }
     merged_variables
+}
+
+#[cfg(test)]
+mod flat_ir_tests {
+    use super::*;
+    use crate::frontend_impl::language::Unresolved;
+
+    #[test]
+    fn checks_long_flat_process_with_a_loop() {
+        const STEP_COUNT: usize = 20_000;
+        let subject = LocalName::from(arcstr::literal!("subject"));
+        let mut builder = crate::frontend_impl::process::ProcessBuilder::new();
+        for _ in 0..STEP_COUNT {
+            builder.push(Step::Do {
+                span: Span::None,
+                name: subject.clone(),
+                usage: VariableUsage::Unknown,
+                typ: (),
+                command: Command::Noop,
+            });
+        }
+        let process = builder.finish(Terminator::Do {
+            span: Span::None,
+            name: subject.clone(),
+            usage: VariableUsage::Unknown,
+            typ: (),
+            command: TerminalCommand::Break,
+        });
+
+        let mut context =
+            Context::<Unresolved>::new(TypeDefs::default(), IndexMap::new(), IndexMap::new());
+        context
+            .put(&Span::None, subject, Type::Continue(Span::None))
+            .unwrap();
+        let mut errors = Vec::new();
+        let checked = context.check_process(&process, &mut |error| errors.push(error));
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert_eq!(checked.steps.len(), STEP_COUNT);
+    }
+
+    #[test]
+    fn inferred_continue_checks_the_remaining_suffix() {
+        let subject = LocalName::from(arcstr::literal!("subject"));
+        let other = LocalName::from(arcstr::literal!("other"));
+        let process = Process::do_step(
+            Span::None,
+            subject.clone(),
+            VariableUsage::Unknown,
+            (),
+            Command::Continue,
+            Process::do_terminal(
+                Span::None,
+                other.clone(),
+                VariableUsage::Unknown,
+                (),
+                TerminalCommand::Break,
+            ),
+        );
+        let mut context =
+            Context::<Unresolved>::new(TypeDefs::default(), IndexMap::new(), IndexMap::new());
+        context
+            .put(&Span::None, other, Type::Continue(Span::None))
+            .unwrap();
+        let mut errors = Vec::new();
+        let (checked, inferred) =
+            context.infer_process(&process, &subject, &mut |error| errors.push(error));
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(matches!(inferred, Type::Break(_)));
+        assert!(matches!(
+            &checked.steps[0],
+            Step::Do {
+                typ: Type::Break(_),
+                command: Command::Continue,
+                ..
+            }
+        ));
+    }
 }

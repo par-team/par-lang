@@ -490,7 +490,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut t2: Type<S> = *t2.clone();
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
-                    if !var1.constraint.is_broader_or_equal_than(var2.constraint) {
+                    // Covariant, like `Exists`: pair vars are existential binders.
+                    if !var2.constraint.is_broader_or_equal_than(var1.constraint) {
                         return Ok(Incompatible);
                     }
                     t2 = t2.substitute(BTreeMap::from([(
@@ -564,8 +565,20 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Self::Break(_), Self::Break(_)) => Ok(Compatible),
             (Self::Continue(_), Self::Continue(_)) => Ok(Compatible),
 
-            (Self::Exists(loc, name1, body1), Self::Exists(_, name2, body2))
-            | (Self::Forall(loc, name1, body1), Self::Forall(_, name2, body2)) => {
+            (Self::Exists(loc, name1, body1), Self::Exists(_, name2, body2)) => {
+                // Covariant: the provider picks the witness, so its constraint must
+                // imply the constraint the target type promises to its consumer.
+                if !name2.constraint.is_broader_or_equal_than(name1.constraint) {
+                    return Ok(Incompatible);
+                }
+                Type::is_subtype_quantified(loc, name1, body1, name2, body2, ctx)
+            }
+            (Self::Forall(loc, name1, body1), Self::Forall(_, name2, body2)) => {
+                // Contravariant: the consumer picks the type, so the subtype must
+                // accept every type the target type promises to accept.
+                if !name1.constraint.is_broader_or_equal_than(name2.constraint) {
+                    return Ok(Incompatible);
+                }
                 Type::is_subtype_quantified(loc, name1, body1, name2, body2, ctx)
             }
 
@@ -587,12 +600,6 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         body2: Box<Self>,
         ctx: SubtypeContext<S>,
     ) -> Result<SubtypeResult<S>, TypeError<S>> {
-        if !param1
-            .constraint
-            .is_broader_or_equal_than(param2.constraint)
-        {
-            return Ok(Incompatible);
-        }
         let body2 = body2.substitute(BTreeMap::from([(
             &param2.name,
             &Type::Var(loc.clone(), param1.name.clone()),

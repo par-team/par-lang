@@ -1,0 +1,299 @@
+// SQL database access, backed by `sqlx`. PostgreSQL, MySQL, and SQLite are
+// selected from the connection URL scheme.
+//
+// A `Database` is a linear reference to a shared pool. Query streams and
+// transactions are independent linear leases. `.split` creates another linear
+// pool handle; `.close` drops only this handle and never waits for siblings or
+// outstanding leases.
+//
+// Temporal values travel as text. The portable driver does not decode
+// dedicated temporal column types, so on PostgreSQL and MySQL, cast temporal
+// columns to text when reading (e.g. `at::text`) and cast text parameters
+// when writing (e.g. `$1::timestamptz`); SQLite stores temporals as text
+// natively.
+export module Sql
+
+import {
+  @core/Bool
+  @core/Bytes
+  @core/Float
+  @core/Int
+  @core/List
+  @core/Nat
+  @core/Option
+  @core/Stream
+  @core/String
+  @core/Time
+  @core/Try
+}
+
+export {
+  // Error type for SQL operations (a human-readable message).
+  type Error = String
+
+  // A portable SQL scalar for parameters and result cells.
+  //
+  // This intentionally remains ordinary Par data. Par comparison/display on
+  // `Value` is structural Par behavior, not SQL comparison semantics.
+  //
+  // Only PostgreSQL produces `.bool` result cells; SQLite and MySQL surface
+  // stored booleans as integers (`AsBool` accepts both). Columns declared
+  // `BOOLEAN` on SQLite and MySQL cannot be decoded by the portable driver at
+  // all — store booleans in integer columns there.
+  type Value = either {
+    .null!,
+    .bool Bool,
+    .int Int,
+    .float Float,
+    .text String,
+    .bytes Bytes,
+  }
+
+  // Ordered result row. Column names are included because most everyday code
+  // wants name lookup, but duplicate names are still represented faithfully.
+  type Row = List<(String) Value>
+
+  // A reusable decoder for one present SQL value.
+  //
+  // Required formats report SQL NULL, wrong value variants, and invalid textual
+  // temporal values as `.err` with a human-readable message. Missing columns
+  // are handled by `Decode`, before the format is called.
+  type Format<a> = box choice {
+    .parse(Value) => Try<Error, a>,
+  }
+
+  // A linear handle to a shared pool. It is not a connection. Splitting creates
+  // another handle to the same pool; both handles must eventually be closed.
+  type Database = iterative choice {
+    // Create another linear handle to the same underlying pool. This does not
+    // check out a physical connection.
+    .split => (self) self,
+
+    // Run a statement and return affected rows. The handle survives success and
+    // failure. Statements issued on one handle run in submission order, even
+    // when their results are never inspected; use `.split` for concurrency.
+    .execute(String, List<Value>) => (Try<Error, Nat>) self,
+
+    // Run a query and return a lazy stream. Acquisition, startup, and first-row
+    // failures are reported in the outer `Try`; later mid-result failures
+    // surface at the stream's `.end.err`. Cancelling always succeeds. The
+    // stream owns its checked-out connection until drained or cancelled.
+    .query(String, List<Value>) => (Try<Error, Stream<Error, Row>>) self,
+
+    // Begin a transaction. The database handle is returned immediately; the
+    // transaction owns one checked-out connection until commit, rollback, or
+    // auto-rollback on statement failure.
+    .transaction => (Try<Error, Transaction>) self,
+
+    // Release this pool handle. This does not close the underlying pool while
+    // sibling handles, query streams, or transactions still exist.
+    .close => !,
+  }
+
+  // A transaction owns one connection. Statement failure consumes the
+  // transaction and the implementation rolls back or drops the connection before
+  // reporting the error. Successful statements return `self`. A `.commit` error
+  // means the commit may or may not have taken effect (e.g. when it times out).
+  type Transaction = iterative choice {
+    .execute(String, List<Value>) => Try<Error, (Nat) self>,
+    .query(String, List<Value>) => Try<Error, (List<Row>) self>,
+    .commit => Try<Error, !>,
+    .rollback => Try<Error, !>,
+  }
+
+  // Connect and validate connectivity. The URL scheme picks the backend:
+  // `postgres://...`, `mysql://...`, `sqlite://file.db`, `sqlite::memory:`.
+  //
+  // SQLite does not create a missing database file by default; open with
+  // `sqlite://file.db?mode=rwc` to create it. An in-memory SQLite database is
+  // pinned to a single connection, so drain or cancel its query streams before
+  // running further statements.
+  dec Open : [String] Try<Error, Database>
+
+  // Look up the first column with this name. `.none!` means missing column;
+  // `.some.null!` means present SQL NULL. Rows may contain duplicate names;
+  // pattern match on `Row` directly if duplicates matter.
+  dec Field : [Row, String] Option<Value>
+
+  // Decode an optional value with a format. Missing columns return `.err`.
+  // Designed for pipe chains:
+  //   row->Sql.Field("age")->Sql.Decode(Sql.AsInt)
+  dec Decode : [Option<Value>, <a> Format<a>] Try<Error, a>
+
+  // Accept SQL NULL as `.none!`; otherwise parse with the provided format and
+  // wrap the result in `.some`. Missing columns still error.
+  dec Nullable : [<a> Format<a>] Format<Option<a>>
+
+  // Required boolean format. A check, not a coercion, with one pragmatic
+  // exception: `.int 0` and `.int 1` are accepted as booleans, because SQLite
+  // and MySQL surface stored booleans as integers.
+  dec AsBool  : Format<Bool>
+
+  // Required integer format; accepts exactly `.int` values.
+  dec AsInt   : Format<Int>
+
+  // Required floating-point format; accepts exactly `.float` values.
+  dec AsFloat : Format<Float>
+
+  // Required text format; accepts exactly `.text` values.
+  dec AsText  : Format<String>
+
+  // Required byte-sequence format; accepts exactly `.bytes` values.
+  dec AsBytes : Format<Bytes>
+
+  // Required timestamp format: parses zone-aware text into an instant.
+  // Accepts RFC 3339, with `T` or a space as the separator, and `Z` or any
+  // numeric offset — this covers PostgreSQL's `timestamptz::text` output.
+  dec AsTimestamp : Format<Time.Instant>
+
+  // Required date-time format: parses zone-free civil text (`T` or space
+  // separator, optional fractional seconds), interpreted in the given zone.
+  // Covers text written by SQL itself, such as SQLite's `datetime('now')`.
+  dec AsDateTime  : [Time.Zone] Format<Time.Zoned>
+
+  // Required date format: parses `YYYY-MM-DD` text, interpreted in the given
+  // zone.
+  dec AsDate      : [Time.Zone] Format<Time.Zoned>
+
+  // Renders an instant as RFC 3339 text, as a `.text` parameter; cast in SQL
+  // (e.g. `$1::timestamptz`) when the backend needs a concrete temporal type.
+  dec Timestamp : [Time.Instant] Value
+
+  // Renders a zoned date-time as zone-free ISO date-time text, e.g.
+  // `2024-07-01T12:34:56`, as a `.text` parameter; sub-second precision is
+  // dropped. Cast in SQL when the backend needs a concrete temporal type.
+  dec DateTime  : [Time.Zoned] Value
+
+  // Renders a zoned date-time as ISO date text, e.g. `2024-07-01`, as a
+  // `.text` parameter. Cast in SQL when the backend needs a concrete temporal
+  // type.
+  dec Date      : [Time.Zoned] Value
+}
+
+// The connection constructor and the database/transaction protocols are backed
+// by the Rust `sqlx` external. Everything below is ordinary Par.
+def Open = external
+
+// --- Lookup and decoding --------------------------------------------------
+
+def Field = [row, name] row.begin.case {
+  .end! => .none!,
+  .item((key) value) rest => if {
+    key == name => .some value,
+    else => rest.loop,
+  },
+}
+
+// The `<a>` binder sits right before `[Format<a>]` so it is inferred from the
+// format argument (implicit generics infer only from the argument immediately
+// following the binder), while `Option<Value>` stays first for the pipe.
+def Decode = [option, <a> format] option.case {
+  .some value => format.parse(value),
+  .none! => .err "missing column",
+}
+
+def Nullable = [<a> format] box case {
+  .parse(value) => value.case {
+    .null! => .ok .none!,
+    else present => format.parse(present).case {
+      .ok a => .ok .some a,
+      .err e => .err e,
+    },
+  },
+}
+
+// --- Scalar formats -------------------------------------------------------
+
+def AsBool = box case {
+  .parse(value) => value.case {
+    .bool b => .ok b,
+    .int i => if {
+      i == 0 => .ok .false!,
+      i == 1 => .ok .true!,
+      else => .err "expected a boolean, found an integer other than 0 or 1",
+    },
+    .null! => .err "expected a boolean, found NULL",
+    else _ => .err "expected a boolean value",
+  },
+}
+
+def AsInt = box case {
+  .parse(value) => value.case {
+    .int i => .ok i,
+    .null! => .err "expected an integer, found NULL",
+    else _ => .err "expected an integer value",
+  },
+}
+
+def AsFloat = box case {
+  .parse(value) => value.case {
+    .float f => .ok f,
+    .null! => .err "expected a floating-point number, found NULL",
+    else _ => .err "expected a floating-point value",
+  },
+}
+
+def AsText = box case {
+  .parse(value) => value.case {
+    .text s => .ok s,
+    .null! => .err "expected text, found NULL",
+    else _ => .err "expected a text value",
+  },
+}
+
+def AsBytes = box case {
+  .parse(value) => value.case {
+    .bytes b => .ok b,
+    .null! => .err "expected bytes, found NULL",
+    else _ => .err "expected a byte value",
+  },
+}
+
+// --- Temporal formats -----------------------------------------------------
+
+def AsTimestamp = box case {
+  .parse(value) => value.case {
+    .text s => Time.FromRFC3339(s).case {
+      .some instant => .ok instant,
+      .none! => .err `invalid RFC 3339 timestamp: ${s}`,
+    },
+    .null! => .err "expected a timestamp, found NULL",
+    else _ => .err "expected a textual timestamp value",
+  },
+}
+
+// Both the `T`-separated form this module writes and the space-separated form
+// SQL itself writes (e.g. SQLite's `datetime('now')`) are accepted; `%.f`
+// matches an optional fractional-second part.
+def AsDateTime = [zone] box case {
+  .parse(value) => value.case {
+    .text s => s->Time.Parse("%Y-%m-%dT%H:%M:%S%.f", zone).case {
+      .some zoned => .ok zoned,
+      .none! => s->Time.Parse("%Y-%m-%d %H:%M:%S%.f", zone).case {
+        .some zoned => .ok zoned,
+        .none! => .err `invalid date-time text: ${s}`,
+      },
+    },
+    .null! => .err "expected a date-time, found NULL",
+    else _ => .err "expected a textual date-time value",
+  },
+}
+
+def AsDate = [zone] box case {
+  .parse(value) => value.case {
+    .text s => s->Time.Parse("%Y-%m-%d", zone).case {
+      .some zoned => .ok zoned,
+      .none! => .err `invalid date text: ${s}`,
+    },
+    .null! => .err "expected a date, found NULL",
+    else _ => .err "expected a textual date value",
+  },
+}
+
+// --- Temporal parameter builders ------------------------------------------
+
+def Timestamp = [instant] .text Time.ToRFC3339(instant)
+
+def DateTime = [zoned] .text zoned.format("%Y-%m-%dT%H:%M:%S")
+
+def Date = [zoned] .text zoned.format("%Y-%m-%d")

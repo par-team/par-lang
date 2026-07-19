@@ -9,7 +9,9 @@ use crate::frontend_impl::program::DefinitionBody;
 use crate::frontend_impl::types::core::get_primitive_type;
 use crate::frontend_impl::{
     language::{GlobalName, LocalName, TypeParameter, Universal},
-    process::{Captures, Command, Expression, PollKind, Process},
+    process::{
+        Captures, Command, Expression, PollKind, Process, Step, TerminalCommand, Terminator,
+    },
     types::Type,
 };
 use crate::runtime_impl::tree::net::{Net, Tree};
@@ -627,20 +629,40 @@ impl Compiler {
     }
 
     fn compile_process(&mut self, proc: &Process<Type<Universal>, Universal>) -> Result<()> {
-        match proc {
-            Process::Let {
-                name, value, then, ..
-            } => self.compile_process_let(name, value, then),
+        let mut received_parameters = Vec::new();
+        for step in &proc.steps {
+            match step {
+                Step::Let { name, value, .. } => {
+                    let value = self.compile_expression(value)?;
+                    self.bind_variable(name.clone(), value)?;
+                }
+                Step::Do {
+                    span,
+                    name,
+                    usage,
+                    typ,
+                    command,
+                } => self.compile_command(
+                    span,
+                    name.clone(),
+                    usage,
+                    typ.clone(),
+                    command,
+                    &mut received_parameters,
+                )?,
+            }
+        }
 
-            Process::Do {
+        match &proc.terminator {
+            Terminator::Do {
                 span,
                 name,
                 usage,
                 typ,
                 command,
-            } => self.compile_process_do(span, name, usage, typ, command),
+            } => self.compile_terminal_command(span, name, usage, typ, command)?,
 
-            Process::Poll {
+            Terminator::Poll {
                 span: _span,
                 kind,
                 driver,
@@ -652,97 +674,104 @@ impl Compiler {
                 then,
                 else_,
             } => self.compile_process_poll(
-                proc, kind, driver, point, clients, name, captures, then, else_,
-            ),
+                proc.span(),
+                kind,
+                driver,
+                point,
+                clients,
+                name,
+                captures,
+                then,
+                else_,
+            )?,
 
-            Process::Submit {
+            Terminator::Submit {
                 span: _span,
                 driver,
                 point,
                 values,
                 captures,
-            } => self.compile_process_submit(driver, point, values, captures),
+            } => self.compile_process_submit(driver, point, values, captures)?,
 
-            Process::Block(_, index, body, process) => {
-                self.compile_process_block(*index, body, process)
+            Terminator::Block(_, index, body, process) => {
+                self.compile_process_block(*index, body, process)?
             }
 
-            Process::Goto(_, index, _) => self.compile_process_goto(*index),
+            Terminator::Goto(_, index, _) => self.compile_process_goto(*index)?,
 
-            Process::Unreachable(_) => self.compile_process_unreachable(),
+            Terminator::Unreachable(_) => self.compile_process_unreachable()?,
         }
+
+        for (parameter, was_empty_before) in received_parameters.into_iter().rev() {
+            if was_empty_before {
+                self.type_defs.vars.shift_remove(&parameter);
+            }
+        }
+        Ok(())
     }
 
     fn compile_command(
         &mut self,
-        span: &Span,
+        _span: &Span,
         name: LocalName,
         usage: &VariableUsage,
         _ty: Type<Universal>,
         cmd: &Command<Type<Universal>, Universal>,
+        received_parameters: &mut Vec<(LocalName, bool)>,
     ) -> Result<()> {
         match cmd {
-            Command::Noop(process) => self.compile_process(process)?,
-            Command::Link(expr) => self.compile_command_link(&name, usage, expr)?,
+            Command::Noop => {}
             // types get erased.
-            Command::SendType(_argument, process) => {
-                self.compile_command_send_type(name, usage, process)?
+            Command::SendType(_argument) => self.compile_command_send_type(name, usage)?,
+            Command::ReceiveType(parameter) => {
+                let was_empty_before = self.compile_command_receive_type(name, usage, parameter)?;
+                received_parameters.push((parameter.name.clone(), was_empty_before));
             }
-            Command::ReceiveType(parameter, process) => {
-                self.compile_command_receive_type(name, usage, parameter, process)?
+            Command::Send(expr) => self.compile_command_send(name, usage, expr)?,
+            Command::Receive(target, _, _, _) => {
+                self.compile_command_receive(name, usage, target)?
             }
-            Command::Send(expr, process) => {
-                self.compile_command_send(name, usage, expr, process)?
-            }
-            Command::Receive(target, _, _, process, _) => {
-                self.compile_command_receive(name, usage, target, process)?
-            }
-            Command::Signal(chosen, process) => {
-                self.compile_command_signal(name, usage, chosen, process)?
-            }
-            Command::Case(names, processes, else_process) => {
-                self.compile_command_case(span, name, usage, names, processes, else_process)?
-            }
-            Command::Break => self.compile_command_break(&name, usage)?,
-            Command::Continue(process) => self.compile_command_continue(&name, usage, process)?,
-            Command::Begin {
+            Command::Signal(chosen) => self.compile_command_signal(name, usage, chosen)?,
+            Command::Continue => self.compile_command_continue(&name, usage)?,
+        };
+        Ok(())
+    }
+
+    fn compile_terminal_command(
+        &mut self,
+        span: &Span,
+        name: &LocalName,
+        usage: &VariableUsage,
+        _ty: &Type<Universal>,
+        cmd: &TerminalCommand<Type<Universal>, Universal>,
+    ) -> Result<()> {
+        match cmd {
+            TerminalCommand::Link(expr) => self.compile_command_link(name, usage, expr)?,
+            TerminalCommand::Case(names, processes, else_process) => self.compile_command_case(
+                span,
+                name.clone(),
+                usage,
+                names,
+                processes,
+                else_process,
+            )?,
+            TerminalCommand::Break => self.compile_command_break(name, usage)?,
+            TerminalCommand::Begin {
                 label,
                 captures,
                 body,
                 ..
-            } => self.compile_command_begin(span, &name, label, captures, body)?,
-            Command::Loop(label, driver, captures) => {
-                self.compile_command_loop(span, &name, usage, label, driver, captures)?
+            } => self.compile_command_begin(span, name, label, captures, body)?,
+            TerminalCommand::Loop(label, driver, captures) => {
+                self.compile_command_loop(span, name, usage, label, driver, captures)?
             }
         };
         Ok(())
     }
 
-    fn compile_process_let(
-        &mut self,
-        name: &LocalName,
-        value: &Expression<Type<Universal>, Universal>,
-        then: &Arc<Process<Type<Universal>, Universal>>,
-    ) -> Result<()> {
-        let value = self.compile_expression(value)?;
-        self.bind_variable(name.clone(), value)?;
-        self.compile_process(then)
-    }
-
-    fn compile_process_do(
-        &mut self,
-        span: &Span,
-        name: &LocalName,
-        usage: &VariableUsage,
-        typ: &Type<Universal>,
-        command: &Command<Type<Universal>, Universal>,
-    ) -> Result<()> {
-        self.compile_command(span, name.clone(), usage, typ.clone(), command)
-    }
-
     fn compile_process_poll(
         &mut self,
-        proc: &Process<Type<Universal>, Universal>,
+        span: Span,
         kind: &PollKind,
         driver: &LocalName,
         point: &LocalName,
@@ -794,9 +823,8 @@ impl Compiler {
             &mut self.net,
         );
 
-        let (poll_package_id, _) = self.in_package(
-            format!("poll body at {:?}", proc.span()),
-            |this, package_id| {
+        let (poll_package_id, _) =
+            self.in_package(format!("poll body at {span:?}"), |this, package_id| {
                 this.poll_packages.insert(
                     point.clone(),
                     PollInfo {
@@ -872,8 +900,7 @@ impl Compiler {
                     Tree::Era.with_type(Type::Break(Span::None)),
                     context_out.with_type(Type::Continue(Span::None)),
                 ))
-            },
-        )?;
+            })?;
 
         self.lazy_redexes.push((
             Tree::Package(poll_package_id, Box::new(context_in), FanBehavior::Expand),
@@ -969,15 +996,10 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_command_send_type(
-        &mut self,
-        name: LocalName,
-        usage: &VariableUsage,
-        process: &Arc<Process<Type<Universal>, Universal>>,
-    ) -> Result<()> {
+    fn compile_command_send_type(&mut self, name: LocalName, usage: &VariableUsage) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         self.bind_variable(name, subject.tree.with_type(Type::Break(Span::None)))?;
-        self.compile_process(process)
+        Ok(())
     }
 
     fn compile_command_receive_type(
@@ -985,8 +1007,7 @@ impl Compiler {
         name: LocalName,
         usage: &VariableUsage,
         parameter: &TypeParameter,
-        process: &Arc<Process<Type<Universal>, Universal>>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let subject = self.use_variable(&name, usage, true)?;
         let was_empty_before = self
             .type_defs
@@ -994,11 +1015,7 @@ impl Compiler {
             .insert(parameter.name.clone(), parameter.constraint)
             .is_none();
         self.bind_variable(name, subject.tree.with_type(Type::Break(Span::None)))?;
-        self.compile_process(process)?;
-        if was_empty_before {
-            self.type_defs.vars.shift_remove(&parameter.name);
-        }
-        Ok(())
+        Ok(was_empty_before)
     }
 
     fn compile_command_send(
@@ -1006,7 +1023,6 @@ impl Compiler {
         name: LocalName,
         usage: &VariableUsage,
         expr: &Expression<Type<Universal>, Universal>,
-        process: &Arc<Process<Type<Universal>, Universal>>,
     ) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         let expr = self.compile_expression(expr)?;
@@ -1016,7 +1032,7 @@ impl Compiler {
             Tree::Times(Box::new(v1.tree), Box::new(expr.tree)),
             subject.tree,
         );
-        self.compile_process(process)
+        Ok(())
     }
 
     fn compile_command_receive(
@@ -1024,7 +1040,6 @@ impl Compiler {
         name: LocalName,
         usage: &VariableUsage,
         target: &LocalName,
-        process: &Arc<Process<Type<Universal>, Universal>>,
     ) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         let (v0, v1) = self.create_typed_wire();
@@ -1035,7 +1050,7 @@ impl Compiler {
             Tree::Par(Box::new(w1.tree), Box::new(v1.tree)),
             subject.tree,
         );
-        self.compile_process(process)
+        Ok(())
     }
 
     fn compile_command_signal(
@@ -1043,14 +1058,13 @@ impl Compiler {
         name: LocalName,
         usage: &VariableUsage,
         chosen: &LocalName,
-        process: &Arc<Process<Type<Universal>, Universal>>,
     ) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         let (v0, v1) = self.create_typed_wire();
         let choosing_tree = self.either_instance(ArcStr::from(&chosen.string), v1.tree);
         self.net.link(choosing_tree, subject.tree);
         self.bind_variable(name, v0)?;
-        self.compile_process(process)
+        Ok(())
     }
 
     fn compile_command_case(
@@ -1118,15 +1132,10 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_command_continue(
-        &mut self,
-        name: &LocalName,
-        usage: &VariableUsage,
-        process: &Arc<Process<Type<Universal>, Universal>>,
-    ) -> Result<()> {
+    fn compile_command_continue(&mut self, name: &LocalName, usage: &VariableUsage) -> Result<()> {
         let a = self.use_variable(name, usage, true)?.tree;
         self.net.link(a, Tree::Continue);
-        self.compile_process(process)
+        Ok(())
     }
 
     fn compile_command_begin(

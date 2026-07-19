@@ -272,6 +272,68 @@ pub(crate) fn lex<'s>(input: &'s str, file: &FileName) -> Vec<Token<'s>> {
     lex_with_comments(input, file).tokens
 }
 
+fn is_identifier_start(c: char) -> bool {
+    matches!(c, 'a'..='z' | 'A'..='Z' | '_')
+}
+
+fn is_identifier_continue(c: char) -> bool {
+    is_identifier_start(c) || c.is_ascii_digit()
+}
+
+fn identifier_kind(raw: &str) -> Option<TokenKind> {
+    let mut chars = raw.chars();
+    let first = chars.next()?;
+    if !is_identifier_start(first) || !chars.all(is_identifier_continue) {
+        return None;
+    }
+
+    Some(match raw {
+        "begin" => TokenKind::Begin,
+        "box" => TokenKind::Box,
+        "case" => TokenKind::Case,
+        "catch" => TokenKind::Catch,
+        "chan" => TokenKind::Chan,
+        "choice" => TokenKind::Choice,
+        "dec" => TokenKind::Dec,
+        "def" => TokenKind::Def,
+        "do" => TokenKind::Do,
+        "dual" => TokenKind::Dual,
+        "either" => TokenKind::Either,
+        "else" => TokenKind::Else,
+        "export" => TokenKind::Export,
+        "if" => TokenKind::If,
+        "import" => TokenKind::Import,
+        "is" => TokenKind::Is,
+        "in" => TokenKind::In,
+        "iterative" => TokenKind::Iterative,
+        "let" => TokenKind::Let,
+        "and" => TokenKind::And,
+        "as" => TokenKind::As,
+        "module" => TokenKind::Module,
+        "neg" => TokenKind::Neg,
+        "or" => TokenKind::Or,
+        "not" => TokenKind::Not,
+        "loop" => TokenKind::Loop,
+        "poll" => TokenKind::Poll,
+        "repoll" => TokenKind::Repoll,
+        "submit" => TokenKind::Submit,
+        "recursive" => TokenKind::Recursive,
+        "self" => TokenKind::Self_,
+        "throw" => TokenKind::Throw,
+        "try" => TokenKind::Try,
+        "default" => TokenKind::Default,
+        "type" => TokenKind::Type,
+        "unfounded" => TokenKind::Unfounded,
+        "external" => TokenKind::External,
+        raw if raw.starts_with(char::is_uppercase) => TokenKind::UppercaseIdentifier,
+        _ => TokenKind::LowercaseIdentifier,
+    })
+}
+
+pub(crate) fn is_lowercase_identifier(raw: &str) -> bool {
+    identifier_kind(raw) == Some(TokenKind::LowercaseIdentifier)
+}
+
 fn scan_digit_run(input: &str, start: usize) -> Option<usize> {
     let bytes = input.as_bytes();
     if !matches!(bytes.get(start), Some(b'0'..=b'9')) {
@@ -318,6 +380,16 @@ fn scan_number_token(input: &str) -> Option<(&str, TokenKind, usize)> {
             }
             let raw = &input[..idx];
             return Some((raw, TokenKind::Float, idx));
+        } else if matches!(bytes.get(frac_start), Some(b'_')) {
+            idx = frac_start + 1;
+            while matches!(
+                bytes.get(idx),
+                Some(b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_')
+            ) {
+                idx += 1;
+            }
+            let raw = &input[..idx];
+            return Some((raw, TokenKind::Unknown, idx));
         }
     }
 
@@ -582,60 +654,15 @@ pub(crate) fn lex_with_comments<'s>(input: &'s str, file: &FileName) -> Lexed<'s
                 };
                 state.push_token_consumed(kind, raw, &rest[..consumed_len]);
             }
-            'a'..='z' | 'A'..='Z' | '_' => {
+            c if is_identifier_start(c) => {
                 let len = rest
                     .char_indices()
-                    .take_while(|(_, c)| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_'))
+                    .take_while(|(_, c)| is_identifier_continue(*c))
                     .last()
                     .map(|(idx, c)| idx + c.len_utf8())
                     .unwrap_or(0);
                 let raw = &rest[..len];
-                let kind = match raw {
-                    "begin" => TokenKind::Begin,
-                    "box" => TokenKind::Box,
-                    "case" => TokenKind::Case,
-                    "catch" => TokenKind::Catch,
-                    "chan" => TokenKind::Chan,
-                    "choice" => TokenKind::Choice,
-                    "dec" => TokenKind::Dec,
-                    "def" => TokenKind::Def,
-                    "do" => TokenKind::Do,
-                    "dual" => TokenKind::Dual,
-                    "either" => TokenKind::Either,
-                    "else" => TokenKind::Else,
-                    "export" => TokenKind::Export,
-                    "if" => TokenKind::If,
-                    "import" => TokenKind::Import,
-                    "is" => TokenKind::Is,
-                    "in" => TokenKind::In,
-                    "iterative" => TokenKind::Iterative,
-                    "let" => TokenKind::Let,
-                    "and" => TokenKind::And,
-                    "as" => TokenKind::As,
-                    "module" => TokenKind::Module,
-                    "neg" => TokenKind::Neg,
-                    "or" => TokenKind::Or,
-                    "not" => TokenKind::Not,
-                    "loop" => TokenKind::Loop,
-                    "poll" => TokenKind::Poll,
-                    "repoll" => TokenKind::Repoll,
-                    "submit" => TokenKind::Submit,
-                    "recursive" => TokenKind::Recursive,
-                    "self" => TokenKind::Self_,
-                    "throw" => TokenKind::Throw,
-                    "try" => TokenKind::Try,
-                    "default" => TokenKind::Default,
-                    "type" => TokenKind::Type,
-                    "unfounded" => TokenKind::Unfounded,
-                    "external" => TokenKind::External,
-                    raw => {
-                        if raw.starts_with(char::is_uppercase) {
-                            TokenKind::UppercaseIdentifier
-                        } else {
-                            TokenKind::LowercaseIdentifier
-                        }
-                    }
-                };
+                let kind = identifier_kind(raw).expect("scanned identifier should be valid");
                 state.push_token(kind, raw);
             }
             '\n' | ' ' | '\t' | '\r' => {
@@ -788,9 +815,9 @@ pub(crate) fn lex_with_comments<'s>(input: &'s str, file: &FileName) -> Lexed<'s
 
 fn end_point_for_raw(start: Point, raw: &str) -> Point {
     let newline_count = raw.bytes().filter(|&byte| byte == b'\n').count() as u32;
-    let end_column = match raw.as_bytes().iter().rposition(|&byte| byte == b'\n') {
-        Some(last_newline) => (raw.len() - last_newline - 1) as u32,
-        None => start.column + raw.len() as u32,
+    let end_column = match raw.rsplit_once('\n') {
+        Some((_, last_line)) => last_line.encode_utf16().count() as u32,
+        None => start.column + raw.encode_utf16().count() as u32,
     };
     Point {
         offset: start.offset + raw.len() as u32,
@@ -804,6 +831,31 @@ mod lexer_test {
     use super::*;
 
     const FILE: FileName = FileName(arcstr::literal!("Test.par"));
+
+    #[test]
+    fn columns_count_utf16_code_units() {
+        let start = Point {
+            offset: 4,
+            row: 2,
+            column: 3,
+        };
+        assert_eq!(
+            end_point_for_raw(start, "é😀"),
+            Point {
+                offset: 10,
+                row: 2,
+                column: 6,
+            }
+        );
+        assert_eq!(
+            end_point_for_raw(start, "é\n😀"),
+            Point {
+                offset: 11,
+                row: 3,
+                column: 2,
+            }
+        );
+    }
 
     #[test]
     fn tok() {
@@ -915,6 +967,14 @@ mod lexer_test {
             tokens.iter().map(|token| token.raw).collect::<Vec<_>>(),
             vec!["1.0", "-0.5", "+3.25", "1_000.25", "6.02e23", "1.0e-6"]
         );
+    }
+
+    #[test]
+    fn invalid_fraction_underscore_stays_one_unknown_token() {
+        let tokens = lex("1._0", &FILE);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Unknown);
+        assert_eq!(tokens[0].raw, "1._0");
     }
 
     #[test]

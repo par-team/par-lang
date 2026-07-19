@@ -29,45 +29,52 @@ generics**.
 
 ## Syntax
 
-Implicit generics are not a standalone type. The `<a, ...>` binder is an
-extension of a **[function](./function.md) type**: it must appear immediately
-before the `[...]` of that type.
+Implicit generics are not a standalone type. The `<a, ...>` binder is part of
+one value item inside a **[function](./function.md) type**. It appears immediately
+before the argument type whose value will determine those type variables.
 
 ```par
-<a, b>[Arg] Res
+[<a, b> Arg, Other] Res
 ```
 
-You cannot write `<a>` in front of `either`, `choice`, `box`, or anything else.
+An item may have no binder, one binder, or a binder with several variables. This
+means implicit and ordinary arguments can share one pair of brackets:
+
+```par
+[A, <b> B, C] Res
+```
+
+You cannot use `<a>` outside a function or pair item list, or put it in front of
+`either`, `choice`, `box`, or another complete type.
 
 The key rule is local inference:
 
 **Implicit type variables are inferred only from the single argument
 immediately following the `<...>` binder.**
 
-This is also reflected in the syntax: the bracket right after `<...>` must
-contain exactly one argument type. If you need multiple value arguments, you
-still write a curried function type.
-
-So this is valid:
+The binder does not infer from the other items in the same brackets. For
+example, this function infers `a` from `left` only; `right` is checked afterward
+using the inferred `a`:
 
 ```par
-dec Concat : <a>[List<a>] [List<a>] List<a>
+dec Concat : [<a> List<a>, List<a>] List<a>
 ```
 
-But this is not valid syntax:
+Different items may introduce different variables:
 
 ```par
-dec Concat : <a>[List<a>, List<a>] List<a>
+dec Map : [<a> List<a>, <b> box [a] b] List<b>
 ```
 
-When calling such a function, you can still pass all arguments at once:
+Callers pass the value arguments normally:
 
 ```par
 Concat(left, right)
 ```
 
-The type is still written in curried form, because inference must happen from
-that first argument alone.
+The surface list still represents sequential, nested function types. Attaching
+the binder to an item records exactly which one argument drives each local
+inference step.
 
 One more important point: there is no syntax for “manually specifying” implicit
 type arguments. When designing an API you choose, for each type variable,
@@ -86,15 +93,15 @@ Implicit type parameters can also carry constraints, such as `<a: box>` or
 Start with the `Swap` example, but make it implicit:
 
 ```par
-dec Swap : <a, b>[(a, b)!] (b, a)!
+dec Swap : [<a, b> (a, b)!] (b, a)!
 ```
 
 To construct a value of this type, you also introduce the implicit type names
 at the term level, and then receive the value argument:
 
 ```par
-dec Swap : <a, b>[(a, b)!] (b, a)!
-def Swap = <a, b>[pair]
+dec Swap : [<a, b> (a, b)!] (b, a)!
+def Swap = [<a, b> pair]
   let (first, second)! = pair
   in (second, first)!
 ```
@@ -107,7 +114,7 @@ You can also use implicit generics when the type variable is nested inside a
 larger argument:
 
 ```par
-dec Flatten : <a>[List<List<a>>] List<a>
+dec Flatten : [<a> List<List<a>>] List<a>
 ```
 
 ## Destruction
@@ -149,7 +156,7 @@ A classic example is an anonymous function. The `box` here is not the point —
 it just happens that `Map` takes a boxed function.
 
 ```par
-dec Map : <a>[List<a>] <b>[box [a] b] List<b>
+dec Map : [<a> List<a>, <b> box [a] b] List<b>
 ```
 
 The list argument infers `a`. When checking the mapper, `b` is still unknown,
@@ -181,14 +188,15 @@ There is still no syntax for manually passing an implicit type argument.
 Implicit generics also exist for [pair](./pair.md) types. This is the implicit
 counterpart of [`exists`](./exists.md).
 
-Just like with functions, the `<a, ...>` binder is part of the following pair
-type: it must appear right before the `(...)` of that pair type.
+Just like with functions, the `<a, ...>` binder belongs to one value item, this
+time inside the pair's parentheses. Ordinary and implicit items can be mixed,
+as in `(Header, <a> a) Rest`.
 
 Here is a simple example. `AnyDrop` stores a value of some unknown type, plus a
 small “vtable” for dropping it (a boxed [choice](./choice.md)):
 
 ```par
-type AnyDrop = <a>(a) box choice {
+type AnyDrop = (<a> a) box choice {
   .drop(a) => !,
 }
 ```
@@ -217,7 +225,7 @@ Dually, when you unpack an implicit-generic pair, you introduce a local type
 variable:
 
 ```par
-let <a>(value) vtable = Example
+let (<a> value) vtable = Example
 vtable.drop(value)
 ```
 

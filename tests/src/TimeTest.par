@@ -118,7 +118,7 @@ def TestRfc3339 : [Test] ! = [test] do {
 // --- At and Parse ---------------------------------------------------------
 
 def TestAt : [Test] ! = [test]
-  Time.At(Time.UTC)(2024, 2, 29)(12, 30, 45).case {
+  Time.At(Time.UTC, 2024, 2, 29, 12, 30, 45).case {
     .some d => do {
       test
         .assert("leap day keeps the year", d.year == 2024)
@@ -132,13 +132,13 @@ def TestAt : [Test] ! = [test]
   }
 
 def TestAtRejectsInvalid : [Test] ! = [test]
-  Time.At(Time.UTC)(2023, 2, 29)(0, 0, 0).case {
+  Time.At(Time.UTC, 2023, 2, 29, 0, 0, 0).case {
     .some _ => do { test.assert("2023-02-29 should be rejected", .false!) } in !,
     .none! => do { test.assert("2023-02-29 is correctly rejected", .true!) } in !,
   }
 
 def TestCalendarArithmetic : [Test] ! = [test]
-  Time.At(Time.UTC)(2024, 1, 31)(0, 0, 0).case {
+  Time.At(Time.UTC, 2024, 1, 31, 0, 0, 0).case {
     .some d => do {
       let nextMonth = d.addMonths(1)
       test
@@ -149,7 +149,7 @@ def TestCalendarArithmetic : [Test] ! = [test]
   }
 
 def TestParse : [Test] ! = [test]
-  Time.Parse(Time.UTC)("%Y-%m-%d", "2030-12-25").case {
+  Time.Parse("2030-12-25", "%Y-%m-%d", Time.UTC).case {
     .some d => do {
       test
         .assert("parses the year", d.year == 2030)

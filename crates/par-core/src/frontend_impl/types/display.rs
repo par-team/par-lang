@@ -327,62 +327,54 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
     let mut then = typ;
     let mut wrote_prefix_item = false;
 
-    match typ {
-        Type::Function(_, arg, next_then, vars) if function && !vars.is_empty() => {
-            write!(f, "<{}", vars[0])?;
-            for var in vars.iter().skip(1) {
-                write!(f, ", {var}")?;
-            }
-            write!(f, ">{open}")?;
-            write_type_with_options(f, names, arg, options)?;
-            then = next_then;
-        }
-        Type::Pair(_, arg, next_then, vars) if !function && !vars.is_empty() => {
-            write!(f, "<{}", vars[0])?;
-            for var in vars.iter().skip(1) {
-                write!(f, ", {var}")?;
-            }
-            write!(f, ">{open}")?;
-            write_type_with_options(f, names, arg, options)?;
-            then = next_then;
-        }
-        _ => {
-            write!(f, "{open}")?;
-            loop {
-                match then {
-                    Type::Forall(_, name, next_then) if function => {
-                        if wrote_prefix_item {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "type {name}")?;
-                        then = next_then;
-                    }
-                    Type::Exists(_, name, next_then) if !function => {
-                        if wrote_prefix_item {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "type {name}")?;
-                        then = next_then;
-                    }
-                    Type::Function(_, arg, next_then, vars) if function && vars.is_empty() => {
-                        if wrote_prefix_item {
-                            write!(f, ", ")?;
-                        }
-                        write_type_with_options(f, names, arg, options)?;
-                        then = next_then;
-                    }
-                    Type::Pair(_, arg, next_then, vars) if !function && vars.is_empty() => {
-                        if wrote_prefix_item {
-                            write!(f, ", ")?;
-                        }
-                        write_type_with_options(f, names, arg, options)?;
-                        then = next_then;
-                    }
-                    _ => break,
+    write!(f, "{open}")?;
+    loop {
+        match then {
+            Type::Forall(_, name, next_then) if function => {
+                if wrote_prefix_item {
+                    write!(f, ", ")?;
                 }
-                wrote_prefix_item = true;
+                write!(f, "type {name}")?;
+                then = next_then;
             }
+            Type::Exists(_, name, next_then) if !function => {
+                if wrote_prefix_item {
+                    write!(f, ", ")?;
+                }
+                write!(f, "type {name}")?;
+                then = next_then;
+            }
+            Type::Function(_, arg, next_then, vars) if function => {
+                if wrote_prefix_item {
+                    write!(f, ", ")?;
+                }
+                if !vars.is_empty() {
+                    write!(f, "<{}", vars[0])?;
+                    for var in vars.iter().skip(1) {
+                        write!(f, ", {var}")?;
+                    }
+                    write!(f, "> ")?;
+                }
+                write_type_with_options(f, names, arg, options)?;
+                then = next_then;
+            }
+            Type::Pair(_, arg, next_then, vars) if !function => {
+                if wrote_prefix_item {
+                    write!(f, ", ")?;
+                }
+                if !vars.is_empty() {
+                    write!(f, "<{}", vars[0])?;
+                    for var in vars.iter().skip(1) {
+                        write!(f, ", {var}")?;
+                    }
+                    write!(f, "> ")?;
+                }
+                write_type_with_options(f, names, arg, options)?;
+                then = next_then;
+            }
+            _ => break,
         }
+        wrote_prefix_item = true;
     }
 
     let is_terminal = if function {
@@ -421,8 +413,7 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
         options.write_indentation(f)?;
         write!(f, ".{branch}")?;
         if choice {
-            if matches!(branch_type, Type::Function(.., vars) if vars.is_empty())
-                || matches!(branch_type, Type::Forall(..))
+            if matches!(branch_type, Type::Function(..)) || matches!(branch_type, Type::Forall(..))
             {
                 write_pair_like(f, names, "(", ") =>", branch_type, true, options)?;
             } else {
@@ -430,9 +421,10 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
                 write_type_with_options(f, names, branch_type, options)?;
             }
         } else {
-            if matches!(branch_type, Type::Break(_) | Type::Exists(..))
-                || matches!(branch_type, Type::Pair(.., vars) if vars.is_empty())
-            {
+            if matches!(
+                branch_type,
+                Type::Break(_) | Type::Exists(..) | Type::Pair(..)
+            ) {
                 // no space between `.foo` and `!`/`(`
             } else {
                 write!(f, " ")?;

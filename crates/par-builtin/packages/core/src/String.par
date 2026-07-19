@@ -125,22 +125,22 @@ export {
 
   // Creates a string `Parser` from a `Bytes.Reader`.
   // The error type matches the reader's error type.
-  dec ParseReader : <e>[Bytes.Reader<e>] Parser<e>
+  dec ParseReader : [<e> Bytes.Reader<e>] Parser<e>
 
   // Consumes a parser and returns all remaining unparsed input.
-  dec Remainder : <e>[Parser<e>] Try<e, String>
+  dec Remainder : [<e> Parser<e>] Try<e, String>
 
   // Closes a parser, returning any source error.
-  dec Close : <e>[Parser<e>] Try<e, !>
+  dec Close : [<e> Parser<e>] Try<e, !>
 
   // Splits a parser's remaining input into lines separated by `\n` or `\r\n`.
-  dec Lines : <e>[Parser<e>] Stream<e, String>
+  dec Lines : [<e> Parser<e>] Stream<e, String>
 
   // Splits a parser's remaining input on a string separator.
-  dec SplitBy : <e>[Parser<e>] [String] Stream<e, String>
+  dec SplitBy : [<e> Parser<e>, String] Stream<e, String>
 
   // Splits a parser's remaining input on a string pattern.
-  dec SplitByPattern : <e>[Parser<e>] [Pattern] Stream<e, String>
+  dec SplitByPattern : [<e> Parser<e>, Pattern] Stream<e, String>
 
   // Trims whitespace from both ends of a string.
   dec Trim : [String] String
@@ -201,7 +201,7 @@ export {
 
   // Reads all bytes from a `Reader` and decodes them into a `String`,
   // replacing invalid sequences with the Unicode replacement character.
-  dec ReadAll : <e>[Bytes.Reader<e>] Try<e, String>
+  dec ReadAll : [<e> Bytes.Reader<e>] Try<e, String>
 }
 
 def Quote = external
@@ -218,21 +218,21 @@ def Parse = external
 
 def ParseReader = external
 
-def Remainder = <e>[parser] parser.case {
+def Remainder = [<e> parser] parser.case {
   .empty! => .ok "",
   .ready parser => parser.remainder,
 }
 
-def Close = <e>[parser] parser.case {
+def Close = [<e> parser] parser.case {
   .empty! => .ok!,
   .ready parser => parser.close,
 }
 
-def Lines = <e>[parser] parser->SplitByPattern(.or *(.str "\r\n", .str "\n"))
+def Lines = [<e> parser] parser->SplitByPattern(.or *(.str "\r\n", .str "\n"))
 
-def SplitBy = <e>[parser] [separator] parser->SplitByPattern(.str separator)
+def SplitBy = [<e> parser, separator] parser->SplitByPattern(.str separator)
 
-def SplitByPattern = <e>[parser] [separator] parser.begin.case {
+def SplitByPattern = [<e> parser, separator] parser.begin.case {
   .empty! => .end.ok!,
   .ready parser => parser.minMax(.repeat.one.any!, separator).case {
     .err e => .end.err e,
@@ -370,7 +370,7 @@ def Chars = [string] Parse(string).begin.case {
   } in .item(char) parser.loop,
 }
 
-def ReadAll = <e>[reader] ParseReader(reader)->Remainder
+def ReadAll = [<e> reader] ParseReader(reader)->Remainder
 
 // Helpers
 

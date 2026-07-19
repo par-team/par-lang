@@ -12,7 +12,7 @@ use colored::Colorize;
 #[cfg(feature = "playground")]
 use eframe::egui;
 use par_core::{
-    frontend::{Type, set_miette_hook},
+    frontend::{Type, is_lowercase_identifier, set_miette_hook},
     runtime::RuntimeCompilerError,
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
@@ -235,62 +235,6 @@ fn map_workspace_build_error(error: WorkspaceBuildError) -> BuildError {
     }
 }
 
-fn is_reserved_package_name(name: &str) -> bool {
-    matches!(
-        name,
-        "begin"
-            | "box"
-            | "case"
-            | "catch"
-            | "chan"
-            | "choice"
-            | "dec"
-            | "def"
-            | "do"
-            | "dual"
-            | "either"
-            | "else"
-            | "export"
-            | "if"
-            | "import"
-            | "is"
-            | "in"
-            | "iterative"
-            | "let"
-            | "and"
-            | "as"
-            | "module"
-            | "or"
-            | "not"
-            | "loop"
-            | "poll"
-            | "repoll"
-            | "submit"
-            | "recursive"
-            | "self"
-            | "throw"
-            | "try"
-            | "default"
-            | "type"
-            | "unfounded"
-            | "external"
-    )
-}
-
-fn is_valid_package_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_lowercase() || first == '_') {
-        return false;
-    }
-    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return false;
-    }
-    !is_reserved_package_name(name)
-}
-
 fn create_new_package(package_name: &str) -> Result<PathBuf, NewPackageError> {
     let current_dir = std::env::current_dir()
         .map_err(|error| NewPackageError::CurrentDirectory(error.to_string()))?;
@@ -298,7 +242,7 @@ fn create_new_package(package_name: &str) -> Result<PathBuf, NewPackageError> {
 }
 
 fn create_new_package_in(base_dir: &Path, package_name: &str) -> Result<PathBuf, NewPackageError> {
-    if !is_valid_package_name(package_name) {
+    if !is_lowercase_identifier(package_name) {
         return Err(NewPackageError::InvalidPackageName(package_name.to_owned()));
     }
 
@@ -719,7 +663,12 @@ fn run_definition(
 
         let start = Instant::now();
         let package_to_run = rt_compiled.code.get_with_name(name).unwrap();
-        let (root, reducer_future) = par_runtime::start_and_instantiate(
+        let start_runtime = if print_stats {
+            par_runtime::start_and_instantiate_with_stats
+        } else {
+            par_runtime::start_and_instantiate
+        };
+        let (root, reducer_future) = start_runtime(
             Arc::new(TokioSpawn::new()),
             rt_compiled.code.arena.clone(),
             package_to_run,
@@ -761,7 +710,12 @@ fn run_definition_vm(binary_path: PathBuf, target: Option<String>, print_stats: 
             .definition_to_package
             .get(&target)
             .expect(format!("Definition {target} not found").as_str());
-        let (root, reducer_future) = par_runtime::start_and_instantiate(
+        let start_runtime = if print_stats {
+            par_runtime::start_and_instantiate_with_stats
+        } else {
+            par_runtime::start_and_instantiate
+        };
+        let (root, reducer_future) = start_runtime(
             Arc::new(TokioSpawn::new()),
             artifact.arena.clone(),
             package_to_run.clone(),

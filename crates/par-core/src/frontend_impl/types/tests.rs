@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::frontend_impl::language::{GlobalName, LocalName, TypeParameter, Universal};
+    use crate::frontend_impl::language::{
+        GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
+    };
     use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs};
     use crate::location::Span;
     use crate::workspace::render_type_in_scope;
@@ -180,6 +182,91 @@ mod tests {
         );
     }
 
+    fn constrained_param(constraint: TypeConstraint) -> TypeParameter {
+        TypeParameter {
+            name: LocalName {
+                span: Span::None,
+                string: ArcStr::from("a"),
+            },
+            constraint,
+        }
+    }
+
+    #[test]
+    fn test_exists_constraint_is_covariant() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let exists = |constraint| {
+            Type::<Universal>::Exists(
+                Span::None,
+                constrained_param(constraint),
+                Box::new(Type::pair(Type::var("a"), Type::break_())),
+            )
+        };
+
+        // A witness promising `box` may be used where no promise is needed...
+        assert!(
+            exists(TypeConstraint::Box)
+                .is_definitely_assignable_to(&exists(TypeConstraint::Any), &type_defs)
+                .unwrap()
+        );
+        // ...but an unconstrained (possibly linear) witness must not be
+        // passed off as a `box` one.
+        assert!(
+            !exists(TypeConstraint::Any)
+                .is_definitely_assignable_to(&exists(TypeConstraint::Box), &type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_forall_constraint_is_contravariant() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let forall = |constraint| {
+            Type::<Universal>::Forall(
+                Span::None,
+                constrained_param(constraint),
+                Box::new(Type::function(Type::var("a"), Type::break_())),
+            )
+        };
+
+        // Accepting any type is stronger than only accepting `box` types...
+        assert!(
+            forall(TypeConstraint::Any)
+                .is_definitely_assignable_to(&forall(TypeConstraint::Box), &type_defs)
+                .unwrap()
+        );
+        // ...but not the other way around.
+        assert!(
+            !forall(TypeConstraint::Box)
+                .is_definitely_assignable_to(&forall(TypeConstraint::Any), &type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_pair_vars_constraint_is_covariant() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let pair = |constraint| {
+            Type::<Universal>::Pair(
+                Span::None,
+                Box::new(Type::var("a")),
+                Box::new(Type::break_()),
+                vec![constrained_param(constraint)],
+            )
+        };
+
+        assert!(
+            pair(TypeConstraint::Box)
+                .is_definitely_assignable_to(&pair(TypeConstraint::Any), &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !pair(TypeConstraint::Any)
+                .is_definitely_assignable_to(&pair(TypeConstraint::Box), &type_defs)
+                .unwrap()
+        );
+    }
+
     #[test]
     fn test_empty_branches_render_on_one_line() {
         let mut pretty_either = String::new();
@@ -193,6 +280,91 @@ mod tests {
             .pretty(&mut pretty_choice, &TestNameWriter, 0)
             .unwrap();
         assert_eq!(pretty_choice, "choice {}");
+    }
+
+    #[test]
+    fn test_implicit_generic_items_render_inside_pair_like_delimiters() {
+        let parameter = |name: &str, constraint| TypeParameter {
+            name: LocalName {
+                span: Span::None,
+                string: ArcStr::from(name),
+            },
+            constraint,
+        };
+
+        let function = Type::<Universal>::Function(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::Function(
+                Span::None,
+                Box::new(Type::string()),
+                Box::new(Type::Function(
+                    Span::None,
+                    Box::new(Type::var("b")),
+                    Box::new(Type::int()),
+                    vec![parameter("b", TypeConstraint::Box)],
+                )),
+                vec![],
+            )),
+            vec![parameter("a", TypeConstraint::Any)],
+        );
+        let mut rendered = String::new();
+        function
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "[<a> a, String, <b: box> b] Int");
+
+        let pair = Type::<Universal>::Pair(
+            Span::None,
+            Box::new(Type::nat()),
+            Box::new(Type::Pair(
+                Span::None,
+                Box::new(Type::var("a")),
+                Box::new(Type::Pair(
+                    Span::None,
+                    Box::new(Type::string()),
+                    Box::new(Type::break_()),
+                    vec![],
+                )),
+                vec![parameter("a", TypeConstraint::Data)],
+            )),
+            vec![],
+        );
+        rendered.clear();
+        pair.pretty_compact(&mut rendered, &TestNameWriter).unwrap();
+        assert_eq!(rendered, "(Nat, <a: data> a, String)!");
+    }
+
+    #[test]
+    fn test_implicit_generic_branch_items_render_compactly() {
+        let parameter = TypeParameter::any(LocalName {
+            span: Span::None,
+            string: ArcStr::from("a"),
+        });
+        let pair = Type::<Universal>::Pair(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::break_()),
+            vec![parameter.clone()],
+        );
+        let function = Type::<Universal>::Function(
+            Span::None,
+            Box::new(Type::var("a")),
+            Box::new(Type::break_()),
+            vec![parameter],
+        );
+
+        let mut rendered = String::new();
+        Type::either(vec![("dat", pair)])
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "either {.dat(<a> a)!,}");
+
+        rendered.clear();
+        Type::choice(vec![("use", function)])
+            .pretty_compact(&mut rendered, &TestNameWriter)
+            .unwrap();
+        assert_eq!(rendered, "choice {.use(<a> a) => !,}");
     }
 
     #[test]
@@ -210,7 +382,7 @@ mod tests {
 
         assert_eq!(
             actual,
-            "choice {.delete => @__test__/Main.Map<String, Int>,.put => [Int] @__test__/Main.Map<String, Int>,}"
+            "choice {.delete => @__test__/Main.Map<String, Int>,.put(Int) => @__test__/Main.Map<String, Int>,}"
         );
     }
 
@@ -228,7 +400,7 @@ mod tests {
             "\
 choice {
   .delete => @__test__/Main.Map<String, Int>,
-  .put => [Int] @__test__/Main.Map<String, Int>,
+  .put(Int) => @__test__/Main.Map<String, Int>,
 }"
         );
     }
