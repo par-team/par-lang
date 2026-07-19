@@ -34,14 +34,17 @@ use par_runtime::{
     readback::Number,
 };
 use std::collections::BTreeMap;
-use winnow::token::literal;
 use winnow::{
     Parser,
-    combinator::{alt, cut_err, not, opt, peek, preceded, repeat, separated, terminated, trace},
+    combinator::{
+        alt, cut_err, delimited, not, opt, peek, preceded, repeat, separated, separated_pair, seq,
+        terminated, trace,
+    },
     error::{
         AddContext, ContextError, ErrMode, ModalError, ParserError, StrContext, StrContextValue,
     },
     stream::{Accumulate, Stream},
+    token::literal,
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -145,6 +148,27 @@ where
 {
     trace("commit_after", (prefix, cut_err(parser)))
 }
+fn commit_prec<Input, Prefix, Output, Error>(
+    prefix: impl Parser<Input, Prefix, Error>,
+    parser: impl Parser<Input, Output, Error>,
+) -> impl Parser<Input, Output, Error>
+where
+    Input: Stream,
+    Error: ParserError<Input> + ModalError,
+{
+    trace("commit_after", preceded(prefix, cut_err(parser)))
+}
+fn commit_delim<Input, Prefix, Output, Suffix, Error>(
+    prefix: impl Parser<Input, Prefix, Error>,
+    parser: impl Parser<Input, Output, Error>,
+    suffix: impl Parser<Input, Suffix, Error>,
+) -> impl Parser<Input, Output, Error>
+where
+    Input: Stream,
+    Error: ParserError<Input> + ModalError,
+{
+    trace("commit_after", delimited(prefix, cut_err(parser), suffix))
+}
 
 fn lowercase_identifier(input: &mut Input) -> Result<(Span, String)> {
     alt((
@@ -209,9 +233,7 @@ fn module_decl(input: &mut Input) -> Result<ModuleDecl> {
         commit_after(t(TokenKind::Module), uppercase_identifier),
     )
         .map(|(export_kw, (module_kw, (name_span, name)))| ModuleDecl {
-            span: export_kw
-                .map(|export_kw| export_kw.span.join(name_span.clone()))
-                .unwrap_or_else(|| module_kw.span.join(name_span)),
+            span: export_kw.unwrap_or(module_kw).span.join(name_span),
             exported: export_kw.is_some(),
             doc: None,
             name,
@@ -224,65 +246,34 @@ fn any_identifier(input: &mut Input) -> Result<(Span, String)> {
 }
 
 fn import_path(input: &mut Input) -> Result<(Span, ImportPath)> {
-    alt((
-        (
-            preceded(
-                t(TokenKind::At),
-                lowercase_identifier.map(|(_, string)| string),
-            ),
+    (
+        opt(delimited(
+            t(TokenKind::At),
+            lowercase_identifier.map(|(_, string)| string),
             t(TokenKind::Slash),
-            any_identifier,
-            repeat(0.., preceded(t(TokenKind::Slash), any_identifier)),
-        )
-            .map(
-                |(dependency, _slash, first, mut rest): (
-                    String,
-                    &Token,
-                    (Span, String),
-                    Vec<(Span, String)>,
-                )| {
-                    let mut directories = Vec::new();
-                    let mut end_span = first.0.clone();
-                    let mut module = first.1;
-                    for (span, segment) in rest.drain(..) {
-                        directories.push(module);
-                        module = segment;
-                        end_span = span;
-                    }
-                    (
-                        first.0.join(end_span),
-                        ImportPath {
-                            dependency: Some(dependency),
-                            directories,
-                            module,
-                        },
-                    )
+        )),
+        any_identifier,
+        repeat(0.., preceded(t(TokenKind::Slash), any_identifier)),
+    )
+        .map(|(dependency, first, mut rest): (_, _, Vec<_>)| {
+            let mut directories = Vec::new();
+            let mut end_span = first.0.clone();
+            let mut module = first.1;
+            for (span, segment) in rest.drain(..) {
+                directories.push(module);
+                module = segment;
+                end_span = span;
+            }
+            (
+                first.0.join(end_span),
+                ImportPath {
+                    dependency,
+                    directories,
+                    module,
                 },
-            ),
-        (
-            any_identifier,
-            repeat(0.., preceded(t(TokenKind::Slash), any_identifier)),
-        )
-            .map(|(first, mut rest): ((Span, String), Vec<(Span, String)>)| {
-                let mut directories = Vec::new();
-                let mut end_span = first.0.clone();
-                let mut module = first.1;
-                for (span, segment) in rest.drain(..) {
-                    directories.push(module);
-                    module = segment;
-                    end_span = span;
-                }
-                (
-                    first.0.join(end_span),
-                    ImportPath {
-                        dependency: None,
-                        directories,
-                        module,
-                    },
-                )
-            }),
-    ))
-    .parse_next(input)
+            )
+        })
+        .parse_next(input)
 }
 
 fn import_entry(input: &mut Input) -> Result<ImportDecl> {
@@ -293,31 +284,22 @@ fn import_entry(input: &mut Input) -> Result<ImportDecl> {
             uppercase_identifier.map(|(_, string)| string),
         )),
     )
-        .map(
-            |((path_span, path), alias): ((Span, ImportPath), Option<String>)| {
-                let span = path_span;
-                ImportDecl { span, path, alias }
-            },
-        )
+        .map(|((span, path), alias)| ImportDecl { span, path, alias })
         .parse_next(input)
 }
 
 fn import_statement(input: &mut Input) -> Result<Vec<ImportDecl>> {
-    commit_after(
+    commit_prec(
         t(TokenKind::Import),
         alt((
-            commit_after(
+            commit_delim(
                 t(TokenKind::LCurly),
-                (
-                    repeat(0.., terminated(import_entry, opt(t(TokenKind::Comma)))),
-                    t(TokenKind::RCurly),
-                ),
-            )
-            .map(|(_lcurly, (items, _rcurly))| items),
+                repeat(0.., terminated(import_entry, opt(t(TokenKind::Comma)))),
+                t(TokenKind::RCurly),
+            ),
             import_entry.map(|item| vec![item]),
         )),
     )
-    .map(|(_import, entries)| entries)
     .parse_next(input)
 }
 
@@ -371,11 +353,12 @@ fn export_statement(input: &mut Input) -> Result<Vec<ModuleItem<Expression<Unres
     commit_after(
         t(TokenKind::Export),
         alt((
-            commit_after(
+            commit_delim(
                 t(TokenKind::LCurly),
-                (repeat(0.., export_block_item), t(TokenKind::RCurly)),
+                repeat(0.., export_block_item),
+                t(TokenKind::RCurly),
             )
-            .map(|(_lcurly, (items, _rcurly))| ExportStatement::Block(items)),
+            .map(ExportStatement::Block),
             type_def.map(ExportStatement::TypeDef),
             declaration.map(ExportStatement::Declaration),
         )),
@@ -549,7 +532,7 @@ pub(crate) fn parse_source_file(
     input: &str,
     file: FileName,
 ) -> std::result::Result<SourceFile<Expression<Unresolved>>, SyntaxError> {
-    let lexed = lex_with_comments(&input, &file);
+    let lexed = lex_with_comments(input, &file);
     let comments = lexed.comments;
     let tokens = lexed.tokens;
     let e = match source_file(Input::new(&tokens)) {
@@ -608,14 +591,14 @@ fn attach_doc_comments(
 ) {
     let mut barriers = Vec::new();
 
-    if let Some(module_decl) = source_file.module_decl.as_ref() {
-        if let Some((start, end)) = module_decl.span.points() {
-            barriers.push(TopLevelBarrier {
-                start,
-                end,
-                target: Some(DocTarget::ModuleDecl),
-            });
-        }
+    if let Some(module_decl) = source_file.module_decl.as_ref()
+        && let Some((start, end)) = module_decl.span.points()
+    {
+        barriers.push(TopLevelBarrier {
+            start,
+            end,
+            target: Some(DocTarget::ModuleDecl),
+        });
     }
 
     for import in &source_file.imports {
@@ -854,7 +837,7 @@ fn definition(
             t(TokenKind::Eq),
             alt((
                 t(TokenKind::External).map(|t| DefinitionBody::External(t.span.clone())),
-                expression.map(|expr| DefinitionBody::Par(expr)),
+                expression.map(DefinitionBody::Par),
             )),
         ),
     )
@@ -1102,15 +1085,11 @@ fn unconstrained_type_parameter(input: &mut Input) -> Result<TypeParameter> {
 }
 
 fn explicit_type_parameter(input: &mut Input) -> Result<TypeParameter> {
-    commit_after(t(TokenKind::Type), type_parameter)
-        .map(|(_, parameter)| parameter)
-        .parse_next(input)
+    commit_prec(t(TokenKind::Type), type_parameter).parse_next(input)
 }
 
 fn implicit_type_parameters(input: &mut Input) -> Result<Vec<TypeParameter>> {
-    commit_after(t(TokenKind::Lt), (list1(type_parameter), t(TokenKind::Gt)))
-        .map(|(_, (parameters, _))| parameters)
-        .parse_next(input)
+    commit_delim(t(TokenKind::Lt), list1(type_parameter), t(TokenKind::Gt)).parse_next(input)
 }
 
 fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
@@ -1134,13 +1113,12 @@ fn pattern_prefix_item(input: &mut Input) -> Result<PatternPrefixItem> {
 fn send_prefix_item(close: TokenKind, input: &mut Input) -> Result<SendPrefixItem> {
     let checkpoint = input.checkpoint();
     if t::<Error>(TokenKind::Type).parse_next(input).is_ok() {
-        if let Ok(typ) = typ.parse_next(input) {
-            if peek(alt((t::<Error>(TokenKind::Comma), t::<Error>(close))))
+        if let Ok(typ) = typ.parse_next(input)
+            && peek(alt((t::<Error>(TokenKind::Comma), t::<Error>(close))))
                 .parse_next(input)
                 .is_ok()
-            {
-                return Ok(SendPrefixItem::Explicit(typ));
-            }
+        {
+            return Ok(SendPrefixItem::Explicit(typ));
         }
         input.reset(&checkpoint);
     }
@@ -1229,7 +1207,7 @@ fn type_params(input: &mut Input) -> Result<Option<(Span, Vec<TypeParameter>)>> 
     .parse_next(input)
 }
 
-fn type_args<'s>(input: &mut Input) -> Result<Option<(Span, Vec<Type<Unresolved>>)>> {
+fn type_args(input: &mut Input) -> Result<Option<(Span, Vec<Type<Unresolved>>)>> {
     opt(commit_after(
         t(TokenKind::Lt),
         (list1(typ), t(TokenKind::Gt)),
@@ -1243,9 +1221,7 @@ fn typ_branch(input: &mut Input) -> Result<Type<Unresolved>> {
 }
 
 fn typ_branch_then(input: &mut Input) -> Result<Type<Unresolved>> {
-    commit_after(t(TokenKind::FatArrow), typ)
-        .map(|(_, typ)| typ)
-        .parse_next(input)
+    commit_prec(t(TokenKind::FatArrow), typ).parse_next(input)
 }
 
 fn typ_branch_receive(input: &mut Input) -> Result<Type<Unresolved>> {
@@ -1266,9 +1242,7 @@ fn typ_branch_receive(input: &mut Input) -> Result<Type<Unresolved>> {
 }
 
 fn annotation(input: &mut Input) -> Result<Option<Type<Unresolved>>> {
-    opt(commit_after(t(TokenKind::Colon), typ))
-        .map(|opt| opt.map(|(_, typ)| typ))
-        .parse_next(input)
+    opt(commit_prec(t(TokenKind::Colon), typ)).parse_next(input)
 }
 
 // pattern           = { pattern_name | pattern_receive | pattern_continue | pattern_recv_type }
@@ -1454,34 +1428,30 @@ fn multiplicative_operator(input: &mut Input) -> Result<(Span, ArithmeticOperato
 fn infix_or(input: &mut Input) -> Result<Expression<Unresolved>> {
     (
         infix_and,
-        repeat(0.., commit_after(t(TokenKind::Or), infix_and)),
+        repeat(0.., commit_prec(t(TokenKind::Or), infix_and)),
     )
-        .map(
-            |(first, rest): (Expression<Unresolved>, Vec<(_, Expression<Unresolved>)>)| {
-                rest.into_iter().fold(first, |left, (_or_tok, right)| {
-                    fold_condition_expression(left, right, |span, left, right| {
-                        Condition::Or(span, Box::new(left), Box::new(right))
-                    })
+        .map(|(first, rest): (_, Vec<_>)| {
+            rest.into_iter().fold(first, |left, right| {
+                fold_condition_expression(left, right, |span, left, right| {
+                    Condition::Or(span, Box::new(left), Box::new(right))
                 })
-            },
-        )
+            })
+        })
         .parse_next(input)
 }
 
 fn infix_and(input: &mut Input) -> Result<Expression<Unresolved>> {
     (
         infix_not,
-        repeat(0.., commit_after(t(TokenKind::And), infix_not)),
+        repeat(0.., commit_prec(t(TokenKind::And), infix_not)),
     )
-        .map(
-            |(first, rest): (Expression<Unresolved>, Vec<(_, Expression<Unresolved>)>)| {
-                rest.into_iter().fold(first, |left, (_and_tok, right)| {
-                    fold_condition_expression(left, right, |span, left, right| {
-                        Condition::And(span, Box::new(left), Box::new(right))
-                    })
+        .map(|(first, rest): (_, Vec<_>)| {
+            rest.into_iter().fold(first, |left, right| {
+                fold_condition_expression(left, right, |span, left, right| {
+                    Condition::And(span, Box::new(left), Box::new(right))
                 })
-            },
-        )
+            })
+        })
         .parse_next(input)
 }
 
@@ -1532,26 +1502,21 @@ fn infix_comparison(input: &mut Input) -> Result<Expression<Unresolved>> {
         infix_additive,
         repeat(0.., commit_after(comparison_operator, infix_additive)),
     )
-        .map(
-            |(first, rest): (
-                Expression<Unresolved>,
-                Vec<((Span, ComparisonOperator), Expression<Unresolved>)>,
-            )| {
-                if rest.is_empty() {
-                    first
-                } else {
-                    let span = first.span().join(rest.last().unwrap().1.span());
-                    Expression::ComparisonChain {
-                        span,
-                        first: Box::new(first),
-                        rest: rest
-                            .into_iter()
-                            .map(|((op_span, op), expr)| ComparisonStep { op_span, op, expr })
-                            .collect(),
-                    }
+        .map(|(first, rest): (_, Vec<_>)| {
+            if rest.is_empty() {
+                first
+            } else {
+                let span = first.span().join(rest.last().unwrap().1.span());
+                Expression::ComparisonChain {
+                    span,
+                    first: Box::new(first),
+                    rest: rest
+                        .into_iter()
+                        .map(|((op_span, op), expr)| ComparisonStep { op_span, op, expr })
+                        .collect(),
                 }
-            },
-        )
+            }
+        })
         .parse_next(input)
 }
 
@@ -1560,24 +1525,19 @@ fn infix_additive(input: &mut Input) -> Result<Expression<Unresolved>> {
         infix_multiplicative,
         repeat(0.., commit_after(additive_operator, infix_multiplicative)),
     )
-        .map(
-            |(first, rest): (
-                Expression<Unresolved>,
-                Vec<((Span, ArithmeticOperator), Expression<Unresolved>)>,
-            )| {
-                rest.into_iter()
-                    .fold(first, |left, ((op_span, op), right)| {
-                        let span = left.span().join(right.span());
-                        Expression::Arithmetic {
-                            span,
-                            op_span,
-                            op,
-                            left: Box::new(left),
-                            right: Box::new(right),
-                        }
-                    })
-            },
-        )
+        .map(|(first, rest): (_, Vec<_>)| {
+            rest.into_iter()
+                .fold(first, |left, ((op_span, op), right)| {
+                    let span = left.span().join(right.span());
+                    Expression::Arithmetic {
+                        span,
+                        op_span,
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                })
+        })
         .parse_next(input)
 }
 
@@ -1586,24 +1546,19 @@ fn infix_multiplicative(input: &mut Input) -> Result<Expression<Unresolved>> {
         infix_unary,
         repeat(0.., commit_after(multiplicative_operator, infix_unary)),
     )
-        .map(
-            |(first, rest): (
-                Expression<Unresolved>,
-                Vec<((Span, ArithmeticOperator), Expression<Unresolved>)>,
-            )| {
-                rest.into_iter()
-                    .fold(first, |left, ((op_span, op), right)| {
-                        let span = left.span().join(right.span());
-                        Expression::Arithmetic {
-                            span,
-                            op_span,
-                            op,
-                            left: Box::new(left),
-                            right: Box::new(right),
-                        }
-                    })
-            },
-        )
+        .map(|(first, rest): (_, Vec<_>)| {
+            rest.into_iter()
+                .fold(first, |left, ((op_span, op), right)| {
+                    let span = left.span().join(right.span());
+                    Expression::Arithmetic {
+                        span,
+                        op_span,
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
+                })
+        })
         .parse_next(input)
 }
 
@@ -1704,12 +1659,11 @@ fn expr_list(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Star),
         (
-            t(TokenKind::LParen),
-            list0(expression),
+            preceded(t(TokenKind::LParen), list0(expression)),
             t(TokenKind::RParen),
         ),
     )
-    .map(|(pre, (_, items, post))| Expression::List(pre.span.join(post.span()), items))
+    .map(|(pre, (items, post))| Expression::List(pre.span.join(post.span()), items))
     .parse_next(input)
 }
 
@@ -1778,19 +1732,22 @@ fn expr_literal_bytes(input: &mut Input) -> Result<Expression<Unresolved>> {
 }
 
 fn expr_literal_bytes_empty(input: &mut Input) -> Result<Expression<Unresolved>> {
-    commit_after((t(TokenKind::Lt), t(TokenKind::Link)), t(TokenKind::Gt))
-        .map(|((pre, _), post)| {
-            Expression::Primitive(pre.span.join(post.span()), Primitive::Bytes(Bytes::new()))
-        })
-        .parse_next(input)
+    commit_after(
+        terminated(t(TokenKind::Lt), t(TokenKind::Link)),
+        t(TokenKind::Gt),
+    )
+    .map(|(pre, post)| {
+        Expression::Primitive(pre.span.join(post.span()), Primitive::Bytes(Bytes::new()))
+    })
+    .parse_next(input)
 }
 
 fn expr_literal_bytes_nonempty(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
-        (t(TokenKind::Lt), t(TokenKind::Lt)),
-        (literal_bytes_inner, t(TokenKind::Gt), t(TokenKind::Gt)),
+        terminated(t(TokenKind::Lt), t(TokenKind::Lt)),
+        separated_pair(literal_bytes_inner, t(TokenKind::Gt), t(TokenKind::Gt)),
     )
-    .map(|((pre, _), (bytes, _, post))| {
+    .map(|(pre, (bytes, post))| {
         Expression::Primitive(
             pre.span.join(post.span()),
             Primitive::Bytes(Bytes::from(bytes)),
@@ -1823,46 +1780,42 @@ fn literal_byte(input: &mut Input) -> Result<u8> {
 fn expr_let(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Let),
-        (
+        seq!(
             pattern,
-            t(TokenKind::Eq),
+            _: t(TokenKind::Eq),
             expression,
-            t(TokenKind::In),
+            _: t(TokenKind::In),
             expression,
         ),
     )
-    .map(
-        |(pre, (pattern, _, expression, _in_tok, body))| Expression::Let {
-            span: pre.span.join(body.span()),
-            pattern,
-            expression: Box::new(expression),
-            then: Box::new(body),
-        },
-    )
+    .map(|(pre, (pattern, expression, body))| Expression::Let {
+        span: pre.span.join(body.span()),
+        pattern,
+        expression: Box::new(expression),
+        then: Box::new(body),
+    })
     .parse_next(input)
 }
 
 fn expr_catch(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Catch),
-        (
+        seq!(
             label,
             pattern,
-            t(TokenKind::FatArrow),
+            _: t(TokenKind::FatArrow),
             expression,
-            t(TokenKind::In),
+            _: t(TokenKind::In),
             expression,
         ),
     )
-    .map(
-        |(pre, (label, pattern, _, block, _in_tok, then))| Expression::Catch {
-            span: pre.span.join(then.span()),
-            label,
-            pattern,
-            block: Box::new(block),
-            then: Box::new(then),
-        },
-    )
+    .map(|(pre, (label, pattern, block, then))| Expression::Catch {
+        span: pre.span.join(then.span()),
+        label,
+        pattern,
+        block: Box::new(block),
+        then: Box::new(then),
+    })
     .parse_next(input)
 }
 
@@ -1879,33 +1832,38 @@ fn expr_throw(input: &mut Input) -> Result<Expression<Unresolved>> {
 }
 
 fn expr_type_in(input: &mut Input) -> Result<Expression<Unresolved>> {
-    commit_after(t(TokenKind::Type), (typ, t(TokenKind::In), expression))
-        .map(|(pre, (typ, _in_tok, expr))| Expression::TypeIn {
-            span: pre.span.join(expr.span()),
-            typ,
-            expr: Box::new(expr),
-        })
-        .parse_next(input)
+    commit_after(
+        t(TokenKind::Type),
+        separated_pair(typ, t(TokenKind::In), expression),
+    )
+    .map(|(pre, (typ, expr))| Expression::TypeIn {
+        span: pre.span.join(expr.span()),
+        typ,
+        expr: Box::new(expr),
+    })
+    .parse_next(input)
 }
 
 fn expr_if(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::If),
-        (
+        preceded(
             t(TokenKind::LCurly),
-            repeat(1.., expr_if_branch),
-            opt((
-                t(TokenKind::Else),
-                cut_err((t(TokenKind::FatArrow), expression)),
-                opt(t(TokenKind::Comma)),
-            )),
-            t(TokenKind::RCurly),
+            (
+                repeat(1.., expr_if_branch),
+                opt(delimited(
+                    t(TokenKind::Else),
+                    cut_err(preceded(t(TokenKind::FatArrow), expression.map(Box::new))),
+                    opt(t(TokenKind::Comma)),
+                )),
+                t(TokenKind::RCurly),
+            ),
         ),
     )
-    .map(|(kw, (_open, branches, else_part, close))| Expression::If {
+    .map(|(kw, (branches, else_, close))| Expression::If {
         span: kw.span.join(close.span()),
         branches,
-        else_: else_part.map(|(_, (_, else_expr), _)| Box::new(else_expr)),
+        else_,
     })
     .parse_next(input)
 }
@@ -1913,49 +1871,30 @@ fn expr_if(input: &mut Input) -> Result<Expression<Unresolved>> {
 fn expr_poll(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Poll),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
-            t(TokenKind::RParen),
-            t(TokenKind::LCurly),
+            _: t(TokenKind::RParen),
+            _: t(TokenKind::LCurly),
             local_name,
-            t(TokenKind::FatArrow),
-            expression,
-            opt(t(TokenKind::Comma)),
-            t(TokenKind::Else),
-            cut_err((t(TokenKind::FatArrow), expression)),
-            opt(t(TokenKind::Comma)),
+            _: t(TokenKind::FatArrow),
+            expression.map(Box::new),
+            _: opt(t(TokenKind::Comma)),
+            _: t(TokenKind::Else),
+            cut_err(preceded(t(TokenKind::FatArrow), expression.map(Box::new))),
+            _: opt(t(TokenKind::Comma)),
             t(TokenKind::RCurly),
         ),
     )
     .map(
-        |(
-            kw,
-            (
-                label,
-                _open,
-                clients,
-                _close,
-                _open2,
-                name,
-                _arrow,
-                then,
-                _comma1,
-                _else_kw,
-                (_, else_),
-                _comma2,
-                close,
-            ),
-        )| {
-            Expression::Poll {
-                span: kw.span.join(close.span()),
-                label,
-                clients,
-                name,
-                then: Box::new(then),
-                else_: Box::new(else_),
-            }
+        |(kw, (label, clients, name, then, else_, close))| Expression::Poll {
+            span: kw.span.join(close.span()),
+            label,
+            clients,
+            name,
+            then,
+            else_,
         },
     )
     .parse_next(input)
@@ -1964,85 +1903,60 @@ fn expr_poll(input: &mut Input) -> Result<Expression<Unresolved>> {
 fn expr_repoll(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Repoll),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
-            t(TokenKind::RParen),
-            t(TokenKind::LCurly),
+            _: t(TokenKind::RParen),
+            _: t(TokenKind::LCurly),
             local_name,
-            t(TokenKind::FatArrow),
-            expression,
-            opt(t(TokenKind::Comma)),
-            t(TokenKind::Else),
-            cut_err((t(TokenKind::FatArrow), expression)),
-            opt(t(TokenKind::Comma)),
+            _: t(TokenKind::FatArrow),
+            expression.map(Box::new),
+            _: opt(t(TokenKind::Comma)),
+            _: t(TokenKind::Else),
+            cut_err(preceded(t(TokenKind::FatArrow), expression.map(Box::new))),
+            _: opt(t(TokenKind::Comma)),
             t(TokenKind::RCurly),
         ),
     )
     .map(
-        |(
-            kw,
-            (
-                label,
-                _open,
-                clients,
-                _close,
-                _open2,
-                name,
-                _arrow,
-                then,
-                _comma1,
-                _else_kw,
-                (_, else_),
-                _comma2,
-                close,
-            ),
-        )| {
-            Expression::Repoll {
-                span: kw.span.join(close.span()),
-                label,
-                clients,
-                name,
-                then: Box::new(then),
-                else_: Box::new(else_),
-            }
+        |(kw, (label, clients, name, then, else_, close))| Expression::Repoll {
+            span: kw.span.join(close.span()),
+            label,
+            clients,
+            name,
+            then,
+            else_,
         },
     )
     .parse_next(input)
 }
 
 fn expr_if_branch(input: &mut Input) -> Result<(Condition<Unresolved>, Expression<Unresolved>)> {
-    (
+    seq!(
         condition,
-        t(TokenKind::FatArrow),
+        _: t(TokenKind::FatArrow),
         expression,
-        opt(t(TokenKind::Comma)),
+        _: opt(t(TokenKind::Comma)),
     )
-        .map(|(condition, _, body, _)| (condition, body))
-        .parse_next(input)
+    .parse_next(input)
 }
 
 fn expr_do(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(
         t(TokenKind::Do),
-        (
+        seq!(
             t(TokenKind::LCurly),
-            opt(process),
-            (t(TokenKind::RCurly), t(TokenKind::In)),
-            expression,
+            opt(process.map(|x| x.1)),
+            _: (t(TokenKind::RCurly), t(TokenKind::In)),
+            expression.map(Box::new),
         ),
     )
-    .map(
-        |(pre, (open, process, (_close, _in_tok), expression))| Expression::Do {
-            span: pre.span.join(expression.span()),
-            process: match process {
-                Some((_, process)) => Box::new(process),
-                None => Box::new(Process::fallthrough(open.span.only_end())),
-            },
-            then: Box::new(expression),
-        },
-    )
+    .map(|(pre, (open, process, then))| Expression::Do {
+        span: pre.span.join(then.span()),
+        process: Box::new(process.unwrap_or_else(|| Process::fallthrough(open.span.only_end()))),
+        then,
+    })
     .parse_next(input)
 }
 
@@ -2060,17 +1974,14 @@ fn expr_chan(input: &mut Input) -> Result<Expression<Unresolved>> {
         (
             pattern,
             t(TokenKind::LCurly),
-            opt(process),
+            opt(process.map(|x| x.1)),
             t(TokenKind::RCurly),
         ),
     )
     .map(|(pre, (pattern, open, process, close))| Expression::Chan {
         span: pre.span.join(close.span.clone()),
         pattern,
-        process: match process {
-            Some((_, process)) => Box::new(process),
-            None => Box::new(Process::fallthrough(open.span.only_end())),
-        },
+        process: Box::new(process.unwrap_or_else(|| Process::fallthrough(open.span.only_end()))),
     })
     .parse_next(input)
 }
@@ -2247,46 +2158,40 @@ fn cons_break(input: &mut Input) -> Result<ConstructionPiece> {
         .parse_next(input)
 }
 
+fn cons_begin_inner(input: &mut Input, unfounded: bool) -> Result<ConstructionPiece> {
+    commit_after(
+        t(if unfounded {
+            TokenKind::Unfounded
+        } else {
+            TokenKind::Begin
+        }),
+        (label, construction),
+    )
+    .map(|(begin_kw, (label, (then_full_span, body)))| {
+        let span = match &label {
+            Some(label) => begin_kw.span.join(label.span()),
+            None => begin_kw.span(),
+        };
+        let full_span = begin_kw.span.join(then_full_span);
+        ConstructionPiece::Terminator(
+            full_span,
+            ConstructTerminator::Begin {
+                span,
+                unfounded,
+                label,
+                body: Box::new(body),
+            },
+        )
+    })
+    .parse_next(input)
+}
+
 fn cons_begin(input: &mut Input) -> Result<ConstructionPiece> {
-    commit_after(t(TokenKind::Begin), (label, construction))
-        .map(|(begin_kw, (label, (then_full_span, construct)))| {
-            let short_span = match &label {
-                Some(label) => begin_kw.span.join(label.span()),
-                None => begin_kw.span(),
-            };
-            let full_span = begin_kw.span.join(then_full_span);
-            ConstructionPiece::Terminator(
-                full_span,
-                ConstructTerminator::Begin {
-                    span: short_span,
-                    unfounded: false,
-                    label,
-                    body: Box::new(construct),
-                },
-            )
-        })
-        .parse_next(input)
+    cons_begin_inner(input, false)
 }
 
 fn cons_unfounded(input: &mut Input) -> Result<ConstructionPiece> {
-    commit_after(t(TokenKind::Unfounded), (label, construction))
-        .map(|(unfounded_kw, (label, (then_full_span, construct)))| {
-            let short_span = match &label {
-                Some(label) => unfounded_kw.span.join(label.span()),
-                None => unfounded_kw.span(),
-            };
-            let full_span = unfounded_kw.span.join(then_full_span);
-            ConstructionPiece::Terminator(
-                full_span,
-                ConstructTerminator::Begin {
-                    span: short_span,
-                    unfounded: true,
-                    label,
-                    body: Box::new(construct),
-                },
-            )
-        })
-        .parse_next(input)
+    cons_begin_inner(input, true)
 }
 
 fn cons_loop(input: &mut Input) -> Result<ConstructionPiece> {
@@ -2304,14 +2209,14 @@ fn cons_loop(input: &mut Input) -> Result<ConstructionPiece> {
 fn cons_submit(input: &mut Input) -> Result<ConstructionPiece> {
     commit_after(
         t(TokenKind::Submit),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
             t(TokenKind::RParen),
         ),
     )
-    .map(|(kw, (label, _open, values, close))| {
+    .map(|(kw, (label, values, close))| {
         let span = kw.span.join(close.span());
         ConstructionPiece::Terminator(
             span.clone(),
@@ -2363,7 +2268,7 @@ fn cons_branch_receive(input: &mut Input) -> Result<ConstructBranchPiece> {
         ConstructBranchPiece::Steps(
             items
                 .into_iter()
-                .map(|item| match item {
+                .map(move |item| match item {
                     PatternPrefixItem::Explicit(name) => {
                         ConstructBranchStep::ReceiveType(span.clone(), name)
                     }
@@ -2495,92 +2400,55 @@ fn apply_case(input: &mut Input) -> Result<ApplyPiece> {
     .parse_next(input)
 }
 
-fn apply_begin(input: &mut Input) -> Result<ApplyPiece> {
-    commit_after((t(TokenKind::Dot), t(TokenKind::Begin)), (label, apply))
-        .map(|((pre, begin_kw), (label, then))| {
-            let (then_full_span, then) = match (&label, then) {
-                (_, Some((span, apply))) => (span, apply),
-                (Some(label), None) => {
-                    let s = label.span.only_end();
-                    (
-                        s.clone(),
-                        Apply {
-                            steps: Vec::new(),
-                            terminator: ApplyTerminator::Noop(s),
-                        },
-                    )
-                }
-                (None, None) => {
-                    let s = begin_kw.span.only_end();
-                    (
-                        s.clone(),
-                        Apply {
-                            steps: Vec::new(),
-                            terminator: ApplyTerminator::Noop(s),
-                        },
-                    )
-                }
-            };
-            let short_span = match &label {
-                Some(label) => pre.span.join(label.span()),
-                None => pre.span.join(begin_kw.span()),
-            };
-            let full_span = pre.span.join(then_full_span);
-            ApplyPiece::Terminator(
-                full_span,
-                ApplyTerminator::Begin {
-                    span: short_span,
-                    unfounded: false,
-                    label,
-                    body: Box::new(then),
+fn apply_begin_inner(input: &mut Input, unfounded: bool) -> Result<ApplyPiece> {
+    commit_after(
+        (
+            t(TokenKind::Dot),
+            t(if unfounded {
+                TokenKind::Unfounded
+            } else {
+                TokenKind::Begin
+            }),
+        ),
+        (label, apply),
+    )
+    .map(|((pre, begin_kw), (label, then))| {
+        let (then_full_span, then) = then.unwrap_or_else(|| {
+            let s = label
+                .as_ref()
+                .map_or(&begin_kw.span, |x| &x.span)
+                .only_end();
+            (
+                s.clone(),
+                Apply {
+                    steps: Vec::new(),
+                    terminator: ApplyTerminator::Noop(s),
                 },
             )
-        })
-        .parse_next(input)
+        });
+        let span = match &label {
+            Some(label) => pre.span.join(label.span()),
+            None => pre.span.join(begin_kw.span()),
+        };
+        ApplyPiece::Terminator(
+            pre.span.join(then_full_span),
+            ApplyTerminator::Begin {
+                span,
+                unfounded,
+                label,
+                body: Box::new(then),
+            },
+        )
+    })
+    .parse_next(input)
+}
+
+fn apply_begin(input: &mut Input) -> Result<ApplyPiece> {
+    apply_begin_inner(input, false)
 }
 
 fn apply_unfounded(input: &mut Input) -> Result<ApplyPiece> {
-    commit_after((t(TokenKind::Dot), t(TokenKind::Unfounded)), (label, apply))
-        .map(|((pre, unfounded_kw), (label, then))| {
-            let (then_full_span, then) = match (&label, then) {
-                (_, Some((span, apply))) => (span, apply),
-                (Some(label), None) => {
-                    let s = label.span.only_end();
-                    (
-                        s.clone(),
-                        Apply {
-                            steps: Vec::new(),
-                            terminator: ApplyTerminator::Noop(s),
-                        },
-                    )
-                }
-                (None, None) => {
-                    let s = unfounded_kw.span.only_end();
-                    (
-                        s.clone(),
-                        Apply {
-                            steps: Vec::new(),
-                            terminator: ApplyTerminator::Noop(s),
-                        },
-                    )
-                }
-            };
-            let short_span = match &label {
-                Some(label) => pre.span.join(label.span()),
-                None => pre.span.join(unfounded_kw.span()),
-            };
-            let full_span = pre.span.join(then_full_span);
-            ApplyPiece::Terminator(
-                full_span,
-                ApplyTerminator::Begin {
-                    span: short_span,
-                    unfounded: true,
-                    label,
-                    body: Box::new(then),
-                },
-            )
-        })
-        .parse_next(input)
+    apply_begin_inner(input, true)
 }
 
 fn apply_loop(input: &mut Input) -> Result<ApplyPiece> {
@@ -2609,10 +2477,10 @@ fn apply_try(input: &mut Input) -> Result<ApplyPiece> {
 
 fn apply_default(input: &mut Input) -> Result<ApplyPiece> {
     commit_after(
-        (t(TokenKind::Dot), t(TokenKind::Default)),
-        (t(TokenKind::LParen), expression, t(TokenKind::RParen)),
+        terminated(t(TokenKind::Dot), t(TokenKind::Default)),
+        preceded(t(TokenKind::LParen), (expression, t(TokenKind::RParen))),
     )
-    .map(|((dot, _pre), (_, expr, close))| {
+    .map(|(dot, (expr, close))| {
         let short_span = dot.span.join(close.span());
         ApplyPiece::Steps(
             short_span.clone(),
@@ -2669,8 +2537,11 @@ enum ApplyBranchPiece {
 }
 
 fn apply_branch_then(input: &mut Input) -> Result<ApplyBranchPiece> {
-    (local_name, cut_err((t(TokenKind::FatArrow), expression)))
-        .map(|(name, (_, expression))| {
+    (
+        local_name,
+        cut_err(preceded(t(TokenKind::FatArrow), expression)),
+    )
+        .map(|(name, expression)| {
             ApplyBranchPiece::Terminator(ApplyBranchTerminator::Then(
                 name.span.join(expression.span()),
                 name,
@@ -2705,14 +2576,17 @@ fn apply_branch_receive(input: &mut Input) -> Result<ApplyBranchPiece> {
 }
 
 fn apply_branch_continue(input: &mut Input) -> Result<ApplyBranchPiece> {
-    commit_after(t(TokenKind::Bang), (t(TokenKind::FatArrow), expression))
-        .map(|(token, (_, expression))| {
-            ApplyBranchPiece::Terminator(ApplyBranchTerminator::Continue(
-                token.span.join(expression.span()),
-                expression,
-            ))
-        })
-        .parse_next(input)
+    commit_after(
+        t(TokenKind::Bang),
+        preceded(t(TokenKind::FatArrow), expression),
+    )
+    .map(|(token, expression)| {
+        ApplyBranchPiece::Terminator(ApplyBranchTerminator::Continue(
+            token.span.join(expression.span()),
+            expression,
+        ))
+    })
+    .parse_next(input)
 }
 
 fn apply_branch_try(input: &mut Input) -> Result<ApplyBranchPiece> {
@@ -2729,10 +2603,10 @@ fn apply_branch_try(input: &mut Input) -> Result<ApplyBranchPiece> {
 
 fn apply_branch_default(input: &mut Input) -> Result<ApplyBranchPiece> {
     commit_after(
-        (t(TokenKind::Default), t(TokenKind::LParen)),
+        terminated(t(TokenKind::Default), t(TokenKind::LParen)),
         (expression, t(TokenKind::RParen)),
     )
-    .map(|((kw, _), (expr, close))| {
+    .map(|(kw, (expr, close))| {
         ApplyBranchPiece::Steps(vec![ApplyBranchStep::Default(
             kw.span.join(close.span()),
             Box::new(expr),
@@ -2917,22 +2791,25 @@ fn process(input: &mut Input) -> Result<(Span, Process<Unresolved>)> {
 }
 
 fn proc_let(input: &mut Input) -> Result<(Span, ProcessHead)> {
-    commit_after(t(TokenKind::Let), (pattern, t(TokenKind::Eq), expression))
-        .map(|(pre, (pattern, _, expression))| {
-            let span = pre.span.join(expression.span());
-            (
-                span.clone(),
-                ProcessHead::Linear(
-                    ProcessStep::Let {
-                        span,
-                        pattern,
-                        value: Box::new(expression),
-                    },
-                    ProcessContinuation::Optional,
-                ),
-            )
-        })
-        .parse_next(input)
+    commit_after(
+        t(TokenKind::Let),
+        separated_pair(pattern, t(TokenKind::Eq), expression),
+    )
+    .map(|(pre, (pattern, expression))| {
+        let span = pre.span.join(expression.span());
+        (
+            span.clone(),
+            ProcessHead::Linear(
+                ProcessStep::Let {
+                    span,
+                    pattern,
+                    value: Box::new(expression),
+                },
+                ProcessContinuation::Optional,
+            ),
+        )
+    })
+    .parse_next(input)
 }
 
 fn compound_assign_operator(input: &mut Input) -> Result<(Span, ArithmeticOperator)> {
@@ -2978,32 +2855,30 @@ fn proc_compound_assign(input: &mut Input) -> Result<(Span, ProcessHead)> {
 fn proc_catch(input: &mut Input) -> Result<(Span, ProcessHead)> {
     commit_after(
         t(TokenKind::Catch),
-        (
+        seq!(
             label,
             pattern,
-            t(TokenKind::FatArrow),
-            t(TokenKind::LCurly),
-            process,
-            t(TokenKind::RCurly),
+            _: t(TokenKind::FatArrow),
+            _: t(TokenKind::LCurly),
+            process.map(|x| Box::new(x.1)),
+            _: t(TokenKind::RCurly),
         ),
     )
-    .map(
-        |(pre, (label, pattern, _, _, (_block_full_span, block), _))| {
-            let span = pre.span.join(block.span());
-            (
-                span.clone(),
-                ProcessHead::Linear(
-                    ProcessStep::Catch {
-                        span,
-                        label,
-                        pattern,
-                        block: Box::new(block),
-                    },
-                    ProcessContinuation::Required,
-                ),
-            )
-        },
-    )
+    .map(|(pre, (label, pattern, block))| {
+        let span = pre.span.join(block.span());
+        (
+            span.clone(),
+            ProcessHead::Linear(
+                ProcessStep::Catch {
+                    span,
+                    label,
+                    pattern,
+                    block,
+                },
+                ProcessContinuation::Required,
+            ),
+        )
+    })
     .parse_next(input)
 }
 
@@ -3026,25 +2901,25 @@ fn proc_throw(input: &mut Input) -> Result<(Span, ProcessHead)> {
 fn proc_poll(input: &mut Input) -> Result<(Span, ProcessHead)> {
     commit_after(
         t(TokenKind::Poll),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
-            t(TokenKind::RParen),
-            t(TokenKind::LCurly),
+            _: t(TokenKind::RParen),
+            _: t(TokenKind::LCurly),
             local_name,
-            t(TokenKind::FatArrow),
+            _: t(TokenKind::FatArrow),
             t(TokenKind::LCurly),
             opt(process),
             t(TokenKind::RCurly),
-            opt(t(TokenKind::Comma)),
-            t(TokenKind::Else),
-            cut_err((
-                t(TokenKind::FatArrow),
+            _: opt(t(TokenKind::Comma)),
+            _: t(TokenKind::Else),
+            cut_err(seq!(
+                _: t(TokenKind::FatArrow),
                 t(TokenKind::LCurly),
                 opt(process),
                 t(TokenKind::RCurly),
-                opt(t(TokenKind::Comma)),
+                _: opt(t(TokenKind::Comma)),
             )),
             t(TokenKind::RCurly),
         ),
@@ -3054,18 +2929,12 @@ fn proc_poll(input: &mut Input) -> Result<(Span, ProcessHead)> {
             kw,
             (
                 label,
-                _open,
                 clients,
-                _close,
-                _open2,
                 name,
-                _arrow,
                 body_open,
                 then,
                 body_close,
-                _comma1,
-                _else_kw,
-                (_else_arrow, else_open, else_body, else_close, _comma2),
+                (else_open, else_body, else_close),
                 close,
             ),
         )| {
@@ -3095,25 +2964,25 @@ fn proc_poll(input: &mut Input) -> Result<(Span, ProcessHead)> {
 fn proc_repoll(input: &mut Input) -> Result<(Span, ProcessHead)> {
     commit_after(
         t(TokenKind::Repoll),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
-            t(TokenKind::RParen),
-            t(TokenKind::LCurly),
+            _: t(TokenKind::RParen),
+            _: t(TokenKind::LCurly),
             local_name,
-            t(TokenKind::FatArrow),
+            _: t(TokenKind::FatArrow),
             t(TokenKind::LCurly),
             opt(process),
             t(TokenKind::RCurly),
-            opt(t(TokenKind::Comma)),
-            t(TokenKind::Else),
-            cut_err((
-                t(TokenKind::FatArrow),
+            _: opt(t(TokenKind::Comma)),
+            _: t(TokenKind::Else),
+            cut_err(seq!(
+                _: t(TokenKind::FatArrow),
                 t(TokenKind::LCurly),
                 opt(process),
                 t(TokenKind::RCurly),
-                opt(t(TokenKind::Comma)),
+                _: opt(t(TokenKind::Comma)),
             )),
             t(TokenKind::RCurly),
         ),
@@ -3123,18 +2992,12 @@ fn proc_repoll(input: &mut Input) -> Result<(Span, ProcessHead)> {
             kw,
             (
                 label,
-                _open,
                 clients,
-                _close,
-                _open2,
                 name,
-                _arrow,
                 body_open,
                 then,
                 body_close,
-                _comma1,
-                _else_kw,
-                (_else_arrow, else_open, else_body, else_close, _comma2),
+                (else_open, else_body, else_close),
                 close,
             ),
         )| {
@@ -3164,14 +3027,14 @@ fn proc_repoll(input: &mut Input) -> Result<(Span, ProcessHead)> {
 fn proc_submit(input: &mut Input) -> Result<(Span, ProcessHead)> {
     commit_after(
         t(TokenKind::Submit),
-        (
+        seq!(
             label,
-            t(TokenKind::LParen),
+            _: t(TokenKind::LParen),
             list0(expression),
             t(TokenKind::RParen),
         ),
     )
-    .map(|(kw, (label, _open, values, close))| {
+    .map(|(kw, (label, values, close))| {
         let span = kw.span.join(close.span());
         (
             span.clone(),
@@ -3219,69 +3082,69 @@ fn proc_if_block(input: &mut Input) -> Result<(Span, ProcessHead)> {
 }
 
 fn proc_if_branch(input: &mut Input) -> Result<(Condition<Unresolved>, Process<Unresolved>)> {
-    (
+    seq!(
         condition,
         t(TokenKind::FatArrow),
-        t(TokenKind::LCurly),
+        _: t(TokenKind::LCurly),
         opt(process),
         t(TokenKind::RCurly),
-        opt(t(TokenKind::Comma)),
+        _: opt(t(TokenKind::Comma)),
     )
-        .map(|(condition, _, open, body, close, _)| {
-            (
-                condition,
-                body.map(|(_, p)| p)
-                    .unwrap_or(Process::fallthrough(open.span.join(close.span()))),
-            )
-        })
-        .parse_next(input)
+    .map(|(condition, open, body, close)| {
+        (
+            condition,
+            body.map(|(_, p)| p)
+                .unwrap_or(Process::fallthrough(open.span.join(close.span()))),
+        )
+    })
+    .parse_next(input)
 }
 
 fn proc_if_else_body(input: &mut Input) -> Result<Option<Process<Unresolved>>> {
-    (
-        t(TokenKind::FatArrow),
+    seq!(
+        _: t(TokenKind::FatArrow),
         t(TokenKind::LCurly),
         opt(process),
         t(TokenKind::RCurly),
     )
-        .map(|(_, open, body, close)| {
-            body.map(|(_, p)| p)
-                .unwrap_or(Process::fallthrough(open.span.join(close.span())))
-        })
-        .map(Some)
-        .parse_next(input)
+    .map(|(open, body, close)| {
+        body.map(|(_, p)| p)
+            .unwrap_or(Process::fallthrough(open.span.join(close.span())))
+    })
+    .map(Some)
+    .parse_next(input)
 }
 
 fn proc_if_inline(input: &mut Input) -> Result<(Span, ProcessHead)> {
-    (
+    seq!(
         t(TokenKind::If),
         alt((
             (t(TokenKind::LCurly), condition, t(TokenKind::RCurly))
                 .map(|(_, condition, _)| condition),
             (not(peek(t(TokenKind::LCurly))), condition).map(|(_, condition)| condition),
         )),
-        t(TokenKind::FatArrow),
+        _: t(TokenKind::FatArrow),
         t(TokenKind::LCurly),
         opt(process),
         t(TokenKind::RCurly),
     )
-        .map(|(kw, condition, _, open, then_proc, close)| {
-            let span = kw.span.join(close.span());
-            (
-                span.clone(),
-                ProcessHead::If {
-                    span,
-                    branches: vec![(
-                        condition,
-                        then_proc
-                            .map(|(_, p)| p)
-                            .unwrap_or(Process::fallthrough(open.span.join(close.span()))),
-                    )],
-                    else_: Some(Box::new(Process::fallthrough(close.span().only_end()))),
-                },
-            )
-        })
-        .parse_next(input)
+    .map(|(kw, condition, open, then_proc, close)| {
+        let span = kw.span.join(close.span());
+        (
+            span.clone(),
+            ProcessHead::If {
+                span,
+                branches: vec![(
+                    condition,
+                    then_proc
+                        .map(|(_, p)| p)
+                        .unwrap_or(Process::fallthrough(open.span.join(close.span()))),
+                )],
+                else_: Some(Box::new(Process::fallthrough(close.span().only_end()))),
+            },
+        )
+    })
+    .parse_next(input)
 }
 
 fn global_command(input: &mut Input) -> Result<(Span, ProcessHead)> {
@@ -3367,12 +3230,14 @@ fn noop_cmd(span: Span) -> Command<Unresolved> {
     }
 }
 
-fn command_accepts_process_tail(command: &Command<Unresolved>) -> bool {
-    match &command.terminator {
-        CommandTerminator::Then(_) | CommandTerminator::Case(..) => true,
-        CommandTerminator::Begin { body, .. } => command_accepts_process_tail(body),
-        CommandTerminator::Link(..) | CommandTerminator::Break(_) | CommandTerminator::Loop(..) => {
-            false
+fn command_accepts_process_tail(mut command: &Command<Unresolved>) -> bool {
+    loop {
+        command = match &command.terminator {
+            CommandTerminator::Begin { body, .. } => body,
+            CommandTerminator::Then(_) | CommandTerminator::Case(..) => break true,
+            CommandTerminator::Link(..)
+            | CommandTerminator::Break(_)
+            | CommandTerminator::Loop(..) => break false,
         }
     }
 }
@@ -3443,10 +3308,8 @@ fn cmd(input: &mut Input) -> Result<Option<(Span, Command<Unresolved>)>> {
 }
 
 fn required_cmd(input: &mut Input) -> Result<(Span, Command<Unresolved>)> {
-    match cmd(input)? {
-        Some(command) => Ok(command),
-        None => Err(ErrMode::Backtrack(ParseContextError::from_input(input))),
-    }
+    cmd(input)
+        .and_then(|x| x.ok_or_else(|| ErrMode::Backtrack(ParseContextError::from_input(input))))
 }
 
 enum CommandPiece {
@@ -3559,70 +3422,50 @@ fn cmd_continue(input: &mut Input) -> Result<CommandPiece> {
         .parse_next(input)
 }
 
+fn cmd_begin_inner(input: &mut Input, unfounded: bool) -> Result<CommandPiece> {
+    commit_after(
+        (
+            t(TokenKind::Dot),
+            t(if unfounded {
+                TokenKind::Unfounded
+            } else {
+                TokenKind::Begin
+            }),
+        ),
+        (label, cmd),
+    )
+    .map(|((pre, begin_kw), (label, cmd))| {
+        let (cmd_full_span, cmd) = cmd.unwrap_or_else(|| {
+            let s = label
+                .as_ref()
+                .map_or(&begin_kw.span, |x| &x.span)
+                .only_end();
+            (s.clone(), noop_cmd(s))
+        });
+        let span = match &label {
+            Some(label) => pre.span.join(label.span()),
+            None => pre.span.join(begin_kw.span()),
+        };
+        CommandPiece::Terminator(
+            pre.span.join(cmd_full_span),
+            CommandTerminator::Begin {
+                span,
+                unfounded,
+                label,
+                body: Box::new(cmd),
+                continuation: None,
+            },
+        )
+    })
+    .parse_next(input)
+}
+
 fn cmd_begin(input: &mut Input) -> Result<CommandPiece> {
-    commit_after((t(TokenKind::Dot), t(TokenKind::Begin)), (label, cmd))
-        .map(|((pre, begin_kw), (label, cmd))| {
-            let (cmd_full_span, cmd) = match (&label, cmd) {
-                (_, Some((span, cmd))) => (span, cmd),
-                (Some(label), None) => {
-                    let s = label.span.only_end();
-                    (s.clone(), noop_cmd(s))
-                }
-                (None, None) => {
-                    let s = begin_kw.span.only_end();
-                    (s.clone(), noop_cmd(s))
-                }
-            };
-            let short_span = match &label {
-                Some(label) => pre.span.join(label.span()),
-                None => pre.span.join(begin_kw.span()),
-            };
-            let full_span = pre.span.join(cmd_full_span);
-            CommandPiece::Terminator(
-                full_span,
-                CommandTerminator::Begin {
-                    span: short_span,
-                    unfounded: false,
-                    label,
-                    body: Box::new(cmd),
-                    continuation: None,
-                },
-            )
-        })
-        .parse_next(input)
+    cmd_begin_inner(input, false)
 }
 
 fn cmd_unfounded(input: &mut Input) -> Result<CommandPiece> {
-    commit_after((t(TokenKind::Dot), t(TokenKind::Unfounded)), (label, cmd))
-        .map(|((pre, unfounded_kw), (label, cmd))| {
-            let (cmd_full_span, cmd) = match (&label, cmd) {
-                (_, Some((span, cmd))) => (span, cmd),
-                (Some(label), None) => {
-                    let s = label.span.only_end();
-                    (s.clone(), noop_cmd(s))
-                }
-                (None, None) => {
-                    let s = unfounded_kw.span.only_end();
-                    (s.clone(), noop_cmd(s))
-                }
-            };
-            let short_span = match &label {
-                Some(label) => pre.span.join(label.span()),
-                None => pre.span.join(unfounded_kw.span()),
-            };
-            let full_span = pre.span.join(cmd_full_span);
-            CommandPiece::Terminator(
-                full_span,
-                CommandTerminator::Begin {
-                    span: short_span,
-                    unfounded: true,
-                    label,
-                    body: Box::new(cmd),
-                    continuation: None,
-                },
-            )
-        })
-        .parse_next(input)
+    cmd_begin_inner(input, true)
 }
 
 fn cmd_loop(input: &mut Input) -> Result<CommandPiece> {
@@ -3655,14 +3498,14 @@ fn cmd_try(input: &mut Input) -> Result<CommandPiece> {
 fn cmd_default(input: &mut Input) -> Result<CommandPiece> {
     (
         t(TokenKind::Dot),
-        (
-            t(TokenKind::Default),
-            t(TokenKind::LParen),
+        seq!(
+            _: t(TokenKind::Default),
+            _: t(TokenKind::LParen),
             expression,
             t(TokenKind::RParen),
         ),
     )
-        .map(|(dot, (_, _, expr, close))| {
+        .map(|(dot, (expr, close))| {
             let short_span = dot.span.join(close.span());
             CommandPiece::Steps(
                 short_span.clone(),
@@ -3775,14 +3618,14 @@ fn cmd_branch_receive(input: &mut Input) -> Result<CommandBranchPiece> {
 fn cmd_branch_continue(input: &mut Input) -> Result<CommandBranchPiece> {
     commit_after(
         t(TokenKind::Bang),
-        (
-            t(TokenKind::FatArrow),
+        seq!(
+            _: t(TokenKind::FatArrow),
             t(TokenKind::LCurly),
             opt(process),
             t(TokenKind::RCurly),
         ),
     )
-    .map(|(token, (_, open, process, close))| {
+    .map(|(token, (open, process, close))| {
         CommandBranchPiece::Terminator(CommandBranchTerminator::Continue(
             token.span.join(close.span()),
             match process {
@@ -3808,10 +3651,10 @@ fn cmd_branch_try(input: &mut Input) -> Result<CommandBranchPiece> {
 
 fn cmd_branch_default(input: &mut Input) -> Result<CommandBranchPiece> {
     commit_after(
-        (t(TokenKind::Default), t(TokenKind::LParen)),
+        terminated(t(TokenKind::Default), t(TokenKind::LParen)),
         (expression, t(TokenKind::RParen)),
     )
-    .map(|((kw, _), (expr, close))| {
+    .map(|(kw, (expr, close))| {
         CommandBranchPiece::Steps(vec![CommandBranchStep::Default(
             kw.span.join(close.span()),
             Box::new(expr),
@@ -3827,6 +3670,7 @@ fn label(input: &mut Input) -> Result<Option<LocalName>> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::assert_matches;
 
     fn parse_single_definition_expression(source: &str) -> Expression<Unresolved> {
         let parsed = parse_source_file(source, "Main.par".into()).unwrap();
@@ -4545,5 +4389,12 @@ def F = 1.0e-6
                 "accepted invalid float source: {source:?}"
             );
         }
+    }
+    #[test]
+    fn lists() {
+        assert_matches!(parse_module("def Value = *()", "lists.par".into()), Ok(_));
+        assert_matches!(parse_module("def Value = *(,)", "lists.par".into()), Err(_));
+        assert_matches!(parse_module("def Value = *(1)", "lists.par".into()), Ok(_));
+        assert_matches!(parse_module("def Value = *(1,)", "lists.par".into()), Ok(_));
     }
 }
