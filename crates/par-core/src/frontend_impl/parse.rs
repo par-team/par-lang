@@ -119,10 +119,7 @@ where
     P: Parser<Input<'i>, O, Error>,
     Vec<O>: Accumulate<O>,
 {
-    terminated(
-        separated(0.., item, t(TokenKind::Comma)),
-        opt(t(TokenKind::Comma)),
-    )
+    opt(list1(item)).map(Option::unwrap_or_default)
 }
 
 fn list1<'i, P, O>(item: P) -> impl Parser<Input<'i>, Vec<O>, Error> + use<'i, P, O>
