@@ -39,7 +39,7 @@ pub enum TypeError<S> {
     InvalidBranch(Span, LocalName, Type<S>),
     MissingBranch(Span, LocalName, Type<S>),
     RedundantBranch(Span, LocalName, Type<S>),
-    MergeVariableMissing(Span, LocalName),
+    BlockVariableNotPreserved(Span, LocalName),
     MergeVariableTypesCannotBeUnified(Span, LocalName, Type<S>, Type<S>),
     VariableEscapesTypeScope(Span, LocalName),
     TypesCannotBeUnified(Span, Type<S>, Type<S>),
@@ -389,11 +389,11 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     typ_str
                 )
             }
-            Self::MergeVariableMissing(span, name) => {
+            Self::BlockVariableNotPreserved(span, name) => {
                 let labels = labels_from_span(code, span);
                 miette::miette!(
                     labels = labels,
-                    "Variable `{}` is missing in one of the merging paths.",
+                    "Variable `{}` is not preserved along this control-flow path.",
                     name
                 )
             }
@@ -600,7 +600,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::InvalidBranch(span, _, _)
             | Self::MissingBranch(span, _, _)
             | Self::RedundantBranch(span, _, _)
-            | Self::MergeVariableMissing(span, _)
+            | Self::BlockVariableNotPreserved(span, _)
             | Self::MergeVariableTypesCannotBeUnified(span, _, _, _)
             | Self::VariableEscapesTypeScope(span, _)
             | Self::NoSuchLoopPoint(span, _)

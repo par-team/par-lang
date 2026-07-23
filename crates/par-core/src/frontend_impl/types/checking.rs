@@ -576,6 +576,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         let typed_else = else_ctx.check_process(else_, emit);
 
+        self.blocks = else_ctx.blocks;
         self.variables.clear();
 
         Terminator::Poll {
@@ -719,21 +720,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Terminator<Type<S>, S> {
-        let impossible = Type::either(vec![]);
-        let mut exhaustive = false;
-        for typ in self.variables.values() {
-            match typ.is_definitely_assignable_to(&impossible, &self.type_defs) {
-                Ok(true) => {
-                    exhaustive = true;
-                    break;
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    emit(error);
-                }
-            }
-        }
-        if !exhaustive {
+        let absurd = self.is_absurd().unwrap_or_else(|error| {
+            emit(error);
+            false
+        });
+        if !absurd {
             emit(TypeError::NonExhaustiveIf(span.clone()));
         }
         self.variables.clear();
@@ -749,12 +740,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Terminator<Type<S>, S> {
         let target_type_vars = self.type_defs.vars.clone();
+        let free_variables = body.free_variables();
         if self
             .blocks
             .insert(
                 index,
                 BlockScope {
                     target_type_vars,
+                    free_variables,
                     paths: Vec::new(),
                 },
             )
@@ -779,9 +772,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 typed_then,
             );
         }
-        let free = body.free_variables();
-        let contexts = filter_block_path_contexts(&target_type_defs, span, scope.paths, emit);
-        let merged = merge_path_contexts(&target_type_defs, span, &contexts, &free, emit);
+        let merged = merge_path_contexts(&target_type_defs, span, &scope.paths, emit);
 
         let saved = self.variables.clone();
         self.variables = merged;
@@ -798,15 +789,73 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         index: usize,
         caps: &Captures,
-        _emit: &mut impl FnMut(TypeError<S>),
+        emit: &mut impl FnMut(TypeError<S>),
     ) -> Terminator<Type<S>, S> {
-        let entry = self.blocks.get_mut(&index).unwrap();
-        entry.paths.push(BlockPathContext {
-            variables: self.variables.clone(),
-            type_vars: self.type_defs.vars.clone(),
-        });
+        let path = self.take_block_path_context(span, index, None, emit);
+        if path.is_some()
+            && let Err(error) = self.cannot_have_obligations(span)
+        {
+            emit(error);
+        }
         self.variables.clear();
+        if let Some(path) = path {
+            self.blocks.get_mut(&index).unwrap().paths.push(path);
+        }
         Terminator::Goto(span.clone(), index, caps.clone())
+    }
+
+    fn take_block_path_context(
+        &mut self,
+        span: &Span,
+        index: usize,
+        inference_subject: Option<&LocalName>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Option<BlockPathContext<S>> {
+        let absurd = self.is_absurd().unwrap_or_else(|error| {
+            emit(error);
+            false
+        });
+        if absurd {
+            return None;
+        }
+
+        let scope = self
+            .blocks
+            .get(&index)
+            .expect("block should have been registered");
+        let free_variables = scope.free_variables.clone();
+        let target_type_vars = scope.target_type_vars.clone();
+
+        if let Some(inference_subject) = inference_subject {
+            self.variables.shift_remove(inference_subject);
+        }
+
+        let mut variables = IndexMap::new();
+        for name in free_variables {
+            let Some(typ) = self.variables.shift_remove(&name) else {
+                emit(TypeError::BlockVariableNotPreserved(
+                    span.clone(),
+                    name.clone(),
+                ));
+                variables.insert(name, Type::Fail(span.clone()));
+                continue;
+            };
+
+            let escapes_type_scope = free_type_vars(&typ)
+                .iter()
+                .any(|var| !target_type_vars.contains_key(var));
+            if escapes_type_scope {
+                emit(TypeError::VariableEscapesTypeScope(
+                    span.clone(),
+                    name.clone(),
+                ));
+                variables.insert(name, Type::Fail(span.clone()));
+            } else {
+                variables.insert(name, typ);
+            }
+        }
+
+        Some(BlockPathContext { variables })
     }
 
     fn normalize_command_type(
@@ -1998,7 +2047,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.infer_process_block(span, *index, body, then, inference_subject, emit)
             }
             Terminator::Goto(span, index, captures) => {
-                self.infer_process_goto(span, *index, captures, emit)
+                self.infer_process_goto(span, *index, captures, inference_subject, emit)
             }
         }
     }
@@ -2322,6 +2371,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         let (typed_else, else_type) = else_ctx.infer_process(else_, inference_subject, emit);
 
+        self.blocks = else_ctx.blocks;
         self.variables.clear();
 
         (
@@ -2478,21 +2528,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Terminator<Type<S>, S>, Type<S>) {
-        let impossible = Type::either(vec![]);
-        let mut exhaustive = false;
-        for typ in self.variables.values() {
-            match typ.is_definitely_assignable_to(&impossible, &self.type_defs) {
-                Ok(true) => {
-                    exhaustive = true;
-                    break;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    emit(e);
-                }
-            }
-        }
-        if !exhaustive {
+        let absurd = self.is_absurd().unwrap_or_else(|error| {
+            emit(error);
+            false
+        });
+        if !absurd {
             emit(TypeError::NonExhaustiveIf(span.clone()));
         }
         self.variables.clear();
@@ -2509,12 +2549,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Terminator<Type<S>, S>, Type<S>) {
         let target_type_vars = self.type_defs.vars.clone();
+        let mut free_variables = body.free_variables();
+        free_variables.shift_remove(inference_subject);
         if self
             .blocks
             .insert(
                 index,
                 BlockScope {
                     target_type_vars,
+                    free_variables,
                     paths: Vec::new(),
                 },
             )
@@ -2542,15 +2585,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 then_type,
             );
         }
-        let free = body.free_variables();
-        let contexts = filter_block_path_contexts(&target_type_defs, span, scope.paths, emit)
-            .into_iter()
-            .map(|mut ctx| {
-                ctx.shift_remove(inference_subject);
-                ctx
-            })
-            .collect();
-        let merged = merge_path_contexts(&target_type_defs, span, &contexts, &free, emit);
+        let merged = merge_path_contexts(&target_type_defs, span, &scope.paths, emit);
 
         let saved = self.variables.clone();
         self.variables = merged;
@@ -2576,14 +2611,19 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         index: usize,
         caps: &Captures,
-        _emit: &mut impl FnMut(TypeError<S>),
+        inference_subject: &LocalName,
+        emit: &mut impl FnMut(TypeError<S>),
     ) -> (Terminator<Type<S>, S>, Type<S>) {
-        let entry = self.blocks.get_mut(&index).unwrap();
-        entry.paths.push(BlockPathContext {
-            variables: self.variables.clone(),
-            type_vars: self.type_defs.vars.clone(),
-        });
+        let path = self.take_block_path_context(span, index, Some(inference_subject), emit);
+        if path.is_some()
+            && let Err(error) = self.cannot_have_obligations(span)
+        {
+            emit(error);
+        }
         self.variables.clear();
+        if let Some(path) = path {
+            self.blocks.get_mut(&index).unwrap().paths.push(path);
+        }
         (
             Terminator::Goto(span.clone(), index, caps.clone()),
             Type::choice(vec![]),
@@ -3214,98 +3254,22 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
     out
 }
 
-fn filter_block_path_contexts<S: Clone + Eq + std::hash::Hash>(
-    target_type_defs: &TypeDefs<S>,
-    span: &Span,
-    paths: Vec<BlockPathContext<S>>,
-    emit: &mut impl FnMut(TypeError<S>),
-) -> Vec<IndexMap<LocalName, Type<S>>> {
-    paths
-        .into_iter()
-        .map(|path| {
-            let mut path_type_defs = target_type_defs.clone();
-            path_type_defs.vars = path.type_vars;
-            path.variables
-                .into_iter()
-                .filter_map(|(name, typ)| {
-                    let escapes_type_scope = free_type_vars(&typ)
-                        .iter()
-                        .any(|var| !target_type_defs.vars.contains_key(var));
-
-                    if !escapes_type_scope {
-                        return Some((name, typ));
-                    }
-
-                    if typ.is_linear(&path_type_defs).unwrap_or(true) {
-                        emit(TypeError::VariableEscapesTypeScope(
-                            span.clone(),
-                            name.clone(),
-                        ));
-                    }
-
-                    None
-                })
-                .collect()
-        })
-        .collect()
-}
-
 fn merge_path_contexts<S: Clone + Eq + std::hash::Hash>(
     typedefs: &TypeDefs<S>,
     span: &Span,
-    paths: &Vec<IndexMap<LocalName, Type<S>>>,
-    free_vars: &IndexSet<LocalName>,
+    paths: &[BlockPathContext<S>],
     emit: &mut impl FnMut(TypeError<S>),
 ) -> IndexMap<LocalName, Type<S>> {
-    // Collect all variable names present in any path.
-    let mut all_names: IndexSet<LocalName> = IndexSet::new();
-    for map in paths {
-        all_names.extend(map.keys().cloned());
-    }
+    let first = paths.first().expect("block should have an incoming path");
 
     let mut merged_variables = IndexMap::new();
-    for name in all_names {
-        let used = free_vars.contains(&name);
-        let mut present_types: Vec<Type<S>> = Vec::new();
-        let mut missing = false;
-        for map in paths {
-            if let Some(t) = map.get(&name) {
-                present_types.push(t.clone());
-            } else {
-                missing = true;
-            }
-        }
-
-        let is_linear = present_types
-            .iter()
-            .any(|t| t.is_linear(typedefs).unwrap_or(true));
-
-        let is_absurd = present_types.iter().any(|t| {
-            t.is_definitely_assignable_to(&Type::either(vec![]), typedefs)
-                .unwrap_or(false)
-        });
-
-        // If any present type is Fail and the variable is missing from some paths,
-        // its presence is unreliable due to error recovery — drop it to avoid
-        // cascading errors.
-        let is_fail = present_types.iter().any(|t| matches!(t, Type::Fail(_)));
-
-        if (!used && !is_linear && !is_absurd) || (is_fail && missing) {
-            // Drop it.
-            continue;
-        }
-
-        // Variable used or linear: must be present everywhere.
-        if missing {
-            emit(TypeError::MergeVariableMissing(span.clone(), name.clone()));
-            continue;
-        }
-
-        let mut acc = present_types
-            .get(0)
-            .cloned()
-            .expect("at least one type when not missing");
-        for next in present_types.iter().skip(1) {
+    for (name, typ) in &first.variables {
+        let mut acc = typ.clone();
+        for path in paths.iter().skip(1) {
+            let next = path
+                .variables
+                .get(name)
+                .expect("goto should preserve every block input");
             acc = match union_types(typedefs, span, &acc, next) {
                 Ok(t) => t,
                 Err(_) => {
