@@ -24,12 +24,12 @@ pub(crate) struct PollScope<S> {
 #[derive(Clone, Debug)]
 pub(crate) struct BlockPathContext<S> {
     pub(crate) variables: IndexMap<LocalName, Type<S>>,
-    pub(crate) type_vars: IndexMap<LocalName, TypeConstraint>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct BlockScope<S> {
     pub(crate) target_type_vars: IndexMap<LocalName, TypeConstraint>,
+    pub(crate) free_variables: IndexSet<LocalName>,
     pub(crate) paths: Vec<BlockPathContext<S>>,
 }
 
@@ -287,6 +287,19 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             .iter()
             .filter(|(_, typ)| typ.is_linear(&self.type_defs).ok().unwrap_or(true))
             .map(|(name, _)| name)
+    }
+
+    pub(crate) fn is_absurd(&self) -> Result<bool, TypeError<S>> {
+        let impossible = Type::either(vec![]);
+        for typ in self.variables.values() {
+            if matches!(typ, Type::Fail(_)) {
+                continue;
+            }
+            if typ.is_definitely_assignable_to(&impossible, &self.type_defs)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) fn cannot_have_obligations(&mut self, span: &Span) -> Result<(), TypeError<S>> {
