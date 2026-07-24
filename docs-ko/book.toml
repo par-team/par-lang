@@ -1,0 +1,18 @@
+[book]
+title = "Par 언어 문서 (한국어)"
+authors = ["s15n", "EatChangmyeong"]
+description = "Par 프로그래밍 언어의 공식 문서"
+src = "src"
+language = "ko"
+
+[output.html]
+theme = "par-theme"
+default-theme = "light"
+preferred-dark-theme = "navy"
+smart-punctuation = true
+git-repository-url = "https://github.com/par-team/par-lang/tree/main/docs-ko"
+mathjax-support = true
+edit-url-template = "https://github.com/par-team/par-lang/edit/main/docs-ko/{path}"
+
+[output.html.code.hidelines]
+par = "# "
