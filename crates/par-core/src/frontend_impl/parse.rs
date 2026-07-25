@@ -2649,17 +2649,6 @@ fn process_head(input: &mut Input) -> Result<(Span, ProcessHead)> {
     .parse_next(input)
 }
 
-fn pass_process_head(input: &mut Input) -> Result<(Span, ProcessHead)> {
-    alt((
-        proc_if,
-        proc_let,
-        expression_command,
-        global_command,
-        command,
-    ))
-    .parse_next(input)
-}
-
 fn process(input: &mut Input) -> Result<(Span, Process<Unresolved>)> {
     let (first_span, mut head) = process_head(input)?;
     let mut steps = Vec::new();
@@ -2695,7 +2684,7 @@ fn process(input: &mut Input) -> Result<(Span, Process<Unresolved>)> {
                 span,
                 branches,
                 else_,
-            } => match opt(pass_process_head).parse_next(input)? {
+            } => match opt(process_head).parse_next(input)? {
                 Some((next_span, next)) => {
                     steps.push(ProcessStep::If {
                         span,
@@ -2753,7 +2742,7 @@ fn process(input: &mut Input) -> Result<(Span, Process<Unresolved>)> {
                 let next = match continuation {
                     Some(ProcessContinuation::Optional) => opt(process_head).parse_next(input)?,
                     Some(ProcessContinuation::Required) => unreachable!(),
-                    None => opt(pass_process_head).parse_next(input)?,
+                    None => opt(process_head).parse_next(input)?,
                 };
                 match next {
                     Some((next_span, next)) => {
