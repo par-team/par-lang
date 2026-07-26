@@ -182,7 +182,7 @@ pub struct Package<Ext: Clone> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Global<Ext: Clone> {
     Variable(usize),
-    /// Compiler-inserted structural disposal for an open value.
+    /// Compiler-inserted structural disposal for a value satisfying the `once` constraint.
     Close {
         signal: Str<Ext>,
         erase: GlobalPtr<Ext>,

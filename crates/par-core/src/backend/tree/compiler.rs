@@ -489,7 +489,7 @@ impl Compiler {
         match prev {
             Some(prev_tree) => {
                 let disposer = if prev_tree.ty.is_linear(&self.type_defs).unwrap_or(true)
-                    && prev_tree.ty.is_open(&self.type_defs).unwrap_or(false)
+                    && prev_tree.ty.is_once(&self.type_defs).unwrap_or(false)
                 {
                     Tree::Close
                 } else {

@@ -16,8 +16,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         Ok(!self.satisfies_constraint(TypeConstraint::Box, type_defs)?)
     }
 
-    pub fn is_open(&self, type_defs: &TypeDefs<S>) -> Result<bool, TypeError<S>> {
-        self.satisfies_constraint(TypeConstraint::Open, type_defs)
+    pub fn is_once(&self, type_defs: &TypeDefs<S>) -> Result<bool, TypeError<S>> {
+        self.satisfies_constraint(TypeConstraint::Once, type_defs)
     }
 
     pub fn satisfies_constraint(
@@ -51,9 +51,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(satisfies_at_least(TypeConstraint::Signed))
             }
             Type::Primitive(..) | Type::Break(_) => Ok(satisfies_at_least(TypeConstraint::Data)),
-            Type::DualSelf(..) if constraint == TypeConstraint::Open => Ok(false),
+            Type::DualSelf(..) if constraint == TypeConstraint::Once => Ok(false),
             Type::DualSelf(..) => Ok(satisfies_at_least(TypeConstraint::Data)),
-            Type::Self_(_, label) if constraint == TypeConstraint::Open => Ok(fixpoints
+            Type::Self_(_, label) if constraint == TypeConstraint::Once => Ok(fixpoints
                 .iter()
                 .rev()
                 .find(|(bound, _)| bound == label)
@@ -92,7 +92,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     Ok(acc && branch.satisfies_constraint_with(constraint, defs, fixpoints)?)
                 })
             }
-            Type::Choice(_, branches) if constraint == TypeConstraint::Open => match branches
+            Type::Choice(_, branches) if constraint == TypeConstraint::Once => match branches
                 .iter()
                 .find(|(name, _)| name.string.as_str() == "close")
             {

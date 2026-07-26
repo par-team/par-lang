@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_classification() {
+    fn test_once_classification() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let resource = Type::choice(vec![("close", Type::break_())]);
 
@@ -166,7 +166,7 @@ mod tests {
                 resource.clone(),
                 Type::either(vec![("some", resource.clone())])
             )
-            .is_open(&type_defs)
+            .is_once(&type_defs)
             .unwrap()
         );
         assert!(
@@ -177,31 +177,31 @@ mod tests {
                     ("item", Type::pair(resource.clone(), Type::self_(None))),
                 ]),
             )
-            .is_open(&type_defs)
+            .is_once(&type_defs)
             .unwrap()
         );
         assert!(
             Type::Forall(
                 Span::None,
-                constrained_param(TypeConstraint::Open),
+                constrained_param(TypeConstraint::Once),
                 Box::new(Type::var("a")),
             )
-            .is_open(&type_defs)
+            .is_once(&type_defs)
             .unwrap()
         );
         assert!(
             !Type::iterative(None, Type::choice(vec![("close", Type::self_(None))]),)
-                .is_open(&type_defs)
+                .is_once(&type_defs)
                 .unwrap()
         );
         assert!(
             !Type::choice(vec![("use", Type::break_())])
-                .is_open(&type_defs)
+                .is_once(&type_defs)
                 .unwrap()
         );
         assert!(
             !Type::DualSelf(Span::None, None)
-                .is_open(&type_defs)
+                .is_once(&type_defs)
                 .unwrap()
         );
     }

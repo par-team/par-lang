@@ -89,7 +89,7 @@ pub enum Command<Typ, S> {
     /// protocol effect, but preserves linearity diagnostics and hover information for source
     /// command chains of the form `subject; next`.
     Noop,
-    /// Compiler-inserted structural disposal for an open value.
+    /// Compiler-inserted structural disposal for a value satisfying the `once` constraint.
     Close,
     Send(Arc<Expression<Typ, S>>),
     Receive(LocalName, Option<Type<S>>, Typ, Vec<TypeParameter>),

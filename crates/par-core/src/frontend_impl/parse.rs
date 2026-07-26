@@ -1061,7 +1061,7 @@ fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
     match name.string.as_str() {
-        "open" => Ok(TypeConstraint::Open),
+        "once" => Ok(TypeConstraint::Once),
         "data" => Ok(TypeConstraint::Data),
         "number" => Ok(TypeConstraint::Number),
         "signed" => Ok(TypeConstraint::Signed),
@@ -4177,16 +4177,16 @@ module Minimal
 
 dec Explicit : [type a: number, (a) !] !
 dec Implicit : [<a: signed> a] a
-dec Open : [type a: open, a] !
+dec Once : [type a: once, a] !
 def Explicit = [type a: number, p] !
 def Implicit = [<a: signed> x] x
-def Open = [type a: open, x] !
+def Once = [type a: once, x] !
 ";
         let parsed = parse_source_file(source, "minimal.par".into()).unwrap();
         let Type::Forall(_, parameter, _) = &parsed.body.declarations[2].typ else {
-            panic!("expected explicit open type parameter");
+            panic!("expected explicit once type parameter");
         };
-        assert_eq!(parameter.constraint, TypeConstraint::Open);
+        assert_eq!(parameter.constraint, TypeConstraint::Once);
     }
 
     #[test]

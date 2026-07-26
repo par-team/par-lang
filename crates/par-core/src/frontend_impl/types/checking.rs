@@ -191,7 +191,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         }
                         None => self.infer_expression(None, value, emit),
                     };
-                    match self.take_open_shadow(name) {
+                    match self.take_once_shadow(name) {
                         Ok(Some(shadowed_type)) => steps.push(Step::Do {
                             span: span.clone(),
                             name: name.clone(),
@@ -1624,7 +1624,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         && *variable == subject
                         && matches!(usage, VariableUsage::Move)
                     {
-                        match self.take_open_shadow(name) {
+                        match self.take_once_shadow(name) {
                             Ok(Some(shadowed_type)) => {
                                 shadow_closes.insert(
                                     index,
@@ -1660,7 +1660,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         ),
                         None => self.infer_expression(Some(&subject), value, emit),
                     };
-                    match self.take_open_shadow(name) {
+                    match self.take_once_shadow(name) {
                         Ok(Some(shadowed_type)) => {
                             shadow_closes.insert(
                                 index,

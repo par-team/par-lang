@@ -257,14 +257,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         Ok(())
     }
 
-    pub(crate) fn take_open_shadow(
+    pub(crate) fn take_once_shadow(
         &mut self,
         name: &LocalName,
     ) -> Result<Option<Type<S>>, TypeError<S>> {
         let Some(typ) = self.variables.get(name) else {
             return Ok(None);
         };
-        if typ.is_linear(&self.type_defs)? && typ.is_open(&self.type_defs)? {
+        if typ.is_linear(&self.type_defs)? && typ.is_once(&self.type_defs)? {
             return Ok(self.variables.shift_remove(name));
         }
         Ok(None)
@@ -348,7 +348,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut unfulfilled = Vec::new();
 
         for (name, typ) in obligations {
-            match typ.is_open(&self.type_defs) {
+            match typ.is_once(&self.type_defs) {
                 Ok(true) => {
                     self.variables.shift_remove(&name);
                     builder.push(Step::Do {
