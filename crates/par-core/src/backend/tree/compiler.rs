@@ -488,7 +488,14 @@ impl Compiler {
         let prev = self.context.vars.insert(var.into(), tree);
         match prev {
             Some(prev_tree) => {
-                self.net.link(prev_tree.tree, Tree::Era);
+                let disposer = if prev_tree.ty.is_linear(&self.type_defs).unwrap_or(true)
+                    && prev_tree.ty.is_open(&self.type_defs).unwrap_or(false)
+                {
+                    Tree::Close
+                } else {
+                    Tree::Era
+                };
+                self.net.link(prev_tree.tree, disposer);
                 Ok(())
             }
             None => Ok(()),
@@ -721,6 +728,7 @@ impl Compiler {
     ) -> Result<()> {
         match cmd {
             Command::Noop => {}
+            Command::Close => self.compile_command_close(&name, usage)?,
             // types get erased.
             Command::SendType(_argument) => self.compile_command_send_type(name, usage)?,
             Command::ReceiveType(parameter) => {
@@ -999,6 +1007,12 @@ impl Compiler {
     fn compile_command_send_type(&mut self, name: LocalName, usage: &VariableUsage) -> Result<()> {
         let subject = self.use_variable(&name, usage, true)?;
         self.bind_variable(name, subject.tree.with_type(Type::Break(Span::None)))?;
+        Ok(())
+    }
+
+    fn compile_command_close(&mut self, name: &LocalName, usage: &VariableUsage) -> Result<()> {
+        let subject = self.use_variable(name, usage, true)?;
+        self.net.link(subject.tree, Tree::Close);
         Ok(())
     }
 

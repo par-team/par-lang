@@ -397,7 +397,7 @@ fn validate_command_visibility(
     errors: &mut IndexSet<TypeError<Universal>>,
 ) {
     match command {
-        process::Command::Noop | process::Command::Continue => {}
+        process::Command::Noop | process::Command::Close | process::Command::Continue => {}
         process::Command::Send(argument) => {
             validate_expression_visibility(current_module, argument, visibility, errors);
         }

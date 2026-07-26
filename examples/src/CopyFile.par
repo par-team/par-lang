@@ -9,31 +9,26 @@ import {
 def Main: ! = chan exit {
   let console = Console.Open
 
-  catch ! => { console.print("Failed to read input.").close; exit! }
+  catch ! => { console.print("Failed to read input."); exit! }
   console.prompt("Src path: ")[try src]
   console.prompt("Dst path: ")[try dst]
 
   catch e: Os.Error => {
     console.print("An error occurred:")
     console.print(e)
-    console.close
     exit!
   }
 
   let try reader = src->Os.Path->Os.OpenFile
-  catch@w e => { reader.close; throw e }
+  let try writer = dst->Os.Path->Os.CreateOrReplaceFile
 
-  let try@w writer = dst->Os.Path->Os.CreateOrReplaceFile
-  catch@r e => { writer.close; throw e }
-
-  reader.begin.read.try@r.case {
+  reader.begin.read.try.case {
     .end! => {
       writer.close.try
-      console.close
       exit!
     }
     .chunk(bytes) => {
-      writer.write(bytes).try@w
+      writer.write(bytes).try
       reader.loop
     }
   }

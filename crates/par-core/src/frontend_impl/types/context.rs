@@ -1,5 +1,7 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint};
-use crate::frontend_impl::process::{Captures, Expression};
+use crate::frontend_impl::process::{
+    Captures, Command, Expression, Process, ProcessBuilder, Step, VariableUsage,
+};
 use crate::frontend_impl::program::DefinitionBody;
 use crate::frontend_impl::types::{Type, TypeDefs, TypeError};
 use crate::location::Span;
@@ -150,6 +152,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 }
             },
         };
+        let checked_def = match checked_def {
+            DefinitionBody::Par(expression) => DefinitionBody::Par(expression.fix_captures().0),
+            DefinitionBody::External(span) => DefinitionBody::External(span),
+        };
 
         self.variables = original_variables;
         self.loop_points = original_loop_points;
@@ -251,6 +257,19 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         Ok(())
     }
 
+    pub(crate) fn take_open_shadow(
+        &mut self,
+        name: &LocalName,
+    ) -> Result<Option<Type<S>>, TypeError<S>> {
+        let Some(typ) = self.variables.get(name) else {
+            return Ok(None);
+        };
+        if typ.is_linear(&self.type_defs)? && typ.is_open(&self.type_defs)? {
+            return Ok(self.variables.shift_remove(name));
+        }
+        Ok(None)
+    }
+
     pub(crate) fn capture(
         &mut self,
         inference_subject: Option<&LocalName>,
@@ -302,18 +321,57 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         Ok(false)
     }
 
-    pub(crate) fn cannot_have_obligations(&mut self, span: &Span) -> Result<(), TypeError<S>> {
+    pub(crate) fn discharge_obligations(
+        &mut self,
+        span: &Span,
+        tail: Arc<Process<Type<S>, S>>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Arc<Process<Type<S>, S>> {
         if let Some(poll) = &self.poll {
             if self.variables.contains_key(&poll.driver) {
-                return Err(TypeError::PollBranchMustSubmit(span.clone()));
+                emit(TypeError::PollBranchMustSubmit(span.clone()));
+                self.variables.clear();
+                return tail;
             }
         }
-        if self.obligations().any(|_| true) {
-            return Err(TypeError::UnfulfilledObligations(
-                span.clone(),
-                self.obligations().cloned().collect(),
-            ));
+
+        let obligations: Vec<_> = self
+            .obligations()
+            .filter_map(|name| {
+                self.variables
+                    .get(name)
+                    .cloned()
+                    .map(|typ| (name.clone(), typ))
+            })
+            .collect();
+        let mut builder = ProcessBuilder::new();
+        let mut unfulfilled = Vec::new();
+
+        for (name, typ) in obligations {
+            match typ.is_open(&self.type_defs) {
+                Ok(true) => {
+                    self.variables.shift_remove(&name);
+                    builder.push(Step::Do {
+                        span: span.clone(),
+                        name,
+                        usage: VariableUsage::Move,
+                        typ,
+                        command: Command::Close,
+                    });
+                }
+                Ok(false) => unfulfilled.push(name),
+                Err(error) => {
+                    emit(error);
+                    unfulfilled.push(name);
+                }
+            }
         }
-        Ok(())
+
+        if !unfulfilled.is_empty() {
+            emit(TypeError::UnfulfilledObligations(span.clone(), unfulfilled));
+        }
+
+        self.variables.clear();
+        builder.finish_with(tail)
     }
 }

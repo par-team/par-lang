@@ -13,22 +13,16 @@ def Main: ! = chan exit {
   catch e: Os.Error => {
     let console = Console.Open
     console.print(e)
-    console.close
     exit!
   }
 
-  // If writer fails, it's consumed; close reader and delegate
-  catch@w e => { reader.close; throw e }
-  // If reader fails, it's consumed; close writer and delegate
-  catch@r e => { writer.close; throw e }
-
-  reader.begin.read.try@r.case {
+  reader.begin.read.try.case {
     .end! => {
       writer.close.try
       exit!
     }
     .chunk(bytes) => {
-      writer.write(bytes).try@w
+      writer.write(bytes).try
       reader.loop
     }
   }

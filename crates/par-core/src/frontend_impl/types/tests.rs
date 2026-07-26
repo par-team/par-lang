@@ -157,6 +157,56 @@ mod tests {
     }
 
     #[test]
+    fn test_open_classification() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let resource = Type::choice(vec![("close", Type::break_())]);
+
+        assert!(
+            Type::pair(
+                resource.clone(),
+                Type::either(vec![("some", resource.clone())])
+            )
+            .is_open(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            Type::recursive(
+                None,
+                Type::either(vec![
+                    ("end", Type::break_()),
+                    ("item", Type::pair(resource.clone(), Type::self_(None))),
+                ]),
+            )
+            .is_open(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Open),
+                Box::new(Type::var("a")),
+            )
+            .is_open(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            !Type::iterative(None, Type::choice(vec![("close", Type::self_(None))]),)
+                .is_open(&type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::choice(vec![("use", Type::break_())])
+                .is_open(&type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::DualSelf(Span::None, None)
+                .is_open(&type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_empty_either_subtype_of_any() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let empty_either: Type<Universal> = Type::either(vec![]);

@@ -258,6 +258,13 @@ impl ProgramTranspiler {
             Tree::Break => Global::Value(GlobalValue::Break),
             Tree::Continue => Global::Destruct(GlobalCont::Continue),
             Tree::Era => Global::Fanout(self.dest.alloc_clone(&[])),
+            Tree::Close => {
+                let signal = self.dest.intern(&ArcStr::from("close"));
+                let empty: &[Global<Unlinked>] = &[];
+                let destinations = self.dest.alloc_clone(empty);
+                let erase = self.dest.alloc(Global::Fanout(destinations));
+                Global::Close { signal, erase }
+            }
             Tree::Par(a, b) => {
                 let a: Index<Unlinked, Global<Unlinked>> = self.transpile_tree_and_alloc(*a);
                 let b: Index<Unlinked, Global<Unlinked>> = self.transpile_tree_and_alloc(*b);

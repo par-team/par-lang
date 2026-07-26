@@ -1061,6 +1061,7 @@ fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
     match name.string.as_str() {
+        "open" => Ok(TypeConstraint::Open),
         "data" => Ok(TypeConstraint::Data),
         "number" => Ok(TypeConstraint::Number),
         "signed" => Ok(TypeConstraint::Signed),
@@ -3659,7 +3660,6 @@ fn label(input: &mut Input) -> Result<Option<LocalName>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::assert_matches;
 
     fn parse_single_definition_expression(source: &str) -> Expression<Unresolved> {
         let parsed = parse_source_file(source, "Main.par".into()).unwrap();
@@ -4177,10 +4177,16 @@ module Minimal
 
 dec Explicit : [type a: number, (a) !] !
 dec Implicit : [<a: signed> a] a
+dec Open : [type a: open, a] !
 def Explicit = [type a: number, p] !
 def Implicit = [<a: signed> x] x
+def Open = [type a: open, x] !
 ";
-        assert!(parse_module(source, "minimal.par".into()).is_ok());
+        let parsed = parse_source_file(source, "minimal.par".into()).unwrap();
+        let Type::Forall(_, parameter, _) = &parsed.body.declarations[2].typ else {
+            panic!("expected explicit open type parameter");
+        };
+        assert_eq!(parameter.constraint, TypeConstraint::Open);
     }
 
     #[test]
@@ -4381,9 +4387,21 @@ def F = 1.0e-6
     }
     #[test]
     fn lists() {
-        assert_matches!(parse_module("def Value = *()", "lists.par".into()), Ok(_));
-        assert_matches!(parse_module("def Value = *(,)", "lists.par".into()), Err(_));
-        assert_matches!(parse_module("def Value = *(1)", "lists.par".into()), Ok(_));
-        assert_matches!(parse_module("def Value = *(1,)", "lists.par".into()), Ok(_));
+        assert!(matches!(
+            parse_module("def Value = *()", "lists.par".into()),
+            Ok(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(,)", "lists.par".into()),
+            Err(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(1)", "lists.par".into()),
+            Ok(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(1,)", "lists.par".into()),
+            Ok(_)
+        ));
     }
 }

@@ -10,7 +10,7 @@ use super::lattice::union_types;
 use super::{Context, TypeDefs};
 use crate::frontend_impl::types::implicit::{resolve_holes, substitute_holes};
 use crate::frontend_impl::types::lattice::intersect_types;
-use crate::location::Span;
+use crate::location::{Span, Spanning};
 use im::HashMap;
 use indexmap::{IndexMap, IndexSet};
 use par_runtime::primitive::Primitive;
@@ -21,6 +21,17 @@ use std::sync::Arc;
 enum ProcessAnalyzerMode {
     Check,
     Infer(LocalName),
+}
+
+fn terminator_ends_path<Typ, S>(terminator: &Terminator<Typ, S>) -> bool {
+    matches!(
+        terminator,
+        Terminator::Do {
+            command: TerminalCommand::Link(_) | TerminalCommand::Break | TerminalCommand::Loop(..),
+            ..
+        } | Terminator::Submit { .. }
+            | Terminator::Goto(..)
+    )
 }
 
 /// A deferred step whose type depends on the type inferred for the process suffix.
@@ -180,6 +191,17 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         }
                         None => self.infer_expression(None, value, emit),
                     };
+                    match self.take_open_shadow(name) {
+                        Ok(Some(shadowed_type)) => steps.push(Step::Do {
+                            span: span.clone(),
+                            name: name.clone(),
+                            usage: VariableUsage::Move,
+                            typ: shadowed_type,
+                            command: Command::Close,
+                        }),
+                        Ok(None) => {}
+                        Err(error) => emit(error),
+                    }
                     if let Err(error) = self.put(span, name.clone(), typ.clone()) {
                         emit(error);
                     }
@@ -309,7 +331,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.check_process_goto(span, *index, caps, emit)
             }
         };
-        Arc::new(Process::new(steps, terminator))
+        let ends_path = terminator_ends_path(&terminator);
+        let tail_span = terminator.span();
+        let mut tail = Process::terminal(terminator);
+        if ends_path {
+            tail = self.discharge_obligations(&tail_span, tail, emit);
+        }
+
+        let tail = Arc::unwrap_or_clone(tail);
+        steps.extend(tail.steps);
+        Arc::new(Process::new(steps, tail.terminator))
     }
 
     fn check_process_poll(
@@ -701,11 +732,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             emit(TypeError::SubmitOutsidePoll(span.clone()));
         }
 
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-        self.variables.clear();
-
         Terminator::Submit {
             span: span.clone(),
             driver: driver.clone(),
@@ -792,12 +818,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Terminator<Type<S>, S> {
         let path = self.take_block_path_context(span, index, None, emit);
-        if path.is_some()
-            && let Err(error) = self.cannot_have_obligations(span)
-        {
-            emit(error);
-        }
-        self.variables.clear();
         if let Some(path) = path {
             self.blocks.get_mut(&index).unwrap().paths.push(path);
         }
@@ -925,6 +945,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.put(span, object.clone(), typ).ok();
                 Command::Noop
             }
+            Command::Close => Command::Close,
             Command::Send(argument) => {
                 let (argument_type, then_type, vars) = match &typ {
                     Type::Function(_, argument_type, then_type, vars) => (
@@ -1168,9 +1189,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     &typ.clone().dual(Span::None),
                     emit,
                 );
-                if let Err(error) = self.cannot_have_obligations(span) {
-                    emit(error);
-                }
                 (TerminalCommand::Link(expression), None)
             }
             TerminalCommand::Case(branches, processes, else_process) => self.check_command_case(
@@ -1190,9 +1208,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         Operation::Break,
                         typ,
                     ));
-                }
-                if let Err(error) = self.cannot_have_obligations(span) {
-                    emit(error);
                 }
                 (TerminalCommand::Break, None)
             }
@@ -1576,10 +1591,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 ));
             }
         }
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-
         (
             TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone()),
             inferred_loop.or(Some(Type::Self_(span.clone(), label.clone()))),
@@ -1594,6 +1605,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
         let mut subject = inference_subject.clone();
         let mut typed_steps = vec![None; process.steps.len()];
+        let mut shadow_closes = IndexMap::new();
         let mut frames = Vec::new();
         let mut completed_suffix = None;
 
@@ -1612,6 +1624,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         && *variable == subject
                         && matches!(usage, VariableUsage::Move)
                     {
+                        match self.take_open_shadow(name) {
+                            Ok(Some(shadowed_type)) => {
+                                shadow_closes.insert(
+                                    index,
+                                    Step::Do {
+                                        span: span.clone(),
+                                        name: name.clone(),
+                                        usage: VariableUsage::Move,
+                                        typ: shadowed_type,
+                                        command: Command::Close,
+                                    },
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(error) => emit(error),
+                        }
                         frames.push(InferenceFrame::Alias {
                             index,
                             span: span.clone(),
@@ -1632,6 +1660,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         ),
                         None => self.infer_expression(Some(&subject), value, emit),
                     };
+                    match self.take_open_shadow(name) {
+                        Ok(Some(shadowed_type)) => {
+                            shadow_closes.insert(
+                                index,
+                                Step::Do {
+                                    span: span.clone(),
+                                    name: name.clone(),
+                                    usage: VariableUsage::Move,
+                                    typ: shadowed_type,
+                                    command: Command::Close,
+                                },
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(error) => emit(error),
+                    }
                     if let Err(error) = self.put(span, name.clone(), typ.clone()) {
                         emit(error);
                     }
@@ -1656,6 +1700,9 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         name: name.clone(),
                         usage: usage.clone(),
                     }),
+                    Command::Close => {
+                        unreachable!("Close commands are inserted only after type checking")
+                    }
                     Command::Send(argument) => {
                         let (argument, argument_type) =
                             self.infer_expression(Some(&subject), argument, emit);
@@ -1716,11 +1763,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                             process.steps[index + 1..].to_vec(),
                             process.terminator.clone(),
                         );
-                        let suffix = Arc::unwrap_or_clone(self.check_process(&suffix, emit));
-                        for (offset, step) in suffix.steps.into_iter().enumerate() {
-                            typed_steps[index + 1 + offset] = Some(step);
-                        }
-                        completed_suffix = Some((suffix.terminator, Type::Break(span.clone())));
+                        let suffix = self.check_process(&suffix, emit);
+                        completed_suffix = Some((suffix, Type::Break(span.clone()), index + 1));
                         break;
                     }
                     Command::SendType(argument) => {
@@ -1772,9 +1816,19 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
 
-        let (terminator, mut inferred_type) = match completed_suffix {
+        let (tail, mut inferred_type, typed_prefix_len) = match completed_suffix {
             Some(completed) => completed,
-            None => self.infer_terminator(&process.terminator, &subject, emit),
+            None => {
+                let (terminator, inferred_type) =
+                    self.infer_terminator(&process.terminator, &subject, emit);
+                let ends_path = terminator_ends_path(&terminator);
+                let tail_span = terminator.span();
+                let mut tail = Process::terminal(terminator);
+                if ends_path {
+                    tail = self.discharge_obligations(&tail_span, tail, emit);
+                }
+                (tail, inferred_type, process.steps.len())
+            }
         };
 
         for frame in frames.into_iter().rev() {
@@ -1926,12 +1980,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
 
-        let typed_steps = typed_steps
-            .into_iter()
-            .map(|step| step.expect("inference should type every process step"))
-            .collect();
+        let mut typed_steps_with_closes = Vec::new();
+        for (index, step) in typed_steps.into_iter().take(typed_prefix_len).enumerate() {
+            if let Some(close) = shadow_closes.shift_remove(&index) {
+                typed_steps_with_closes.push(close);
+            }
+            typed_steps_with_closes.push(step.expect("inference should type every process step"));
+        }
+        let tail = Arc::unwrap_or_clone(tail);
+        let mut steps = typed_steps_with_closes;
+        steps.extend(tail.steps);
         (
-            Arc::new(Process::new(typed_steps, terminator)),
+            Arc::new(Process::new(steps, tail.terminator)),
             inferred_type,
         )
     }
@@ -2062,20 +2122,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         match command {
             TerminalCommand::Link(expression) => {
                 let (expression, typ) = self.infer_expression(Some(subject), expression, emit);
-                if let Err(error) = self.cannot_have_obligations(span) {
-                    emit(error);
-                }
                 (TerminalCommand::Link(expression), typ.dual(Span::None))
             }
             TerminalCommand::Case(branches, processes, else_process) => {
                 self.infer_command_case(span, subject, branches, processes, else_process, emit)
             }
-            TerminalCommand::Break => {
-                if let Err(error) = self.cannot_have_obligations(span) {
-                    emit(error);
-                }
-                (TerminalCommand::Break, Type::Continue(span.clone()))
-            }
+            TerminalCommand::Break => (TerminalCommand::Break, Type::Continue(span.clone())),
             TerminalCommand::Begin { .. } => {
                 emit(TypeError::TypeMustBeKnownAtThisPoint(
                     span.clone(),
@@ -2506,11 +2558,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             emit(TypeError::SubmitOutsidePoll(span.clone()));
         }
 
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-        self.variables.clear();
-
         (
             Terminator::Submit {
                 span: span.clone(),
@@ -2615,12 +2662,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Terminator<Type<S>, S>, Type<S>) {
         let path = self.take_block_path_context(span, index, Some(inference_subject), emit);
-        if path.is_some()
-            && let Err(error) = self.cannot_have_obligations(span)
-        {
-            emit(error);
-        }
-        self.variables.clear();
         if let Some(path) = path {
             self.blocks.get_mut(&index).unwrap().paths.push(path);
         }
@@ -2714,10 +2755,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 ));
             }
         }
-        if let Err(e) = self.cannot_have_obligations(span) {
-            emit(e);
-        }
-
         (
             TerminalCommand::Loop(label.clone(), driver.clone(), captures.clone()),
             driver_type,
@@ -3330,6 +3367,7 @@ mod flat_ir_tests {
     fn inferred_continue_checks_the_remaining_suffix() {
         let subject = LocalName::from(arcstr::literal!("subject"));
         let other = LocalName::from(arcstr::literal!("other"));
+        let resource = LocalName::from(arcstr::literal!("resource"));
         let process = Process::do_step(
             Span::None,
             subject.clone(),
@@ -3349,18 +3387,33 @@ mod flat_ir_tests {
         context
             .put(&Span::None, other, Type::Continue(Span::None))
             .unwrap();
+        context
+            .put(
+                &Span::None,
+                resource.clone(),
+                Type::choice(vec![("close", Type::break_())]),
+            )
+            .unwrap();
         let mut errors = Vec::new();
         let (checked, inferred) =
             context.infer_process(&process, &subject, &mut |error| errors.push(error));
         assert!(errors.is_empty(), "{errors:#?}");
         assert!(matches!(inferred, Type::Break(_)));
         assert!(matches!(
-            &checked.steps[0],
-            Step::Do {
-                typ: Type::Break(_),
-                command: Command::Continue,
-                ..
-            }
+            checked.steps.as_slice(),
+            [
+                Step::Do {
+                    typ: Type::Break(_),
+                    command: Command::Continue,
+                    ..
+                },
+                Step::Do {
+                    name,
+                    usage: VariableUsage::Move,
+                    command: Command::Close,
+                    ..
+                }
+            ] if name == &resource
         ));
     }
 }

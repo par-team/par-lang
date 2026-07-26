@@ -30,6 +30,7 @@ pub struct LocalName {
 pub enum TypeConstraint {
     #[default]
     Any,
+    Open,
     Box,
     Data,
     Number,
@@ -60,10 +61,11 @@ impl TypeConstraint {
     fn rank(self) -> u8 {
         match self {
             TypeConstraint::Any => 0,
-            TypeConstraint::Box => 1,
-            TypeConstraint::Data => 2,
-            TypeConstraint::Number => 3,
-            TypeConstraint::Signed => 4,
+            TypeConstraint::Open => 1,
+            TypeConstraint::Box => 2,
+            TypeConstraint::Data => 3,
+            TypeConstraint::Number => 4,
+            TypeConstraint::Signed => 5,
         }
     }
 }
@@ -72,6 +74,7 @@ impl Display for TypeConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeConstraint::Any => Ok(()),
+            TypeConstraint::Open => write!(f, "open"),
             TypeConstraint::Box => write!(f, "box"),
             TypeConstraint::Data => write!(f, "data"),
             TypeConstraint::Number => write!(f, "number"),

@@ -15,7 +15,6 @@ def Main: ! = chan exit {
 
   catch ! => {
     console.print("Failed to read input.")
-    console.close
     exit!
   }
 
@@ -25,7 +24,6 @@ def Main: ! = chan exit {
 
   catch e => {
     console.print(e)
-    console.close
     exit!
   }
 
@@ -53,7 +51,6 @@ def Main: ! = chan exit {
     }
   }
 
-  console.close
   exit!
 }
 
