@@ -18,7 +18,9 @@ use par_runtime::flat::runtime::{
 
 use crate::runtime_impl::tree::Net;
 use par_runtime::flat::runtime::Global;
-use par_runtime::linker::{Artifact, ArtifactGlobal, LinkError, Linked, Unlinked, link_arena, link_package_ptr};
+use par_runtime::linker::{
+    Artifact, ArtifactGlobal, LinkError, Linked, Unlinked, link_arena, link_package_ptr,
+};
 use par_runtime::pkgid::PackageId;
 
 #[derive(Default)]
@@ -113,13 +115,9 @@ impl Transpiled<Unlinked> {
                 .map(|(a, b)| match b {
                     CompiledGlobal::Package(id) => (
                         a.clone(),
-                        TranspiledGlobal::Package(
-                            this.packages_in_nodes.get(id).unwrap().clone(),
-                        ),
+                        TranspiledGlobal::Package(this.packages_in_nodes.get(id).unwrap().clone()),
                     ),
-                    CompiledGlobal::Unimplemented => {
-                        (a.clone(), TranspiledGlobal::Unimplemented)
-                    }
+                    CompiledGlobal::Unimplemented => (a.clone(), TranspiledGlobal::Unimplemented),
                 })
                 .collect(),
         }

@@ -11,12 +11,12 @@ use clap::{Command, arg, command, value_parser};
 use colored::Colorize;
 #[cfg(feature = "playground")]
 use eframe::egui;
+use par_core::runtime::TranspiledGlobal;
 use par_core::{
     frontend::{Type, is_lowercase_identifier, set_miette_hook},
     runtime::RuntimeCompilerError,
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
-use par_core::runtime::TranspiledGlobal;
 use par_doc::DocOptions;
 use tokio::time::Instant;
 #[cfg(not(target_family = "wasm"))]

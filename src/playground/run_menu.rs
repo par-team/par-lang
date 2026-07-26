@@ -5,6 +5,7 @@ use std::{
 
 use eframe::egui::{self, RichText};
 use futures::task::{Spawn, SpawnExt};
+use par_core::runtime::TranspiledGlobal;
 use par_core::{
     frontend::{
         Type, Visibility,
@@ -14,7 +15,6 @@ use par_core::{
     source::FileName,
     workspace::{CheckedWorkspace, FileImportScope, ModulePath},
 };
-use par_core::runtime::TranspiledGlobal;
 use par_runtime::linker::Linked;
 use par_runtime::pkgid::PackageId;
 use tokio_util::sync::CancellationToken;
@@ -107,7 +107,8 @@ fn run_definition(
     *cancel_token = Some(token.clone());
 
     let ty = name_to_ty.get(name).unwrap();
-    let Some(TranspiledGlobal::Package(package)) = compiled.code.name_to_package.get(name).cloned() else {
+    let Some(TranspiledGlobal::Package(package)) = compiled.code.name_to_package.get(name).cloned()
+    else {
         return;
     };
     let (handle, reducer_future) =

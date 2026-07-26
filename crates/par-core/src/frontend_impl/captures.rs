@@ -315,9 +315,7 @@ impl CaptureAnalysis {
             Terminator::Unreachable(span) => {
                 (Terminator::Unreachable(span.clone()), Captures::new())
             }
-            Terminator::ToDo(span) => {
-                (Terminator::ToDo(span.clone()), Captures::new())
-            }
+            Terminator::ToDo(span) => (Terminator::ToDo(span.clone()), Captures::new()),
         }
     }
 

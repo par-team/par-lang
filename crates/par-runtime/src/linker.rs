@@ -187,9 +187,7 @@ impl Artifact<Unlinked> {
                     ArtifactGlobal::Package(pkg) => {
                         (k.clone(), ArtifactGlobal::Package(link_package_ptr(pkg)))
                     }
-                    ArtifactGlobal::Unimplemented => {
-                        (k.clone(), ArtifactGlobal::Unimplemented)
-                    }
+                    ArtifactGlobal::Unimplemented => (k.clone(), ArtifactGlobal::Unimplemented),
                 })
                 .collect(),
         })

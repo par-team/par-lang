@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
+use par_core::runtime::TranspiledGlobal;
 use par_core::{
     frontend::{
         Type,
@@ -17,7 +18,6 @@ use par_core::{
     testing::{AssertionResult, provide_test},
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
-use par_core::runtime::TranspiledGlobal;
 use par_runtime::linker::Linked;
 use par_runtime::pkgid::{BuiltinPackage, PackageId};
 use par_runtime::spawn::TokioSpawn;
