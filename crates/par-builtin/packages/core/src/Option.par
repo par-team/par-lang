@@ -18,19 +18,19 @@ export {
   }
 
   // Transforms the contained value, if present.
-  dec Map : [<a> Option<a>, <b> box [a] b] Option<b>
+  dec Map : [<a> Option<a>, <b> once [a] b] Option<b>
 
   // Transforms the contained value with a computation that may return no value.
-  dec FlatMap : [<a> Option<a>, <b> box [a] Option<b>] Option<b>
+  dec FlatMap : [<a> Option<a>, <b> once [a] Option<b>] Option<b>
 
   // Keeps the contained value only if it satisfies the predicate.
-  dec Filter : [<a: box> Option<a>, box [a] Bool] Option<a>
+  dec Filter : [<a: box> Option<a>, once [a] Bool] Option<a>
 
   // Converts `.some value` to a singleton list and `.none!` to an empty list.
   dec ToList : [<a> Option<a>] List<a>
 
   // Converts `.some value` to `.ok value` and `.none!` to the provided error.
-  dec ToResult : [<a> Option<a>, <e: box> e] Try<e, a>
+  dec ToResult : [<a> Option<a>, <e: once> e] Try<e, a>
 }
 
 def Map = [<a> option, <b> f] option.case {
@@ -53,7 +53,7 @@ def ToList = [<a> option] option.case {
   .none! => .end!,
 }
 
-def ToResult = [<a> option, <e: box> e] option.case {
+def ToResult = [<a> option, <e: once> e] option.case {
   .some a => .ok a,
   .none! => .err e,
 }

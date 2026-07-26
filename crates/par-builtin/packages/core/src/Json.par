@@ -89,9 +89,9 @@ export {
 
   // Parses a JSON array with the given item format.
   //
-  // The item type must be non-linear because earlier parsed items may need to
-  // be discarded if a later item fails to parse.
-  dec List : [<a: box> Format<a>] Format<CoreList<a>>
+  // The item type must be safely discardable because earlier parsed items may
+  // need to be discarded if a later item fails to parse.
+  dec List : [<a: once> Format<a>] Format<CoreList<a>>
 
   // Parses a JSON object with the given object format.
   dec Object : [<a> ObjectFormat<a>] Format<a>
@@ -116,9 +116,9 @@ export {
   // `Json.Field("age", Json.Number)->Json.And(Json.Field("name", Json.String))`
   // returns `(String) Float`.
   //
-  // Both object formats return non-linear values because either side may need to be
-  // discarded if the other side fails.
-  dec And : [<a: box> ObjectFormat<a>, <b: box> ObjectFormat<b>] ObjectFormat<(b) a>
+  // Both object formats return safely discardable values because either side
+  // may need to be discarded if the other side fails.
+  dec And : [<a: once> ObjectFormat<a>, <b: once> ObjectFormat<b>] ObjectFormat<(b) a>
 
   // Tries multiple formats in order and returns the first successful result.
   //
@@ -178,10 +178,19 @@ def Equals = [json1, json2] json1.begin.case {
   })
 }
 
-dec ListEquals : [<a> CoreList<box a>, <b> CoreList<box b>, box [a, b] CoreBool] CoreBool
-def ListEquals = [<a> list1, <b> list2, eq] list1.begin.case {
-  .end! => list2 is .end!,
-  .item(x) list1 => list2 is .item(y) list2 and eq(x, y) and list1.loop
+dec ListEquals : [<a: once> CoreList<a>, <b: once> CoreList<b>, box [a, b] CoreBool] CoreBool
+def ListEquals = [<a: once> list1, <b: once> list2, eq] list1.begin.case {
+  .end! => list2.case {
+    .end! => .true!,
+    .item(_) _ => .false!,
+  },
+  .item(x) list1 => list2.case {
+    .end! => .false!,
+    .item(y) list2 => eq(x, y).case {
+      .true! => list1.loop,
+      .false! => .false!,
+    },
+  },
 }
 
 def Map = [<a> format, <b> f] box case {
@@ -233,7 +242,7 @@ def Number = box case {
   }
 }
 
-def List = [<a: box> item] box case {
+def List = [<a: once> item] box case {
   .parse(json) => json.case {
     .list xs => xs.begin.case {
       .end! => .ok .end!,
@@ -276,7 +285,7 @@ def OptionalField = [key, <a> format] box case {
   }
 }
 
-def And = [<a: box> format1, <b: box> format2] box case {
+def And = [<a: once> format1, <b: once> format2] box case {
   .parseObject(object) => if {
     not format2.parseObject(object) is .ok y => .err!,
     not format1.parseObject(object) is .ok x => .err!,

@@ -31,10 +31,10 @@ export {
   }
 
   // Collects the stream into a list, preserving any stream error.
-  dec ToList : [<e, a: box> Stream<e, a>] Try<e, List<a>>
+  dec ToList : [<e, a: once> Stream<e, a>] Try<e, List<a>>
 
   // Creates an infallible stream from a list.
-  dec FromList : [<a: box> List<a>] Stream<either {}, a>
+  dec FromList : [<a: once> List<a>] Stream<either {}, a>
 
   // Applies a mapping function to each item of a stream.
   dec Map : [<e, a> Stream<e, a>, <b> box [a] b] Stream<e, b>
@@ -43,26 +43,26 @@ export {
   dec Enumerate : [<e, a> Stream<e, a>] Stream<e, (Nat) a>
 
   // Applies a mapping function to the stream's error type.
-  dec MapErr : [<e1, a> Stream<e1, a>, <e2> box [e1] e2] Stream<e2, a>
+  dec MapErr : [<e1, a> Stream<e1, a>, <e2> once [e1] e2] Stream<e2, a>
 
   // Maps each item to a stream, then flattens the result.
-  dec FlatMap : [<e: box, a> Stream<e, a>, <b> box [a] Stream<e, b>] Stream<e, b>
+  dec FlatMap : [<e: once, a> Stream<e, a>, <b> box [a] Stream<e, b>] Stream<e, b>
 
   // Flattens a stream of streams into a single stream.
-  dec Flatten : [<e: box, a> Stream<e, Stream<e, a>>] Stream<e, a>
+  dec Flatten : [<e: once, a> Stream<e, Stream<e, a>>] Stream<e, a>
 
   // Concatenates a list of streams into a single stream.
-  dec Concat : [<e: box, a> List<Stream<e, a>>] Stream<e, a>
+  dec Concat : [<e: once, a> List<Stream<e, a>>] Stream<e, a>
 
   // Keeps the items for which the test function returns `.true!`.
   dec Filter : [<e, a: box> Stream<e, a>, box [a] Bool] Stream<e, a>
 
   // Yields at most the requested number of items, cancelling the source if
   // enough items were taken before it ended.
-  dec Take : [<e, a: box> Stream<e, a>, Nat] Stream<e, a>
+  dec Take : [<e, a> Stream<e, a>, Nat] Stream<e, a>
 
   // Skips the requested number of items and yields the rest.
-  dec Drop : [<e, a: box> Stream<e, a>, Nat] Stream<e, a>
+  dec Drop : [<e, a: once> Stream<e, a>, Nat] Stream<e, a>
 
   // Yields items while the test function returns `.true!`, then cancels the source.
   dec TakeWhile : [<e, a: box> Stream<e, a>, box [a] Bool] Stream<e, a>
@@ -90,7 +90,7 @@ export {
   dec Cancel : [<e, a> Stream<e, a>] Try<e, !>
 }
 
-def ToList = [<e, a: box> stream]
+def ToList = [<e, a: once> stream]
   let builder = List.Builder(type a) in
   stream.begin.case {
     .end result => result.case {
@@ -103,7 +103,7 @@ def ToList = [<e, a: box> stream]
     } in stream.loop,
   }
 
-def FromList = [<a: box> list] list.begin.case {
+def FromList = [<a: once> list] list.begin.case {
   .end! => .end.ok!,
   .item(value) list => .item case {
     .cancel => .ok!,
@@ -141,9 +141,9 @@ def MapErr = [<e1, a> stream, <e2> f] stream.begin.case {
   },
 }
 
-def FlatMap = [<e: box, a> stream, <b> f] stream->Map(f)->Flatten
+def FlatMap = [<e: once, a> stream, <b> f] stream->Map(f)->Flatten
 
-def Flatten = [<e: box, a> streams] streams.begin@outer.case {
+def Flatten = [<e: once, a> streams] streams.begin@outer.case {
   .end result => .end result,
   .item streams => do {
     streams.get[stream]
@@ -168,7 +168,7 @@ def Flatten = [<e: box, a> streams] streams.begin@outer.case {
   },
 }
 
-def Concat = [<e: box, a> streams] streams.begin@outer.case {
+def Concat = [<e: once, a> streams] streams.begin@outer.case {
   .end! => .end.ok!,
   .item(stream) streams => stream.begin@inner.case {
     .end result => result.case {
@@ -231,7 +231,7 @@ def Filter = [<e, a: box> stream, predicate] stream.begin.case {
   },
 }
 
-def Take = [<e, a: box> stream, n]
+def Take = [<e, a> stream, n]
   Nat.Repeat(n).begin@take.case {
     .end! => .end stream->Cancel,
     .step steps => stream.begin.case {
@@ -243,7 +243,7 @@ def Take = [<e, a: box> stream, n]
     },
   }
 
-def Drop = [<e, a: box> stream, n]
+def Drop = [<e, a: once> stream, n]
   Nat.Repeat(n).begin@drop.case {
     .end! => stream,
     .step steps => stream.begin.case {
