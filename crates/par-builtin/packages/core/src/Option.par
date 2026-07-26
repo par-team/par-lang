@@ -30,7 +30,7 @@ export {
   dec ToList : [<a> Option<a>] List<a>
 
   // Converts `.some value` to `.ok value` and `.none!` to the provided error.
-  dec ToResult : [<a> Option<a>, <e: once> e] Try<e, a>
+  dec ToTry : [<a> Option<a>, <e: once> e] Try<e, a>
 }
 
 def Map = [<a> option, <b> f] option.case {
@@ -53,7 +53,7 @@ def ToList = [<a> option] option.case {
   .none! => .end!,
 }
 
-def ToResult = [<a> option, <e: once> e] option.case {
+def ToTry = [<a> option, <e: once> e] option.case {
   .some a => .ok a,
   .none! => .err e,
 }
