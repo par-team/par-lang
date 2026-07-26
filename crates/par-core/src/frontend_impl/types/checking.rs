@@ -302,6 +302,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 captures,
             } => self.check_process_submit(span, driver, point, values, captures, emit),
             Terminator::Unreachable(span) => self.check_process_unreachable(span, emit),
+            Terminator::ToDo(span) => self.check_process_todo(span, emit),
             Terminator::Block(span, index, body, then) => {
                 self.check_process_block(span, *index, body, then, emit)
             }
@@ -738,6 +739,44 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         self.variables.clear();
         Terminator::Unreachable(span.clone())
+    }
+
+    fn check_process_todo(
+        &mut self,
+        span: &Span,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Terminator<Type<S>, S> {
+        for (name, typ) in &self.variables {
+            if self.type_has_holes(typ) {
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    name.clone(),
+                ));
+            }
+        }
+        self.variables.clear();
+        Terminator::ToDo(span.clone())
+    }
+
+    fn type_has_holes(&self, typ: &Type<S>) -> bool {
+        match typ {
+            Type::Hole(..) | Type::DualHole(..) => true,
+            Type::Name(_, _, args) | Type::DualName(_, _, args) => {
+                args.iter().any(|arg| self.type_has_holes(arg))
+            }
+            Type::Box(_, inner) | Type::DualBox(_, inner) => self.type_has_holes(inner),
+            Type::Pair(_, left, right, _) | Type::Function(_, left, right, _) => {
+                self.type_has_holes(left) || self.type_has_holes(right)
+            }
+            Type::Either(_, branches) | Type::Choice(_, branches) => {
+                branches.values().any(|branch| self.type_has_holes(branch))
+            }
+            Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
+                self.type_has_holes(body)
+            }
+            Type::Exists(_, _, body) | Type::Forall(_, _, body) => self.type_has_holes(body),
+            _ => false,
+        }
     }
 
     fn check_process_block(
@@ -1994,6 +2033,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 emit,
             ),
             Terminator::Unreachable(span) => self.infer_process_unreachable(span, emit),
+            Terminator::ToDo(span) => self.infer_process_todo(span, inference_subject, emit),
             Terminator::Block(span, index, body, then) => {
                 self.infer_process_block(span, *index, body, then, inference_subject, emit)
             }
@@ -2497,6 +2537,20 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         self.variables.clear();
         (Terminator::Unreachable(span.clone()), Type::choice(vec![]))
+    }
+
+    fn infer_process_todo(
+        &mut self,
+        span: &Span,
+        inference_subject: &LocalName,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
+        emit(TypeError::TypeMustBeKnownAtThisPoint(
+            span.clone(),
+            inference_subject.clone(),
+        ));
+        self.variables.clear();
+        (Terminator::ToDo(span.clone()), Type::Fail(span.clone()))
     }
 
     fn infer_process_block(

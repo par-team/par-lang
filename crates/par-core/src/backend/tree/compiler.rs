@@ -242,7 +242,7 @@ pub(crate) struct Compiler {
             Type<Universal>,
         ),
     >,
-    global_name_to_id: IndexMap<GlobalName<Universal>, usize>,
+    global_name_to_id: IndexMap<GlobalName<Universal>, CompiledGlobal>,
     id_to_package: Vec<Net<Unlinked>>,
     lazy_redexes: Vec<(Tree<Unlinked>, Tree<Unlinked>)>,
     compile_global_stack: IndexSet<GlobalName<Universal>>,
@@ -309,12 +309,12 @@ impl Compiler {
     }
 
     fn compile_global(&mut self, name: &GlobalName<Universal>) -> Result<TypedTree> {
-        if let Some(id) = self.global_name_to_id.get(name) {
+        if let Some(CompiledGlobal::Package(id)) = self.global_name_to_id.get(name) {
             return Ok(TypedTree {
                 tree: Tree::Package(*id, Box::new(Tree::Break), FanBehavior::Expand),
                 ty: Type::Break(Span::None),
             });
-        };
+        }
         if !self.compile_global_stack.insert(name.clone()) {
             return Err(Error::DependencyCycle {
                 global: name.clone(),
@@ -345,7 +345,8 @@ impl Compiler {
                 (Tree::Continue).with_type(Type::Continue(Span::None)),
             ))
         })?;
-        self.global_name_to_id.insert(name.clone(), id);
+        self.global_name_to_id
+            .insert(name.clone(), CompiledGlobal::Package(id));
         self.compile_global_stack.shift_remove(name);
         Ok(Tree::Package(id, Box::new(Tree::Break), FanBehavior::Expand).with_type(typ))
     }
@@ -700,6 +701,7 @@ impl Compiler {
             Terminator::Goto(_, index, _) => self.compile_process_goto(*index)?,
 
             Terminator::Unreachable(_) => self.compile_process_unreachable()?,
+            Terminator::ToDo(_) => todo!(),
         }
 
         for (parameter, was_empty_before) in received_parameters.into_iter().rev() {
@@ -1224,10 +1226,17 @@ impl Compiler {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CompiledGlobal {
+    Package(usize),
+    #[allow(dead_code)]
+    Unimplemented,
+}
+
 #[derive(Clone, Default)]
 pub struct IcCompiled {
     pub(crate) id_to_package: Arc<IndexMap<usize, Net<Unlinked>>>,
-    pub(crate) name_to_id: IndexMap<GlobalName<Universal>, usize>,
+    pub(crate) name_to_id: IndexMap<GlobalName<Universal>, CompiledGlobal>,
     package_is_case_branch: IndexMap<usize, ArcStr>,
 }
 
@@ -1236,7 +1245,7 @@ impl Display for IcCompiled {
         for (k, v) in self.id_to_package.iter() {
             // check if it has a name
             for (name, id) in self.name_to_id.iter() {
-                if id == k {
+                if id == &CompiledGlobal::Package(*k) {
                     f.write_fmt(format_args!("// {} \n", name))?;
                 }
             }
@@ -1247,11 +1256,6 @@ impl Display for IcCompiled {
 }
 
 impl IcCompiled {
-    pub fn get_with_name(&self, name: &GlobalName<Universal>) -> Option<Net<Unlinked>> {
-        let id = self.name_to_id.get(name)?;
-        self.id_to_package.get(id).cloned()
-    }
-
     pub fn get_case_branch_name(&self, id: usize) -> Option<ArcStr> {
         self.package_is_case_branch.get(&id).cloned()
     }

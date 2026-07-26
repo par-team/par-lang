@@ -16,12 +16,13 @@ use par_core::{
     runtime::RuntimeCompilerError,
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
+use par_core::runtime::TranspiledGlobal;
 use par_doc::DocOptions;
 use tokio::time::Instant;
 #[cfg(not(target_family = "wasm"))]
 use url::Url;
 
-use par_runtime::linker::{Artifact, Linked, Unlinked};
+use par_runtime::linker::{Artifact, ArtifactGlobal, Linked, Unlinked};
 use par_runtime::spawn::TokioSpawn;
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -661,8 +662,32 @@ fn run_definition(
             return;
         };
 
+        let package_to_run = match rt_compiled.code.name_to_package.get(name) {
+            Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+            Some(TranspiledGlobal::Unimplemented) => {
+                println!(
+                    "{}",
+                    format!(
+                        "Definition {} is unimplemented (directly or indirectly contains a todo; run `par check` for details)",
+                        target.unwrap_or_else(|| "Main.Main".to_string())
+                    )
+                    .bright_red()
+                );
+                return;
+            }
+            None => {
+                println!(
+                    "{}",
+                    format!(
+                        "Definition {} not found",
+                        target.unwrap_or_else(|| "Main.Main".to_string())
+                    )
+                    .bright_red()
+                );
+                return;
+            }
+        };
         let start = Instant::now();
-        let package_to_run = rt_compiled.code.get_with_name(name).unwrap();
         let start_runtime = if print_stats {
             par_runtime::start_and_instantiate_with_stats
         } else {
@@ -706,10 +731,20 @@ fn run_definition_vm(binary_path: PathBuf, target: Option<String>, print_stats: 
         let target = format!("{}.{}", parsed_target.module_path, definition_target);
 
         let start = Instant::now();
-        let package_to_run = artifact
-            .definition_to_package
-            .get(&target)
-            .expect(format!("Definition {target} not found").as_str());
+        let package_to_run = match artifact.definition_to_package.get(&target) {
+            Some(ArtifactGlobal::Package(pkg)) => pkg,
+            Some(ArtifactGlobal::Unimplemented) => {
+                println!(
+                    "{}",
+                    format!("Definition {target} is unimplemented (directly or indirectly contains a todo; run `par check` for details)").bright_red()
+                );
+                return;
+            }
+            None => {
+                println!("{}", format!("Definition {target} not found").bright_red());
+                return;
+            }
+        };
         let start_runtime = if print_stats {
             par_runtime::start_and_instantiate_with_stats
         } else {

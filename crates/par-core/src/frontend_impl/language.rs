@@ -605,6 +605,7 @@ pub enum ProcessTerminator<S> {
     },
     Command(ProcessCommand<S>),
     Fallthrough(Span),
+    ToDo(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -2775,6 +2776,7 @@ impl Context {
                 Some(process) => process,
                 None => Err(CompileError::MustEndProcess(span.clone()))?,
             },
+            ProcessTerminator::ToDo(span) => process::Process::todo(span.clone()),
         })
     }
 
@@ -3900,7 +3902,8 @@ impl<S> Spanning for ProcessTerminator<S> {
             | Self::Submit { span, .. }
             | Self::If { span, .. }
             | Self::Throw(span, ..)
-            | Self::Fallthrough(span) => span.clone(),
+            | Self::Fallthrough(span)
+            | Self::ToDo(span) => span.clone(),
             Self::Command(command) => command.span.clone(),
         }
     }

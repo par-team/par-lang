@@ -17,6 +17,7 @@ use par_core::{
     testing::{AssertionResult, provide_test},
     workspace::{CheckedWorkspace, ModulePath, WorkspaceDiscoveryError, WorkspaceError},
 };
+use par_core::runtime::TranspiledGlobal;
 use par_runtime::linker::Linked;
 use par_runtime::pkgid::{BuiltinPackage, PackageId};
 use par_runtime::spawn::TokioSpawn;
@@ -334,7 +335,13 @@ fn run_single_definition(
             .get_type_of(run_name)
             .ok_or_else(|| format!("Type not found for test '{}'", missing_type_name))?;
         require_assignable_type(program, &ty, &Type::Break(Span::None), "!")?;
-        let package = rt_compiled.code.get_with_name(run_name).unwrap();
+        let package = match rt_compiled.code.name_to_package.get(run_name) {
+            Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+            Some(TranspiledGlobal::Unimplemented) => {
+                return Err(format!("Test '{missing_type_name}' is unimplemented (directly or indirectly contains a todo; run `par check` for details)"));
+            }
+            None => return Err(format!("Test package not found for '{missing_type_name}'")),
+        };
 
         let (handle, fut) = par_runtime::start_and_instantiate(
             Arc::new(TokioSpawn::new()),
@@ -401,7 +408,13 @@ async fn run_test(
 ) -> Result<TestStatus, String> {
     let (sender, receiver) = mpsc::channel();
 
-    let package = rt_compiled.code.get_with_name(name).unwrap();
+    let package = match rt_compiled.code.name_to_package.get(name) {
+        Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+        Some(TranspiledGlobal::Unimplemented) => {
+            return Err("Test is unimplemented (directly or indirectly contains a todo; run `par check` for details)".to_string());
+        }
+        None => return Err("Test package not found".to_string()),
+    };
     let (mut root, reducer_future) = par_runtime::start_and_instantiate(
         Arc::new(TokioSpawn::new()),
         rt_compiled.code.arena.clone(),

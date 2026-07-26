@@ -386,7 +386,9 @@ fn validate_process_visibility(
             validate_process_visibility(current_module, body, visibility, errors);
             validate_process_visibility(current_module, then, visibility, errors);
         }
-        process::Terminator::Goto(..) | process::Terminator::Unreachable(..) => {}
+        process::Terminator::Goto(..)
+        | process::Terminator::Unreachable(..)
+        | process::Terminator::ToDo(..) => {}
     }
 }
 
