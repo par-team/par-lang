@@ -44,13 +44,13 @@ dec MapLookupThenList : [Map<Key, String>, Key] (Option<String>) PairList
 def MapLookupThenList = [map, key] do {
   map.entry(key)[entry]
   map.delete
-  let entries = map.list
+  let entries = map.close
 } in (entry) entries
 
 dec MapSizeThenList : [Map<Key, String>] (Nat) PairList
 def MapSizeThenList = [map] do {
   map.size[size]
-  let entries = map.list
+  let entries = map.close
 } in (size) entries
 
 dec MapPutList : [!] PairList
@@ -61,7 +61,7 @@ def MapPutList = [!] do {
     .some old => { map.put(old) },
     .none! => { map.put("one") },
   }
-  let entries = map.list
+  let entries = map.close
 } in entries
 
 def TestListConstraintsAndEquality : [Test] ! = [test] do {

@@ -188,7 +188,7 @@ def NewProgressTracker: ProgressTracker = do {
   let sumDownloaded: Int = 0
   let sumExpected: Int = 0
 } in begin case {
-  .close => let _ = filesInProgress.list in !,
+  .close => !,
 
   .stats => do {
     filesInProgress.size[numFiles]
