@@ -935,6 +935,7 @@ fn typ(input: &mut Input) -> Result<Type<Unresolved>> {
         typ_var,
         typ_name,
         typ_box,
+        typ_once,
         typ_chan,
         typ_either,
         typ_choice,
@@ -977,6 +978,15 @@ fn typ_box(input: &mut Input) -> Result<Type<Unresolved>> {
         typ.context(StrContext::Label("box type")),
     )
     .map(|(pre, typ)| Type::Box(pre.span.join(typ.span()), Box::new(typ)))
+    .parse_next(input)
+}
+
+fn typ_once(input: &mut Input) -> Result<Type<Unresolved>> {
+    commit_after(
+        t(TokenKind::Once),
+        typ.context(StrContext::Label("once type")),
+    )
+    .map(|(pre, typ)| Type::Once(pre.span.join(typ.span()), Box::new(typ)))
     .parse_next(input)
 }
 
@@ -1056,12 +1066,15 @@ fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
         return Ok(TypeConstraint::Box);
     }
     input.reset(&checkpoint);
+    if t::<Error>(TokenKind::Once).parse_next(input).is_ok() {
+        return Ok(TypeConstraint::Once);
+    }
+    input.reset(&checkpoint);
 
     let name = local_name
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
     match name.string.as_str() {
-        "once" => Ok(TypeConstraint::Once),
         "data" => Ok(TypeConstraint::Data),
         "number" => Ok(TypeConstraint::Number),
         "signed" => Ok(TypeConstraint::Signed),
@@ -1595,6 +1608,7 @@ fn expression_without_construction(input: &mut Input) -> Result<Expression<Unres
         expr_if,
         expr_do,
         expr_box,
+        expr_once,
         expr_chan,
         infix_or,
     ))
@@ -1965,6 +1979,14 @@ fn expr_box(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(t(TokenKind::Box), expression)
         .map(|(pre, expression)| {
             Expression::Box(pre.span.join(expression.span()), Box::new(expression))
+        })
+        .parse_next(input)
+}
+
+fn expr_once(input: &mut Input) -> Result<Expression<Unresolved>> {
+    commit_after(t(TokenKind::Once), expression)
+        .map(|(pre, expression)| {
+            Expression::Once(pre.span.join(expression.span()), Box::new(expression))
         })
         .parse_next(input)
 }
@@ -4178,15 +4200,27 @@ module Minimal
 dec Explicit : [type a: number, (a) !] !
 dec Implicit : [<a: signed> a] a
 dec Once : [type a: once, a] !
+dec Wrapped : once [Nat] Nat
+dec DualWrapped : dual once [Nat] Nat
 def Explicit = [type a: number, p] !
 def Implicit = [<a: signed> x] x
 def Once = [type a: once, x] !
+def Wrapped = once [n] n
 ";
         let parsed = parse_source_file(source, "minimal.par".into()).unwrap();
         let Type::Forall(_, parameter, _) = &parsed.body.declarations[2].typ else {
             panic!("expected explicit once type parameter");
         };
         assert_eq!(parameter.constraint, TypeConstraint::Once);
+        assert!(matches!(parsed.body.declarations[3].typ, Type::Once(..)));
+        assert!(matches!(
+            parsed.body.declarations[4].typ,
+            Type::DualOnce(..)
+        ));
+        assert!(matches!(
+            parsed.body.definitions[3].body,
+            DefinitionBody::Par(Expression::Once(..))
+        ));
     }
 
     #[test]

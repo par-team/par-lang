@@ -18,7 +18,10 @@ where
                 visit(arg)?;
             }
         }
-        Type::Box(_, inner) | Type::DualBox(_, inner) => {
+        Type::Box(_, inner)
+        | Type::DualBox(_, inner)
+        | Type::Once(_, inner)
+        | Type::DualOnce(_, inner) => {
             visit(inner)?;
         }
         Type::Pair(_, left, right, _) | Type::Function(_, left, right, _) => {
@@ -66,7 +69,10 @@ where
                 visit(arg)?;
             }
         }
-        Type::Box(_, inner) | Type::DualBox(_, inner) => {
+        Type::Box(_, inner)
+        | Type::DualBox(_, inner)
+        | Type::Once(_, inner)
+        | Type::DualOnce(_, inner) => {
             visit(inner)?;
         }
         Type::Pair(_, left, right, _) | Type::Function(_, left, right, _) => {
@@ -136,7 +142,7 @@ where
         Type::DualName(..) => {
             continue_deref(typ, defs, |child| visit(child, is_positive))?;
         }
-        Type::DualBox(_, inner) => {
+        Type::DualBox(_, inner) | Type::DualOnce(_, inner) => {
             visit(inner, !is_positive)?;
         }
         Type::Function(_, left, right, _) => {
@@ -285,7 +291,7 @@ where
                 visit(arg, polarity.xor(polarity).dual())?;
             }
         }
-        Type::DualBox(_, inner) => {
+        Type::DualBox(_, inner) | Type::DualOnce(_, inner) => {
             visit(inner, polarity.dual())?;
         }
         Type::Function(_, left, right, _) => {

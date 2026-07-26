@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use super::super::lattice::{intersect_types, union_types};
     use crate::frontend_impl::language::{
         GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
     };
@@ -160,6 +161,15 @@ mod tests {
     fn test_once_classification() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let resource = Type::choice(vec![("close", Type::break_())]);
+        let strict = Type::choice(vec![("use", Type::break_())]);
+
+        assert!(Type::once(strict.clone()).is_once(&type_defs).unwrap());
+        assert!(
+            !Type::once(strict.clone())
+                .satisfies_constraint(TypeConstraint::Box, &type_defs)
+                .unwrap()
+        );
+        assert!(Type::box_(strict).is_once(&type_defs).unwrap());
 
         assert!(
             Type::pair(
@@ -202,6 +212,85 @@ mod tests {
         assert!(
             !Type::DualSelf(Span::None, None)
                 .is_once(&type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_once_modality_subtyping() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let strict = Type::choice(vec![("use", Type::break_())]);
+        let closeable = Type::choice(vec![("close", Type::break_())]);
+        let once_strict = Type::once(strict.clone());
+        let nested_once = Type::once(once_strict.clone());
+        let boxed_strict = Type::box_(strict.clone());
+
+        assert!(
+            once_strict
+                .is_definitely_assignable_to(&strict, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !strict
+                .is_definitely_assignable_to(&once_strict, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            closeable
+                .is_definitely_assignable_to(&Type::once(closeable.clone()), &type_defs)
+                .unwrap()
+        );
+        assert!(
+            nested_once
+                .is_definitely_assignable_to(&once_strict, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            once_strict
+                .is_definitely_assignable_to(&nested_once, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            boxed_strict
+                .is_definitely_assignable_to(&Type::once(strict.clone()), &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::once(strict)
+                .is_definitely_assignable_to(&boxed_strict, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            Type::choice(vec![("use", Type::break_())])
+                .dual(Span::None)
+                .is_definitely_assignable_to(&once_strict.clone().dual(Span::None), &type_defs)
+                .unwrap()
+        );
+
+        let boxed_left = Type::box_(Type::either(vec![("left", Type::nat())]));
+        let once_right = Type::once(Type::either(vec![("right", Type::string())]));
+        let union = union_types(&type_defs, &Span::None, &boxed_left, &once_right).unwrap();
+        assert!(
+            boxed_left
+                .is_definitely_assignable_to(&union, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            once_right
+                .is_definitely_assignable_to(&union, &type_defs)
+                .unwrap()
+        );
+
+        let intersection =
+            intersect_types(&type_defs, &Span::None, &boxed_left, &once_right).unwrap();
+        assert!(
+            intersection
+                .is_definitely_assignable_to(&boxed_left, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            intersection
+                .is_definitely_assignable_to(&once_right, &type_defs)
                 .unwrap()
         );
     }

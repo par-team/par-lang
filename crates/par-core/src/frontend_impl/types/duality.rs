@@ -18,6 +18,8 @@ impl<S> Type<S> {
 
             Self::Box(span, body) => Self::DualBox(span0.join(span), body),
             Self::DualBox(span, body) => Self::Box(span0.join(span), body),
+            Self::Once(span, body) => Self::DualOnce(span0.join(span), body),
+            Self::DualOnce(span, body) => Self::Once(span0.join(span), body),
 
             Self::Pair(span, t, u, vars) => {
                 Self::Function(span0.join(span), t, Box::new(u.dual(Span::None)), vars)

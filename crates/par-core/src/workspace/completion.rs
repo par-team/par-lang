@@ -276,7 +276,10 @@ impl CheckedWorkspace {
                     candidates,
                 );
             }
-            Type::Box(_, inner) | Type::DualBox(_, inner) => {
+            Type::Box(_, inner)
+            | Type::DualBox(_, inner)
+            | Type::Once(_, inner)
+            | Type::DualOnce(_, inner) => {
                 self.push_type_completion_candidates(
                     inner,
                     context,

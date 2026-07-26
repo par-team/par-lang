@@ -108,6 +108,24 @@ fn union_types_atoms<S: Clone + Eq + std::hash::Hash>(
             span.clone(),
             Box::new(intersect_types(typedefs, span, inner1, inner2)?),
         )),
+        (Type::Once(_, inner1), Type::Once(_, inner2)) => Ok(Type::Once(
+            span.clone(),
+            Box::new(union_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::DualOnce(_, inner1), Type::DualOnce(_, inner2)) => Ok(Type::DualOnce(
+            span.clone(),
+            Box::new(intersect_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::Box(_, inner1), Type::Once(_, inner2))
+        | (Type::Once(_, inner2), Type::Box(_, inner1)) => Ok(Type::Once(
+            span.clone(),
+            Box::new(union_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::DualBox(_, inner1), Type::DualOnce(_, inner2))
+        | (Type::DualOnce(_, inner2), Type::DualBox(_, inner1)) => Ok(Type::DualBox(
+            span.clone(),
+            Box::new(intersect_types(typedefs, span, inner1, inner2)?),
+        )),
         (Type::Break(_), Type::Break(_)) => Ok(Type::Break(span.clone())),
         (Type::Continue(_), Type::Continue(_)) => Ok(Type::Continue(span.clone())),
         (Type::Primitive(_, p1), Type::Primitive(_, p2)) if p1 == p2 => {
@@ -227,6 +245,8 @@ fn union_types_branching<S: Clone + Eq + std::hash::Hash>(
         )),
         (Type::Box(_, t1), t2) => union_types(typedefs, span, t1, t2),
         (t1, Type::Box(_, t2)) => union_types(typedefs, span, t1, t2),
+        (Type::Once(_, t1), t2) => union_types(typedefs, span, t1, t2),
+        (t1, Type::Once(_, t2)) => union_types(typedefs, span, t1, t2),
         (t1, t2) => Err(TypeError::TypesCannotBeUnified(
             span.clone(),
             t1.clone(),
@@ -280,6 +300,24 @@ fn intersect_types_atoms<S: Clone + Eq + std::hash::Hash>(
             Box::new(intersect_types(typedefs, span, inner1, inner2)?),
         )),
         (Type::DualBox(_, inner1), Type::DualBox(_, inner2)) => Ok(Type::DualBox(
+            span.clone(),
+            Box::new(union_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::Once(_, inner1), Type::Once(_, inner2)) => Ok(Type::Once(
+            span.clone(),
+            Box::new(intersect_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::DualOnce(_, inner1), Type::DualOnce(_, inner2)) => Ok(Type::DualOnce(
+            span.clone(),
+            Box::new(union_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::Box(_, inner1), Type::Once(_, inner2))
+        | (Type::Once(_, inner2), Type::Box(_, inner1)) => Ok(Type::Box(
+            span.clone(),
+            Box::new(intersect_types(typedefs, span, inner1, inner2)?),
+        )),
+        (Type::DualBox(_, inner1), Type::DualOnce(_, inner2))
+        | (Type::DualOnce(_, inner2), Type::DualBox(_, inner1)) => Ok(Type::DualOnce(
             span.clone(),
             Box::new(union_types(typedefs, span, inner1, inner2)?),
         )),
@@ -402,6 +440,8 @@ fn intersect_types_branching<S: Clone + Eq + std::hash::Hash>(
         )),
         (Type::Box(_, t1), t2) => intersect_types(typedefs, span, t1, t2),
         (t1, Type::Box(_, t2)) => intersect_types(typedefs, span, t1, t2),
+        (Type::Once(_, t1), t2) => intersect_types(typedefs, span, t1, t2),
+        (t1, Type::Once(_, t2)) => intersect_types(typedefs, span, t1, t2),
         (t1, t2) => Err(TypeError::TypesCannotBeUnified(
             span.clone(),
             t1.clone(),

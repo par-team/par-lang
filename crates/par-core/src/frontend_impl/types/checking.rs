@@ -3,7 +3,7 @@ use super::super::process::{
     Captures, Command, Expression, PollKind, Process, Step, TerminalCommand, Terminator,
     VariableUsage,
 };
-use super::context::{BlockPathContext, BlockScope, PollPointScope, PollScope};
+use super::context::{BlockPathContext, BlockScope, CapturePolicy, PollPointScope, PollScope};
 use super::core::{LoopId, Operation, Type, get_primitive_type};
 use super::error::TypeError;
 use super::lattice::union_types;
@@ -891,10 +891,17 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let next = match &typ {
                 Type::Name(_, name, args) => self.type_defs.get(span, name, args),
                 Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
-                Type::Box(_, inner) => Ok((**inner).clone()),
+                Type::Box(_, inner) | Type::Once(_, inner) => Ok((**inner).clone()),
                 Type::DualBox(_, inner)
                     if inner
                         .satisfies_constraint(TypeConstraint::Box, &self.type_defs)
+                        .unwrap_or(false) =>
+                {
+                    Ok(inner.clone().dual(Span::None))
+                }
+                Type::DualOnce(_, inner)
+                    if inner
+                        .satisfies_constraint(TypeConstraint::Once, &self.type_defs)
                         .unwrap_or(false) =>
                 {
                     Ok(inner.clone().dual(Span::None))
@@ -2788,6 +2795,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 target_type,
                 emit,
             ),
+            Expression::Once(span, captures, expression, ()) => self.check_expression_once(
+                span,
+                captures,
+                expression,
+                inference_subject,
+                target_type,
+                emit,
+            ),
             Expression::Chan {
                 span,
                 captures,
@@ -2825,6 +2840,9 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             Expression::Box(span, captures, expression, ()) => {
                 self.infer_expression_box(span, captures, expression, inference_subject, emit)
+            }
+            Expression::Once(span, captures, expression, ()) => {
+                self.infer_expression_once(span, captures, expression, inference_subject, emit)
             }
             Expression::Chan {
                 span,
@@ -2933,7 +2951,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
         let mut context = self.split();
-        if let Err(e) = self.capture(inference_subject, captures, true, &mut context) {
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Box,
+            &mut context,
+        ) {
             emit(e);
         }
         let mut target_inner_type = target_type.clone();
@@ -2944,7 +2967,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     emit(e);
                     Type::Fail(span.clone())
                 }) {
-                Type::Box(_, inner) => target_inner_type = *inner,
+                Type::Box(_, inner) | Type::Once(_, inner) => target_inner_type = *inner,
                 Type::Recursive {
                     span: _,
                     asc,
@@ -2982,8 +3005,99 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
         let expression =
-            self.check_expression(inference_subject, expression, &target_inner_type, emit);
+            context.check_expression(inference_subject, expression, &target_inner_type, emit);
         Arc::new(Expression::Box(
+            span.clone(),
+            captures.clone(),
+            expression,
+            target_type.clone(),
+        ))
+    }
+
+    fn check_expression_once(
+        &mut self,
+        span: &Span,
+        captures: &Captures,
+        expression: &Arc<Expression<(), S>>,
+        inference_subject: Option<&LocalName>,
+        target_type: &Type<S>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Arc<Expression<Type<S>, S>> {
+        if let Some(inference_subject) = inference_subject {
+            if captures.names.contains_key(inference_subject) {
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    inference_subject.clone(),
+                ));
+                return Arc::new(Expression::Once(
+                    span.clone(),
+                    captures.clone(),
+                    Arc::new(Expression::Primitive(
+                        span.clone(),
+                        Primitive::Number(Number::Int(num_bigint::BigInt::ZERO)),
+                        Type::Fail(span.clone()),
+                    )),
+                    target_type.clone(),
+                ));
+            }
+        }
+        let mut context = self.split();
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Once,
+            &mut context,
+        ) {
+            emit(e);
+        }
+        let mut target_inner_type = target_type.clone();
+        loop {
+            match target_inner_type
+                .expand_definition(&self.type_defs)
+                .unwrap_or_else(|e| {
+                    emit(e);
+                    Type::Fail(span.clone())
+                }) {
+                Type::Once(_, inner) => target_inner_type = *inner,
+                Type::Recursive {
+                    span: _,
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                } => {
+                    target_inner_type =
+                        Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref())
+                            .unwrap_or_else(|e| {
+                                emit(e);
+                                Type::Fail(span.clone())
+                            });
+                }
+                Type::Iterative {
+                    span: iter_span,
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                } => {
+                    target_inner_type = Type::expand_iterative(
+                        &iter_span,
+                        &asc,
+                        &label,
+                        &body,
+                        display_hint.0.as_ref(),
+                    )
+                    .unwrap_or_else(|e| {
+                        emit(e);
+                        Type::Fail(span.clone())
+                    });
+                }
+                _ => break,
+            }
+        }
+        let expression =
+            context.check_expression(inference_subject, expression, &target_inner_type, emit);
+        Arc::new(Expression::Once(
             span.clone(),
             captures.clone(),
             expression,
@@ -3017,7 +3131,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             None => (target_dual, target_type),
         };
         let mut context = self.split();
-        if let Err(e) = self.capture(inference_subject, captures, false, &mut context) {
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Linear,
+            &mut context,
+        ) {
             emit(e);
         }
         if let Err(e) = context.put(span, channel.clone(), chan_type.clone()) {
@@ -3144,13 +3263,69 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
         let mut context = self.split();
-        if let Err(e) = self.capture(inference_subject, captures, true, &mut context) {
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Box,
+            &mut context,
+        ) {
             emit(e);
         }
-        let (expression, typ) = self.infer_expression(inference_subject, expression, emit);
+        let (expression, typ) = context.infer_expression(inference_subject, expression, emit);
         let typ = Type::Box(span.clone(), Box::new(typ.clone()));
         (
             Arc::new(Expression::Box(
+                span.clone(),
+                captures.clone(),
+                expression,
+                typ.clone(),
+            )),
+            typ,
+        )
+    }
+
+    fn infer_expression_once(
+        &mut self,
+        span: &Span,
+        captures: &Captures,
+        expression: &Arc<Expression<(), S>>,
+        inference_subject: Option<&LocalName>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> (Arc<Expression<Type<S>, S>>, Type<S>) {
+        if let Some(inference_subject) = inference_subject {
+            if captures.names.contains_key(inference_subject) {
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    inference_subject.clone(),
+                ));
+                return (
+                    Arc::new(Expression::Once(
+                        span.clone(),
+                        captures.clone(),
+                        Arc::new(Expression::Primitive(
+                            span.clone(),
+                            Primitive::Number(Number::Int(num_bigint::BigInt::ZERO)),
+                            Type::Fail(span.clone()),
+                        )),
+                        Type::Fail(span.clone()),
+                    )),
+                    Type::Fail(span.clone()),
+                );
+            }
+        }
+        let mut context = self.split();
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Once,
+            &mut context,
+        ) {
+            emit(e);
+        }
+        let (expression, typ) = context.infer_expression(inference_subject, expression, emit);
+        let typ = Type::Once(span.clone(), Box::new(typ.clone()));
+        (
+            Arc::new(Expression::Once(
                 span.clone(),
                 captures.clone(),
                 expression,
@@ -3171,7 +3346,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Arc<Expression<Type<S>, S>>, Type<S>) {
         let mut context = self.split();
-        if let Err(e) = self.capture(inference_subject, captures, false, &mut context) {
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Linear,
+            &mut context,
+        ) {
             emit(e);
         }
         let (process, typ) = match annotation {
@@ -3250,7 +3430,10 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
                     inner(arg, bound, out);
                 }
             }
-            Type::Box(_, body) | Type::DualBox(_, body) => inner(body, bound, out),
+            Type::Box(_, body)
+            | Type::DualBox(_, body)
+            | Type::Once(_, body)
+            | Type::DualOnce(_, body) => inner(body, bound, out),
             Type::Pair(_, left, right, vars) | Type::Function(_, left, right, vars) => {
                 for var in vars {
                     bound.push(var.name.clone());

@@ -70,6 +70,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 .and_then(|typ| typ.satisfies_constraint_with(constraint, defs, fixpoints)),
             Type::Box(_, typ) => Ok(satisfies_at_least(TypeConstraint::Box)
                 || typ.satisfies_constraint_with(constraint, defs, fixpoints)?),
+            Type::Once(..) => Ok(satisfies_at_least(TypeConstraint::Once)),
             Type::Pair(_, left, right, vars) => {
                 let minimum = if vars.is_empty() {
                     TypeConstraint::Data
@@ -133,6 +134,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::DualPrimitive(..)
             | Type::DualVar(..)
             | Type::DualBox(..)
+            | Type::DualOnce(..)
             | Type::Function(..)
             | Type::Choice(..)
             | Type::Continue(_)

@@ -11,6 +11,7 @@ use crate::frontend_impl::language::{GlobalName, Universal};
 use crate::runtime_impl::tree;
 use arcstr::ArcStr;
 use indexmap::IndexMap;
+use par_runtime::fan_behavior::FanBehavior;
 use par_runtime::flat::arena::{Arena, Index};
 use par_runtime::flat::runtime::{
     ExternalArc, GlobalCont, GlobalValue, Package, PackageBody, PackagePtr,
@@ -304,6 +305,18 @@ impl ProgramTranspiler {
                     tree,
                     self.dest.alloc_clone(table.as_ref()),
                 ))
+            }
+            Tree::Package(id, context, FanBehavior::Once) => {
+                let signal = self.dest.intern(&ArcStr::from("close"));
+                let empty: &[Global<Unlinked>] = &[];
+                let destinations = self.dest.alloc_clone(empty);
+                let erase = self.dest.alloc(Global::Fanout(destinations));
+                let close = self.dest.alloc(Global::Close { signal, erase });
+                Global::OncePackage {
+                    package: self.map_package(id),
+                    captures: self.transpile_tree_and_alloc(*context),
+                    close,
+                }
             }
             Tree::Package(id, context, behavior) => Global::Package(
                 self.map_package(id),

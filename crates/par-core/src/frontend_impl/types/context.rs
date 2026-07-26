@@ -35,6 +35,13 @@ pub(crate) struct BlockScope<S> {
     pub(crate) paths: Vec<BlockPathContext<S>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CapturePolicy {
+    Box,
+    Once,
+    Linear,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Context<S> {
     pub(crate) type_defs: TypeDefs<S>,
@@ -274,7 +281,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         &mut self,
         inference_subject: Option<&LocalName>,
         cap: &Captures,
-        only_non_linear: bool,
+        policy: CapturePolicy,
         target: &mut Self,
     ) -> Result<(), TypeError<S>> {
         for (name, (span, _usage)) in &cap.names {
@@ -288,15 +295,30 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 Some(typ) => typ,
                 None => continue,
             };
+            let mut capture_error = None;
             if !typ.is_linear(&self.type_defs)? {
                 self.put(span, name.clone(), typ.clone())?;
-            } else if only_non_linear {
-                return Err(TypeError::CannotUseLinearVariableInBox(
-                    span.clone(),
-                    name.clone(),
-                ));
+            } else {
+                match policy {
+                    CapturePolicy::Box => {
+                        capture_error = Some(TypeError::CannotUseLinearVariableInBox(
+                            span.clone(),
+                            name.clone(),
+                        ));
+                    }
+                    CapturePolicy::Once if !typ.is_once(&self.type_defs)? => {
+                        capture_error = Some(TypeError::CannotUseStrictLinearVariableInOnce(
+                            span.clone(),
+                            name.clone(),
+                        ));
+                    }
+                    CapturePolicy::Once | CapturePolicy::Linear => {}
+                }
             }
             target.put(span, name.clone(), typ)?;
+            if let Some(error) = capture_error {
+                return Err(error);
+            }
         }
         Ok(())
     }

@@ -318,7 +318,8 @@ fn validate_expression_visibility(
         process::Expression::Variable(..)
         | process::Expression::Primitive(..)
         | process::Expression::External(..) => {}
-        process::Expression::Box(_, _, expression, _) => {
+        process::Expression::Box(_, _, expression, _)
+        | process::Expression::Once(_, _, expression, _) => {
             validate_expression_visibility(current_module, expression, visibility, errors);
         }
         process::Expression::Chan {

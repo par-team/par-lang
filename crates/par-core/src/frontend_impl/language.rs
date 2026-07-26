@@ -418,6 +418,7 @@ pub enum Expression<S> {
         then: Box<Self>,
     },
     Box(Span, Box<Self>),
+    Once(Span, Box<Self>),
     Chan {
         span: Span,
         pattern: Pattern<S>,
@@ -2044,6 +2045,15 @@ impl Context {
             Expression::Box(span, expression) => {
                 let expression = self.compile_expression(expression)?;
                 Arc::new(process::Expression::Box(
+                    span.clone(),
+                    Captures::new(),
+                    expression,
+                    (),
+                ))
+            }
+            Expression::Once(span, expression) => {
+                let expression = self.compile_expression(expression)?;
+                Arc::new(process::Expression::Once(
                     span.clone(),
                     Captures::new(),
                     expression,
@@ -3736,6 +3746,7 @@ impl<S> Spanning for Expression<S> {
             | Self::If { span, .. }
             | Self::Do { span, .. }
             | Self::Box(span, _)
+            | Self::Once(span, _)
             | Self::Chan { span, .. }
             | Self::Arithmetic { span, .. }
             | Self::Neg { span, .. }

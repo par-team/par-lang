@@ -199,6 +199,8 @@ pub enum Type<S> {
     DualName(Span, GlobalName<S>, Vec<Self>),
     Box(Span, Box<Self>),
     DualBox(Span, Box<Self>),
+    Once(Span, Box<Self>),
+    DualOnce(Span, Box<Self>),
     Pair(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Function(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Either(Span, BTreeMap<LocalName, Self>),
@@ -298,6 +300,8 @@ impl<S: Clone> Type<S> {
             }
             Self::Box(_, inner)
             | Self::DualBox(_, inner)
+            | Self::Once(_, inner)
+            | Self::DualOnce(_, inner)
             | Self::Exists(_, _, inner)
             | Self::Forall(_, _, inner) => current_depth_from_children([inner.current_depth()]),
             Self::Pair(_, left, right, _) | Self::Function(_, left, right, _) => {
@@ -330,6 +334,8 @@ impl<S: Clone> Type<S> {
             }
             Self::Box(_, inner)
             | Self::DualBox(_, inner)
+            | Self::Once(_, inner)
+            | Self::DualOnce(_, inner)
             | Self::Exists(_, _, inner)
             | Self::Forall(_, _, inner) => inner.flattened_depth(),
             Self::Pair(_, left, right, _) | Self::Function(_, left, right, _) => {
@@ -392,6 +398,10 @@ impl<S: Clone> Type<S> {
 
     pub fn box_(t: Self) -> Self {
         Self::Box(Span::None, Box::new(t))
+    }
+
+    pub fn once(t: Self) -> Self {
+        Self::Once(Span::None, Box::new(t))
     }
 
     pub fn pair(t: Self, u: Self) -> Self {
@@ -575,7 +585,10 @@ impl<S: Clone> Type<S> {
             Self::Var(_, _) | Self::DualVar(_, _) => 1,
             Self::Name(span, name, args) => defs.get(span, name, args)?.size(defs)?,
             Self::DualName(span, name, args) => defs.get_dual(span, name, args)?.size(defs)?,
-            Self::Box(_, inner) | Self::DualBox(_, inner) => 1 + inner.size(defs)?,
+            Self::Box(_, inner)
+            | Self::DualBox(_, inner)
+            | Self::Once(_, inner)
+            | Self::DualOnce(_, inner) => 1 + inner.size(defs)?,
             Self::Pair(_, left, right, _) => 1 + left.size(defs)? + right.size(defs)?,
             Self::Function(_, input, output, _) => 1 + input.size(defs)? + output.size(defs)?,
             Self::Either(_, branches) | Self::Choice(_, branches) => {
@@ -638,6 +651,14 @@ impl<S: Clone> Type<S> {
             Self::DualBox(span, inner) => {
                 let mapped_inner = Box::new(inner.map_global_names(f)?);
                 Type::DualBox(span, mapped_inner)
+            }
+            Self::Once(span, inner) => {
+                let mapped_inner = Box::new(inner.map_global_names(f)?);
+                Type::Once(span, mapped_inner)
+            }
+            Self::DualOnce(span, inner) => {
+                let mapped_inner = Box::new(inner.map_global_names(f)?);
+                Type::DualOnce(span, mapped_inner)
             }
             Self::Pair(span, left, right, vars) => {
                 let left = Box::new(left.map_global_names(f)?);
@@ -737,6 +758,8 @@ impl<S> Spanning for Type<S> {
             | Self::DualName(span, _, _)
             | Self::Box(span, _)
             | Self::DualBox(span, _)
+            | Self::Once(span, _)
+            | Self::DualOnce(span, _)
             | Self::Pair(span, _, _, _)
             | Self::Function(span, _, _, _)
             | Self::Either(span, _)

@@ -424,6 +424,13 @@ impl<Ext: Clone> Net<Ext> {
                 self.rewrites.era += 1;
                 self.link(*c, Tree::Era);
             }
+            (Package(_, c, FanBehavior::Once), Era)
+            | (Era, Package(_, c, FanBehavior::Once))
+            | (Package(_, c, FanBehavior::Once), Close)
+            | (Close, Package(_, c, FanBehavior::Once)) => {
+                self.rewrites.era += 1;
+                self.link(*c, Tree::Close);
+            }
             (Package(id, cx, FanBehavior::Propagate), Dup(d0, d1))
             | (Dup(d0, d1), Package(id, cx, FanBehavior::Propagate)) => {
                 let (a0, b0) = self.create_wire();

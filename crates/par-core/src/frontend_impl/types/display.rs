@@ -150,9 +150,10 @@ impl<S: Clone> Type<S> {
                     arg.types_at_spans(type_defs, docs, consume);
                 }
             }
-            Self::Box(_, body) | Self::DualBox(_, body) => {
-                body.types_at_spans(type_defs, docs, consume)
-            }
+            Self::Box(_, body)
+            | Self::DualBox(_, body)
+            | Self::Once(_, body)
+            | Self::DualOnce(_, body) => body.types_at_spans(type_defs, docs, consume),
             Self::Pair(_, t, u, _) => {
                 t.types_at_spans(type_defs, docs, consume);
                 u.types_at_spans(type_defs, docs, consume);
@@ -228,6 +229,14 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
         }
         Type::DualBox(_, body) => {
             write!(f, "dual box ")?;
+            write_type_with_options(f, names, body, options)
+        }
+        Type::Once(_, body) => {
+            write!(f, "once ")?;
+            write_type_with_options(f, names, body, options)
+        }
+        Type::DualOnce(_, body) => {
+            write!(f, "dual once ")?;
             write_type_with_options(f, names, body, options)
         }
         Type::Pair(_, _, _, _) => write_pair_like(f, names, "(", ")", typ, false, options),
