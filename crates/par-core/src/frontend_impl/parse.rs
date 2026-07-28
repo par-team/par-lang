@@ -1595,6 +1595,7 @@ fn expression_without_construction(input: &mut Input) -> Result<Expression<Unres
         expr_do,
         expr_box,
         expr_chan,
+        expr_todo,
         infix_or,
     ))
     .context(StrContext::Label("expression"))
@@ -2641,6 +2642,7 @@ fn process_head(input: &mut Input) -> Result<(Span, ProcessHead)> {
         proc_compound_assign,
         proc_catch,
         proc_throw,
+        proc_todo,
         expression_command,
         global_command,
         command,
@@ -2884,6 +2886,23 @@ fn proc_throw(input: &mut Input) -> Result<(Span, ProcessHead)> {
                 )),
             )
         })
+        .parse_next(input)
+}
+
+fn proc_todo(input: &mut Input) -> Result<(Span, ProcessHead)> {
+    t(TokenKind::Todo)
+        .map(|token| {
+            (
+                token.span.clone(),
+                ProcessHead::Terminator(ProcessTerminator::ToDo(token.span.clone())),
+            )
+        })
+        .parse_next(input)
+}
+
+fn expr_todo(input: &mut Input) -> Result<Expression<Unresolved>> {
+    t(TokenKind::Todo)
+        .map(|token| Expression::ToDo(token.span.clone()))
         .parse_next(input)
 }
 

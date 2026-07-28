@@ -93,6 +93,7 @@ pub enum TokenKind {
     Type,
     Unfounded,
     External,
+    Todo,
 
     Unknown,
 }
@@ -228,6 +229,7 @@ impl TokenKind {
             TokenKind::Type => "type",
             TokenKind::Unfounded => "unfounded",
             TokenKind::External => "external",
+            TokenKind::Todo => "todo",
 
             TokenKind::Unknown => "???",
         }
@@ -325,6 +327,7 @@ fn identifier_kind(raw: &str) -> Option<TokenKind> {
         "type" => TokenKind::Type,
         "unfounded" => TokenKind::Unfounded,
         "external" => TokenKind::External,
+        "todo" => TokenKind::Todo,
         raw if raw.starts_with(char::is_uppercase) => TokenKind::UppercaseIdentifier,
         _ => TokenKind::LowercaseIdentifier,
     })

@@ -67,6 +67,10 @@ impl CheckedWorkspaceBuild {
         }
     }
 
+    pub(crate) fn warnings(&self) -> impl Iterator<Item = &ScopedTypeError> {
+        self.type_errors.iter().filter(|e| e.error.is_warning())
+    }
+
     pub(crate) fn compile_unlinked(
         self,
         max_interactions: u32,

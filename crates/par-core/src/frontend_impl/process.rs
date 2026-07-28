@@ -81,6 +81,7 @@ pub enum Terminator<Typ, S> {
     Block(Span, usize, Arc<Process<Typ, S>>, Arc<Process<Typ, S>>),
     Goto(Span, usize, Captures),
     Unreachable(Span),
+    ToDo(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +152,7 @@ impl<Typ, S> Spanning for Terminator<Typ, S> {
             Self::Block(span, _, _, _) => span.clone(),
             Self::Goto(span, _, _) => span.clone(),
             Self::Unreachable(span) => span.clone(),
+            Self::ToDo(span) => span.clone(),
         }
     }
 }
@@ -238,6 +240,10 @@ impl<Typ, S> Process<Typ, S> {
             typ,
             command,
         })
+    }
+
+    pub fn todo(span: Span) -> Arc<Self> {
+        Self::terminal(Terminator::ToDo(span))
     }
 }
 
@@ -438,6 +444,7 @@ impl<S: Clone> Process<(), S> {
                 Terminator::Goto(span.clone(), *index, caps.clone())
             }
             Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+            Terminator::ToDo(span) => Terminator::ToDo(span.clone()),
         };
 
         Arc::new(Process::new(steps, terminator))
@@ -532,7 +539,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
                 body.types_at_spans(program, docs, consume);
                 process.types_at_spans(program, docs, consume);
             }
-            Terminator::Goto(_, _, _) | Terminator::Unreachable(_) => {}
+            Terminator::Goto(_, _, _) | Terminator::Unreachable(_) | Terminator::ToDo(_) => {}
         }
     }
 }
@@ -1066,6 +1073,7 @@ impl<S: Clone> Process<Type<S>, S> {
                 Terminator::Goto(span.clone(), *index, captures.clone())
             }
             Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+            Terminator::ToDo(span) => Terminator::ToDo(span.clone()),
         };
         Arc::new(Process::new(steps, terminator))
     }
@@ -1283,6 +1291,7 @@ impl<S: Clone> Process<(), S> {
             ),
             Terminator::Goto(span, index, captures) => Terminator::Goto(span, index, captures),
             Terminator::Unreachable(span) => Terminator::Unreachable(span),
+            Terminator::ToDo(span) => Terminator::ToDo(span),
         };
         Ok(Process::new(steps, terminator))
     }
@@ -1501,7 +1510,7 @@ impl<Typ, S> Process<Typ, S> {
             }
             Terminator::Block(_, _, _body, process) => process.free_variables(),
             Terminator::Goto(_, _, caps) => caps.names.keys().cloned().collect(),
-            Terminator::Unreachable(_) => IndexSet::new(),
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => IndexSet::new(),
         };
 
         for step in self.steps.iter().rev() {
@@ -1543,6 +1552,10 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
         match &self.terminator {
             Terminator::Unreachable(_) => {
                 write!(f, "unreachable")
+            }
+
+            Terminator::ToDo(_) => {
+                write!(f, "todo")
             }
 
             Terminator::Poll {

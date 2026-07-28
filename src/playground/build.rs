@@ -62,17 +62,22 @@ pub(super) enum BuildResult {
         pretty: String,
         checked: Arc<CheckedWorkspace>,
         errors: Vec<ScopedTypeError>,
+        warnings: Vec<ScopedTypeError>,
         sources: SourceLookup,
     },
     InetError {
         pretty: String,
         checked: Arc<CheckedWorkspace>,
         error: RuntimeCompilerError,
+        warnings: Vec<ScopedTypeError>,
+        sources: SourceLookup,
     },
     Ok {
         pretty: String,
         checked: Arc<CheckedWorkspace>,
         rt_compiled: Compiled<Linked>,
+        warnings: Vec<ScopedTypeError>,
+        sources: SourceLookup,
     },
 }
 
@@ -90,6 +95,30 @@ impl BuildResult {
             }),
             Self::InetError { error, .. } => Some(BuildError::InetCompile(error.clone())),
             Self::Ok { .. } => None,
+        }
+    }
+
+    pub(super) fn warnings(&self) -> Option<BuildError> {
+        let (warnings, sources) = match self {
+            Self::TypeError {
+                warnings, sources, ..
+            }
+            | Self::InetError {
+                warnings, sources, ..
+            }
+            | Self::Ok {
+                warnings, sources, ..
+            } => (warnings, sources),
+            Self::None | Self::DiscoveryError { .. } | Self::WorkspaceError { .. } => return None,
+        };
+
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(BuildError::Type {
+                errors: warnings.clone(),
+                sources: sources.clone(),
+            })
         }
     }
 
@@ -184,12 +213,20 @@ impl BuildResult {
             .map(format_definition)
             .collect();
 
-        if !build.type_errors.is_empty() {
+        let sources = build.sources.clone();
+        let (warnings, errors): (Vec<_>, Vec<_>) = build
+            .type_errors
+            .clone()
+            .into_iter()
+            .partition(|e| e.error.is_warning());
+
+        if !errors.is_empty() {
             return Self::TypeError {
                 pretty,
                 checked: Arc::new(build.checked),
-                errors: build.type_errors,
-                sources: build.sources,
+                errors,
+                warnings,
+                sources,
             };
         }
         let (checked, rt_compiled, _) = match build.compile_linked(max_interactions) {
@@ -199,6 +236,8 @@ impl BuildResult {
                     pretty,
                     checked: Arc::new(checked),
                     error,
+                    warnings,
+                    sources,
                 };
             }
         };
@@ -206,6 +245,8 @@ impl BuildResult {
             pretty,
             checked: Arc::new(checked),
             rt_compiled,
+            warnings,
+            sources,
         }
     }
 }

@@ -315,6 +315,7 @@ impl CaptureAnalysis {
             Terminator::Unreachable(span) => {
                 (Terminator::Unreachable(span.clone()), Captures::new())
             }
+            Terminator::ToDo(span) => (Terminator::ToDo(span.clone()), Captures::new()),
         }
     }
 
@@ -606,7 +607,7 @@ impl BlockEnvAnalyzer {
             Terminator::Goto(_, index, _) => {
                 self.schedule_block(*index, env);
             }
-            Terminator::Unreachable(_) => {}
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => {}
         }
     }
 
@@ -860,7 +861,7 @@ impl<'a> CaptureCollector<'a> {
             Terminator::Goto(_, index, _) => {
                 self.old_block_caps.get(index).cloned().unwrap_or_default()
             }
-            Terminator::Unreachable(_) => Captures::new(),
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => Captures::new(),
         }
     }
 
