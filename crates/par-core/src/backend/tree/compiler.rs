@@ -433,15 +433,16 @@ impl Compiler {
         let old_lazy_redexes = core::mem::take(&mut self.lazy_redexes);
         // Allocate package
         self.id_to_package.push(Default::default());
-        let (mut root, captures) = match self.with_captures(&Captures::default(), |this| f(this, id)) {
-            Ok(val) => val,
-            Err(err) => {
-                self.id_to_package.pop();
-                self.lazy_redexes = old_lazy_redexes;
-                self.net = old_net;
-                return Err(err);
-            }
-        };
+        let (mut root, captures) =
+            match self.with_captures(&Captures::default(), |this| f(this, id)) {
+                Ok(val) => val,
+                Err(err) => {
+                    self.id_to_package.pop();
+                    self.lazy_redexes = old_lazy_redexes;
+                    self.net = old_net;
+                    return Err(err);
+                }
+            };
 
         // Non-principal interaction optimization pass
         root.tree = self.non_principal_interactions(root.tree);
