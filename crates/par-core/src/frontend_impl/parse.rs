@@ -1595,7 +1595,6 @@ fn expression_without_construction(input: &mut Input) -> Result<Expression<Unres
         expr_do,
         expr_box,
         expr_chan,
-        expr_todo,
         infix_or,
     ))
     .context(StrContext::Label("expression"))
@@ -1618,6 +1617,7 @@ fn postfix_base(input: &mut Input) -> Result<Expression<Unresolved>> {
         global_name.map(|name| Expression::Global(name.span(), name)),
         local_name.map(|name| Expression::Variable(name.span(), name)),
         expr_grouped,
+        expr_todo,
     ))
     .parse_next(input)
 }
