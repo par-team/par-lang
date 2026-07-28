@@ -439,6 +439,7 @@ pub enum Expression<S> {
     },
     Construction(Span, Construct<S>),
     Application(Span, Box<Self>, Apply<S>),
+    ToDo(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -572,6 +573,7 @@ pub enum ProcessStep<S> {
         else_: Option<Box<Process<S>>>,
     },
     Command(ProcessCommand<S>),
+    ToDo(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -2232,6 +2234,16 @@ impl Context {
                     ),
                 })
             }
+
+            Expression::ToDo(span) => Arc::new(process::Expression::Chan {
+                span: span.clone(),
+                captures: Captures::new(),
+                chan_name: LocalName::result(),
+                chan_annotation: None,
+                chan_type: (),
+                expr_type: (),
+                process: process::Process::todo(span.clone()),
+            }),
         });
         let None = self.original_object_name else {
             unreachable!("original_object_name should be none after expression")
@@ -2683,6 +2695,9 @@ impl Context {
                 }
                 ProcessStep::Command(command) => {
                     break self.compile_process_command(command, Some((source, index + 1)))?;
+                }
+                ProcessStep::ToDo(span) => {
+                    break process::Process::todo(span.clone());
                 }
             }
         };
@@ -3740,7 +3755,8 @@ impl<S> Spanning for Expression<S> {
             | Self::Neg { span, .. }
             | Self::ComparisonChain { span, .. }
             | Self::Application(span, _, _)
-            | Self::Construction(span, _) => span.clone(),
+            | Self::Construction(span, _)
+            | Self::ToDo(span) => span.clone(),
         }
     }
 }
@@ -3886,9 +3902,10 @@ impl<S> Spanning for Process<S> {
 impl<S> Spanning for ProcessStep<S> {
     fn span(&self) -> Span {
         match self {
-            Self::Let { span, .. } | Self::Catch { span, .. } | Self::If { span, .. } => {
-                span.clone()
-            }
+            Self::Let { span, .. }
+            | Self::Catch { span, .. }
+            | Self::If { span, .. }
+            | Self::ToDo(span) => span.clone(),
             Self::Command(command) => command.span.clone(),
         }
     }
