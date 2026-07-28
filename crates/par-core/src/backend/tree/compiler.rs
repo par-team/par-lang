@@ -41,6 +41,7 @@ pub enum Error {
         dependents: IndexSet<GlobalName<Universal>>,
     },
     UnguardedLoop(Span, #[allow(unused)] Option<LocalName>),
+    Unimplemented(Span),
 }
 
 impl Error {
@@ -73,7 +74,8 @@ impl Error {
         match self {
             Error::UnboundVar(span, _)
             | Error::UnknownVariableUsage(span)
-            | Error::UnguardedLoop(span, _) => (span.clone(), vec![]),
+            | Error::UnguardedLoop(span, _)
+            | Error::Unimplemented(span) => (span.clone(), vec![]),
 
             Error::GlobalNotFound(name) => (name.span(), vec![]),
 
@@ -309,11 +311,18 @@ impl Compiler {
     }
 
     fn compile_global(&mut self, name: &GlobalName<Universal>) -> Result<TypedTree> {
-        if let Some(CompiledGlobal::Package(id)) = self.global_name_to_id.get(name) {
-            return Ok(TypedTree {
-                tree: Tree::Package(*id, Box::new(Tree::Break), FanBehavior::Expand),
-                ty: Type::Break(Span::None),
-            });
+        if let Some(global) = self.global_name_to_id.get(name) {
+            match global {
+                CompiledGlobal::Package(id) => {
+                    return Ok(TypedTree {
+                        tree: Tree::Package(*id, Box::new(Tree::Break), FanBehavior::Expand),
+                        ty: Type::Break(Span::None),
+                    });
+                }
+                CompiledGlobal::Unimplemented => {
+                    return Err(Error::Unimplemented(Span::None));
+                }
+            }
         }
         if !self.compile_global_stack.insert(name.clone()) {
             return Err(Error::DependencyCycle {
@@ -337,18 +346,31 @@ impl Compiler {
             _ => return Err(Error::GlobalNotFound(name.clone())),
         };
 
-        let (id, typ) = self.in_package(name.to_string(), |this, _| {
+        let result = self.in_package(name.to_string(), |this, _| {
             let mut s = String::new();
             global.pretty(&mut s, 0).unwrap();
             Ok((
                 this.compile_expression(global.as_ref())?,
                 (Tree::Continue).with_type(Type::Continue(Span::None)),
             ))
-        })?;
-        self.global_name_to_id
-            .insert(name.clone(), CompiledGlobal::Package(id));
-        self.compile_global_stack.shift_remove(name);
-        Ok(Tree::Package(id, Box::new(Tree::Break), FanBehavior::Expand).with_type(typ))
+        });
+
+        match result {
+            Ok((id, typ)) => {
+                self.global_name_to_id
+                    .insert(name.clone(), CompiledGlobal::Package(id));
+                self.compile_global_stack.shift_remove(name);
+                Ok(Tree::Package(id, Box::new(Tree::Break), FanBehavior::Expand).with_type(typ))
+            }
+            Err(err) => {
+                if matches!(err, Error::Unimplemented(_)) {
+                    self.global_name_to_id
+                        .insert(name.clone(), CompiledGlobal::Unimplemented);
+                }
+                self.compile_global_stack.shift_remove(name);
+                Err(err)
+            }
+        }
     }
 
     /// Optimize away erasure underneath auxiliary ports of DUP and CON nodes where it is safe to do so.
@@ -411,7 +433,15 @@ impl Compiler {
         let old_lazy_redexes = core::mem::take(&mut self.lazy_redexes);
         // Allocate package
         self.id_to_package.push(Default::default());
-        let (mut root, captures) = self.with_captures(&Captures::default(), |this| f(this, id))?;
+        let (mut root, captures) = match self.with_captures(&Captures::default(), |this| f(this, id)) {
+            Ok(val) => val,
+            Err(err) => {
+                self.id_to_package.pop();
+                self.lazy_redexes = old_lazy_redexes;
+                self.net = old_net;
+                return Err(err);
+            }
+        };
 
         // Non-principal interaction optimization pass
         root.tree = self.non_principal_interactions(root.tree);
@@ -701,7 +731,7 @@ impl Compiler {
             Terminator::Goto(_, index, _) => self.compile_process_goto(*index)?,
 
             Terminator::Unreachable(_) => self.compile_process_unreachable()?,
-            Terminator::ToDo(_) => todo!(),
+            Terminator::ToDo(span) => return Err(Error::Unimplemented(span.clone())),
         }
 
         for (parameter, was_empty_before) in received_parameters.into_iter().rev() {
@@ -1229,7 +1259,6 @@ impl Compiler {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CompiledGlobal {
     Package(usize),
-    #[allow(dead_code)]
     Unimplemented,
 }
 
@@ -1290,7 +1319,10 @@ impl IcCompiled {
         };
 
         for name in compiler.definitions.keys().cloned().collect::<Vec<_>>() {
-            compiler.compile_global(&name)?;
+            match compiler.compile_global(&name) {
+                Ok(_) | Err(Error::Unimplemented(_)) => {}
+                Err(err) => return Err(err),
+            }
         }
 
         Ok(IcCompiled {
