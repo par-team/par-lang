@@ -553,7 +553,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 miette::miette!(
                     severity = miette::Severity::Warning,
                     labels = labels,
-                    "Unimplemented code (`todo`)"
+                    "Incomplete code (`todo`)"
                 )
             }
         }.with_source_code(source_code)

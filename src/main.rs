@@ -94,17 +94,26 @@ enum BuildError {
 impl BuildError {
     fn display(&self) -> String {
         match self {
-            Self::Discovery(error) => error.to_string(),
-            Self::Workspace(error) => error.to_string(),
+            Self::Discovery(error) => error.to_string().bright_red().to_string(),
+            Self::Workspace(error) => error.to_string().bright_red().to_string(),
             Self::Type { errors, sources } => errors
                 .iter()
-                .map(|error| format!("{:?}", error.to_report(sources)))
+                .map(|error| {
+                    let report = format!("{:?}", error.to_report(sources));
+                    if error.error.is_warning() {
+                        report.yellow().to_string()
+                    } else {
+                        report.bright_red().to_string()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n"),
             Self::InetCompile { error, sources } => format!(
                 "inet compilation error: {}",
                 error.display(&source_for_fallback(sources))
-            ),
+            )
+            .bright_red()
+            .to_string(),
         }
     }
 }
@@ -175,6 +184,12 @@ fn build_checked_package(package_path: &PathBuf) -> Result<CheckedWorkspaceBuild
             errors: build.type_errors,
             sources: build.sources.clone(),
         });
+    }
+    for warning in build.warnings() {
+        eprintln!(
+            "{}",
+            format!("{:?}", warning.to_report(&build.sources)).yellow()
+        );
     }
     Ok(build)
 }
@@ -641,7 +656,7 @@ fn run_definition(
             match build_runtime_package(&package_path, max_interactions) {
                 Ok((checked, rt_compiled, local_modules)) => (checked, rt_compiled, local_modules),
                 Err(error) => {
-                    println!("{}", error.display().bright_red());
+                    println!("{}", error.display());
                     return;
                 }
             };
@@ -773,7 +788,7 @@ fn compile(package_path: PathBuf, max_interactions: u32) {
                 (checked, rt_compiled, local_modules, sources)
             }
             Err(error) => {
-                println!("{}", error.display().bright_red());
+                println!("{}", error.display());
                 return;
             }
         };
@@ -818,7 +833,7 @@ fn check(package_path: PathBuf) -> Result<(), String> {
     let build_result = build_runtime_package(&package_path, MAX_INTERACTIONS_DEFAULT);
     if let Err(error) = build_result {
         let error_string = error.display();
-        eprintln!("{}", error_string.bright_red());
+        eprintln!("{error_string}");
         return Err(error_string);
     }
     Ok(())
