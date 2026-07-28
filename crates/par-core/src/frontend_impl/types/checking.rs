@@ -746,6 +746,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Terminator<Type<S>, S> {
+        emit(TypeError::Todo(span.clone()));
         for (name, typ) in &self.variables {
             if self.type_has_holes(typ) {
                 emit(TypeError::TypeMustBeKnownAtThisPoint(
@@ -2545,6 +2546,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (Terminator<Type<S>, S>, Type<S>) {
+        emit(TypeError::Todo(span.clone()));
         emit(TypeError::TypeMustBeKnownAtThisPoint(
             span.clone(),
             inference_subject.clone(),

@@ -184,7 +184,7 @@ impl BuildResult {
             .map(format_definition)
             .collect();
 
-        if !build.type_errors.is_empty() {
+        if build.type_errors.iter().any(|e| !e.error.is_warning()) {
             return Self::TypeError {
                 pretty,
                 checked: Arc::new(build.checked),

@@ -60,6 +60,7 @@ pub enum TypeError<S> {
     PollBranchMustSubmit(Span),
     CannotUseLinearVariableInBox(Span, LocalName),
     NonExhaustiveIf(Span),
+    Todo(Span),
 }
 
 /// Create a `LabeledSpan` without a label at `span`
@@ -547,7 +548,19 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 )
 
             }
+            Self::Todo(span) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    severity = miette::Severity::Warning,
+                    labels = labels,
+                    "Unimplemented code (`todo`)"
+                )
+            }
         }.with_source_code(source_code)
+    }
+
+    pub fn is_warning(&self) -> bool {
+        matches!(self, Self::Todo(_))
     }
 }
 
@@ -619,6 +632,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::PollBranchMustSubmit(span)
             | Self::CannotUseLinearVariableInBox(span, _)
             | Self::NonExhaustiveIf(span)
+            | Self::Todo(span)
             | Self::CannotUnrollAscendantIterative(span, _) => (span.clone(), None),
 
             Self::TypesCannotBeUnified(span, _typ1, _typ2) => (span.clone(), None),

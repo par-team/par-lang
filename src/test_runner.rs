@@ -65,7 +65,7 @@ fn build_for_run(
 ) -> Result<(CheckedWorkspace, Compiled<Linked>, Vec<ModulePath>), BuildError> {
     let build =
         checked_workspace_from_path(package_path, None).map_err(map_workspace_build_error)?;
-    if !build.type_errors.is_empty() {
+    if build.type_errors.iter().any(|e| !e.error.is_warning()) {
         return Err(BuildError::Type {
             errors: build.type_errors,
             sources: build.sources.clone(),
