@@ -805,6 +805,7 @@ fn par_syntax() -> Syntax {
             "poll",
             "repoll",
             "submit",
+            "todo",
         ]),
         types: BTreeSet::from([]),
         special: BTreeSet::from(["<>"]),
