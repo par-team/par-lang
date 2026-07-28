@@ -2828,6 +2828,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.check_expression_primitive(span, value, target_type, emit)
             }
             Expression::External(f, ()) => self.check_expression_external(f, target_type, emit),
+            Expression::ToDo(span, ()) => {
+                emit(TypeError::Todo(span.clone()));
+                Arc::new(Expression::ToDo(span.clone(), target_type.clone()))
+            }
         }
     }
 
@@ -2865,6 +2869,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.infer_expression_primitive(span, value, emit)
             }
             Expression::External(_f, ()) => self.infer_expression_external(emit),
+            Expression::ToDo(span, ()) => {
+                emit(TypeError::Todo(span.clone()));
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    LocalName::result(),
+                ));
+                let typ = Type::Fail(span.clone());
+                (Arc::new(Expression::ToDo(span.clone(), typ.clone())), typ)
+            }
         }
     }
 

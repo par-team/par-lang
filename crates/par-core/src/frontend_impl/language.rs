@@ -2235,15 +2235,7 @@ impl Context {
                 })
             }
 
-            Expression::ToDo(span) => Arc::new(process::Expression::Chan {
-                span: span.clone(),
-                captures: Captures::new(),
-                chan_name: LocalName::result(),
-                chan_annotation: None,
-                chan_type: (),
-                expr_type: (),
-                process: process::Process::todo(span.clone()),
-            }),
+            Expression::ToDo(span) => Arc::new(process::Expression::ToDo(span.clone(), ())),
         });
         let None = self.original_object_name else {
             unreachable!("original_object_name should be none after expression")

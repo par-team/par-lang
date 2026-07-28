@@ -657,6 +657,8 @@ impl Compiler {
                 tree: Tree::External(f.clone()),
                 ty: typ.clone(),
             }),
+
+            Expression::ToDo(span, _) => Err(Error::Unimplemented(span.clone())),
         }
     }
 

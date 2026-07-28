@@ -132,6 +132,7 @@ pub enum Expression<Typ, S> {
     },
     Primitive(Span, Primitive, Typ),
     External(Unlinked, Typ),
+    ToDo(Span, Typ),
 }
 
 impl<Typ, S> Spanning for Process<Typ, S> {
@@ -669,6 +670,7 @@ impl<S: Clone> Expression<(), S> {
                 Arc::new(Self::Primitive(span.clone(), value.clone(), typ.clone()))
             }
             Self::External(f, typ) => Arc::new(Self::External(f.clone(), typ.clone())),
+            Self::ToDo(span, typ) => Arc::new(Self::ToDo(span.clone(), typ.clone())),
         }
     }
 }
@@ -965,6 +967,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Expression<Type<S>, S>
             }
             Self::Primitive(_, _, _) => {}
             Self::External(_, _) => {}
+            Self::ToDo(span, typ) => {
+                consume(span.clone(), HoverInfo::unnamed(typ.clone()));
+            }
         }
     }
 }
@@ -978,6 +983,7 @@ impl<Typ: Clone, S> Expression<Typ, S> {
             Self::Chan { expr_type, .. } => expr_type.clone(),
             Self::Primitive(_, _, typ) => typ.clone(),
             Self::External(_, typ) => typ.clone(),
+            Self::ToDo(_, typ) => typ.clone(),
         }
     }
 }
@@ -1171,6 +1177,7 @@ impl<S: Clone> Expression<Type<S>, S> {
             Expression::External(external, typ) => {
                 Arc::new(Expression::External(external.clone(), f(typ.clone())))
             }
+            Expression::ToDo(span, typ) => Arc::new(Expression::ToDo(span.clone(), f(typ.clone()))),
         }
     }
 }
@@ -1382,6 +1389,7 @@ impl<S: Clone> Expression<(), S> {
                 Ok(Expression::Primitive(span, primitive, ()))
             }
             Expression::External(external, ()) => Ok(Expression::External(external, ())),
+            Expression::ToDo(span, ()) => Ok(Expression::ToDo(span, ())),
         }
     }
 
@@ -1732,6 +1740,7 @@ impl<Typ, S> Expression<Typ, S> {
             Expression::Chan { captures, .. } => captures.names.keys().cloned().collect(),
             Expression::Primitive(_, _, _) => IndexSet::new(),
             Expression::External(_, _) => IndexSet::new(),
+            Expression::ToDo(_, _) => IndexSet::new(),
         }
     }
 }
@@ -1765,6 +1774,10 @@ impl<Typ, S: Clone + std::fmt::Display> Expression<Typ, S> {
 
             Self::External(_, _) => {
                 write!(f, "<external>")
+            }
+
+            Self::ToDo(_, _) => {
+                write!(f, "todo")
             }
         }
     }
