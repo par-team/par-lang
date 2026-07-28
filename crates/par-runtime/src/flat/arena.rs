@@ -60,7 +60,9 @@ impl<Ext: Clone> Default for Arena<Ext> {
     fn default() -> Self {
         Self {
             nodes: vec![],
-            strings: vec![],
+            // Index 0 is the sentinel used for `else` case branches. Reserve it so
+            // the first real signal cannot alias the sentinel.
+            strings: vec![ArcStr::from("")],
             string_to_location: BTreeMap::new(),
             case_branches: vec![],
             packages: vec![],
