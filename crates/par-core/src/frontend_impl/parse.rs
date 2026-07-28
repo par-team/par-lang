@@ -3678,7 +3678,6 @@ fn label(input: &mut Input) -> Result<Option<LocalName>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::assert_matches;
 
     fn parse_single_definition_expression(source: &str) -> Expression<Unresolved> {
         let parsed = parse_source_file(source, "Main.par".into()).unwrap();
@@ -4400,9 +4399,21 @@ def F = 1.0e-6
     }
     #[test]
     fn lists() {
-        assert_matches!(parse_module("def Value = *()", "lists.par".into()), Ok(_));
-        assert_matches!(parse_module("def Value = *(,)", "lists.par".into()), Err(_));
-        assert_matches!(parse_module("def Value = *(1)", "lists.par".into()), Ok(_));
-        assert_matches!(parse_module("def Value = *(1,)", "lists.par".into()), Ok(_));
+        assert!(matches!(
+            parse_module("def Value = *()", "lists.par".into()),
+            Ok(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(,)", "lists.par".into()),
+            Err(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(1)", "lists.par".into()),
+            Ok(_)
+        ));
+        assert!(matches!(
+            parse_module("def Value = *(1,)", "lists.par".into()),
+            Ok(_)
+        ));
     }
 }
