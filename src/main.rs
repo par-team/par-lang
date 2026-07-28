@@ -683,7 +683,7 @@ fn run_definition(
                 println!(
                     "{}",
                     format!(
-                        "Definition {} is unimplemented (directly or indirectly contains a todo; run `par check` for details)",
+                        "Definition {} is incomplete (directly or indirectly contains a todo; run `par check` for details)",
                         target.unwrap_or_else(|| "Main.Main".to_string())
                     )
                     .bright_red()
@@ -751,7 +751,7 @@ fn run_definition_vm(binary_path: PathBuf, target: Option<String>, print_stats: 
             Some(ArtifactGlobal::Unimplemented) => {
                 println!(
                     "{}",
-                    format!("Definition {target} is unimplemented (directly or indirectly contains a todo; run `par check` for details)").bright_red()
+                    format!("Definition {target} is incomplete (directly or indirectly contains a todo; run `par check` for details)").bright_red()
                 );
                 return;
             }

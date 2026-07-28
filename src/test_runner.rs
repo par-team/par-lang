@@ -338,7 +338,7 @@ fn run_single_definition(
         let package = match rt_compiled.code.name_to_package.get(run_name) {
             Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
             Some(TranspiledGlobal::Unimplemented) => {
-                return Err(format!("Test '{missing_type_name}' is unimplemented (directly or indirectly contains a todo; run `par check` for details)"));
+                return Err(format!("Test '{missing_type_name}' is incomplete (directly or indirectly contains a todo; run `par check` for details)"));
             }
             None => return Err(format!("Test package not found for '{missing_type_name}'")),
         };
@@ -411,7 +411,7 @@ async fn run_test(
     let package = match rt_compiled.code.name_to_package.get(name) {
         Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
         Some(TranspiledGlobal::Unimplemented) => {
-            return Err("Test is unimplemented (directly or indirectly contains a todo; run `par check` for details)".to_string());
+            return Err("Test is incomplete (directly or indirectly contains a todo; run `par check` for details)".to_string());
         }
         None => return Err("Test package not found".to_string()),
     };
