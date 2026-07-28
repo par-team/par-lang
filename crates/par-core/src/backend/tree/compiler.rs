@@ -437,7 +437,13 @@ impl Compiler {
             match self.with_captures(&Captures::default(), |this| f(this, id)) {
                 Ok(val) => val,
                 Err(err) => {
-                    self.id_to_package.pop();
+                    self.id_to_package.truncate(id);
+                    self.package_is_case_branch
+                        .retain(|package_id, _| *package_id < id);
+                    self.poll_packages.retain(|_, poll| poll.package_id < id);
+                    self.global_name_to_id.retain(|_, global| {
+                        !matches!(global, CompiledGlobal::Package(package_id) if *package_id >= id)
+                    });
                     self.lazy_redexes = old_lazy_redexes;
                     self.net = old_net;
                     return Err(err);
