@@ -1,3 +1,4 @@
+use crate::frontend_impl::language::LocalName;
 use crate::frontend_impl::language::TypeConstraint;
 use crate::frontend_impl::language::TypeParameter;
 use crate::frontend_impl::types::assignability::SubtypeResult::{Compatible, Cycle, Incompatible};
@@ -37,9 +38,16 @@ impl<'a, S: Clone + Eq + std::hash::Hash> SubtypeContext<'a, S> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum SubtypeMismatchCause {
+    MissingEitherBranch { branch: LocalName },
+    MissingChoiceBranch { branch: LocalName },
+    Other,
+}
+
 enum SubtypeResult<S> {
     Compatible,
-    Incompatible,
+    Incompatible(SubtypeMismatchCause),
     Cycle {
         min_left: Type<S>,
         size_left: u32,
@@ -94,7 +102,7 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
                 if !matches!(min_left, Type::Recursive { .. })
                     && !matches!(min_right, Type::Iterative { .. })
                 {
-                    Incompatible
+                    Incompatible(SubtypeMismatchCause::Other)
                 } else {
                     Cycle {
                         min_left,
@@ -105,7 +113,7 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
                     }
                 }
             }
-            (_, Incompatible) | (Incompatible, _) => Incompatible,
+            (Incompatible(c), _) | (_, Incompatible(c)) => Incompatible(c),
         }
     }
 }
@@ -171,7 +179,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             SubtypeContext::new(type_defs, constrain_holes),
         )? {
             Compatible => Ok(true),
-            Incompatible => Ok(false),
+            Incompatible(_) => Ok(false),
             Cycle {
                 min_left,
                 min_right,
@@ -287,7 +295,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Self::Hole(..), _)
             | (_, Self::Hole(..))
             | (Self::DualHole(..), _)
-            | (_, Self::DualHole(..)) => Some(Incompatible),
+            | (_, Self::DualHole(..)) => Some(Incompatible(SubtypeMismatchCause::Other)),
             _ => None,
         }
     }
@@ -353,7 +361,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if !matches!(min_left, Type::Recursive { .. })
             && !matches!(min_right, Type::Iterative { .. })
         {
-            return Ok(Some(Incompatible));
+            return Ok(Some(Incompatible(SubtypeMismatchCause::Other)));
         }
         Ok(Some(Cycle {
             min_left: min_left.clone(),
@@ -371,10 +379,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     if asc1.is_subset(asc2) {
                         Compatible
                     } else {
-                        Incompatible
+                        Incompatible(SubtypeMismatchCause::Other)
                     }
                 } else {
-                    Incompatible
+                    Incompatible(SubtypeMismatchCause::Other)
                 });
             }
         }
@@ -385,10 +393,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     if asc2.is_subset(asc1) {
                         Compatible
                     } else {
-                        Incompatible
+                        Incompatible(SubtypeMismatchCause::Other)
                     }
                 } else {
-                    Incompatible
+                    Incompatible(SubtypeMismatchCause::Other)
                 });
             }
         }
@@ -428,26 +436,26 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(if Self::is_primitive_subtype(&p1, &p2) {
                     Compatible
                 } else {
-                    Incompatible
+                    Incompatible(SubtypeMismatchCause::Other)
                 })
             }
             (Self::DualPrimitive(_, p1), Self::DualPrimitive(_, p2)) => {
                 Ok(if Self::is_primitive_subtype(&p2, &p1) {
                     Compatible
                 } else {
-                    Incompatible
+                    Incompatible(SubtypeMismatchCause::Other)
                 })
             }
 
             (Self::Var(_, name1), Self::Var(_, name2)) => Ok(if name1 == name2 {
                 Compatible
             } else {
-                Incompatible
+                Incompatible(SubtypeMismatchCause::Other)
             }),
             (Self::DualVar(_, name1), Self::DualVar(_, name2)) => Ok(if name1 == name2 {
                 Compatible
             } else {
-                Incompatible
+                Incompatible(SubtypeMismatchCause::Other)
             }),
 
             (t1, t2) => Type::is_subtype_box_structural(t1, t2, ctx),
@@ -485,14 +493,14 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         match (type1, type2) {
             (Self::Pair(_, t1, u1, vars1), Self::Pair(_, t2, u2, vars2)) => {
                 if vars1.len() != vars2.len() {
-                    return Ok(Incompatible);
+                    return Ok(Incompatible(SubtypeMismatchCause::Other));
                 }
                 let mut t2: Type<S> = *t2.clone();
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
                     // Covariant, like `Exists`: pair vars are existential binders.
                     if !var2.constraint.is_broader_or_equal_than(var1.constraint) {
-                        return Ok(Incompatible);
+                        return Ok(Incompatible(SubtypeMismatchCause::Other));
                     }
                     t2 = t2.substitute(BTreeMap::from([(
                         &var2.name,
@@ -510,13 +518,13 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let t1 = t1.clone().dual(Span::None);
                 let t2 = t2.clone().dual(Span::None);
                 if vars1.len() != vars2.len() {
-                    return Ok(Incompatible);
+                    return Ok(Incompatible(SubtypeMismatchCause::Other));
                 }
                 let mut t2: Type<S> = t2;
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
                     if !var1.constraint.is_broader_or_equal_than(var2.constraint) {
-                        return Ok(Incompatible);
+                        return Ok(Incompatible(SubtypeMismatchCause::Other));
                     }
                     t2 = t2.substitute(BTreeMap::from([(
                         &var2.name,
@@ -545,7 +553,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut res = Compatible;
                 for (branch, t1) in branches1 {
                     let Some(t2) = branches2.get(&branch) else {
-                        return Ok(Incompatible);
+                        return Ok(Incompatible(SubtypeMismatchCause::MissingEitherBranch {
+                            branch: branch.clone(),
+                        }));
                     };
                     res = res & Type::is_subtype_helper(t1.clone(), t2.clone(), ctx.clone())?;
                 }
@@ -556,7 +566,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut res = Compatible;
                 for (branch, t2) in branches2 {
                     let Some(t1) = branches1.get(&branch) else {
-                        return Ok(Incompatible);
+                        return Ok(Incompatible(SubtypeMismatchCause::MissingChoiceBranch {
+                            branch: branch.clone(),
+                        }));
                     };
                     res = res & Type::is_subtype_helper(t1.clone(), t2.clone(), ctx.clone())?;
                 }
@@ -569,7 +581,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 // Covariant: the provider picks the witness, so its constraint must
                 // imply the constraint the target type promises to its consumer.
                 if !name2.constraint.is_broader_or_equal_than(name1.constraint) {
-                    return Ok(Incompatible);
+                    return Ok(Incompatible(SubtypeMismatchCause::Other));
                 }
                 Type::is_subtype_quantified(loc, name1, body1, name2, body2, ctx)
             }
@@ -577,7 +589,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 // Contravariant: the consumer picks the type, so the subtype must
                 // accept every type the target type promises to accept.
                 if !name1.constraint.is_broader_or_equal_than(name2.constraint) {
-                    return Ok(Incompatible);
+                    return Ok(Incompatible(SubtypeMismatchCause::Other));
                 }
                 Type::is_subtype_quantified(loc, name1, body1, name2, body2, ctx)
             }
@@ -587,7 +599,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     debug_log("fallback => false");
                     debug_log_stack(&ctx);
                 }
-                Ok(Incompatible)
+                Ok(Incompatible(SubtypeMismatchCause::Other))
             }
         }
     }
