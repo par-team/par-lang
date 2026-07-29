@@ -390,6 +390,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 };
                 if !typ
                     .require_assignable_to(&poll_pool_type, &self.type_defs)
+                    .map(|a| a.is_assignable())
                     .unwrap_or(true)
                 {
                     emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -635,6 +636,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         if !current_point_client_type
             .require_assignable_to(&poll_point_client_type, &self.type_defs)
+            .map(|a| a.is_assignable())
             .unwrap_or(true)
         {
             emit(TypeError::SubmitCannotTargetPollPoint(
@@ -660,6 +662,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_pool_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -670,6 +673,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_point_client_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientDoesNotDescend(span.clone()));
@@ -687,6 +691,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_poll, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::PollVariableChangedType(
@@ -1606,6 +1611,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_begin, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::LoopVariableChangedType(
@@ -2218,6 +2224,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 };
                 if !typ
                     .require_assignable_to(&poll_pool_type, &self.type_defs)
+                    .map(|a| a.is_assignable())
                     .unwrap_or(true)
                 {
                     emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -2480,6 +2487,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         if !current_point_client_type
             .require_assignable_to(&poll_point_client_type, &self.type_defs)
+            .map(|a| a.is_assignable())
             .unwrap_or(true)
         {
             emit(TypeError::SubmitCannotTargetPollPoint(
@@ -2505,6 +2513,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_pool_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -2515,6 +2524,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_point_client_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientDoesNotDescend(span.clone()));
@@ -2532,6 +2542,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_poll, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::PollVariableChangedType(
@@ -2760,6 +2771,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_begin, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::LoopVariableChangedType(

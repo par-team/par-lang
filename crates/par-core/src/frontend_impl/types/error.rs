@@ -1,4 +1,5 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, Universal};
+use crate::frontend_impl::types::assignability::SubtypeMismatchCause;
 use crate::frontend_impl::types::{LoopId, Operation, Type};
 use crate::location::Span;
 use crate::workspace::{FileImportScope, render_global_name_in_scope, render_type_in_scope};
@@ -31,7 +32,7 @@ pub enum TypeError<S> {
     ShadowedObligation(Span, LocalName),
     TypeMustBeKnownAtThisPoint(Span, #[allow(unused)] LocalName),
     ParameterTypeMustBeKnown(Span, LocalName),
-    CannotAssignFromTo(Span, Type<S>, Type<S>),
+    CannotAssignFromTo(Span, Type<S>, Type<S>, SubtypeMismatchCause),
     TypeDoesNotSatisfyConstraint(Span, LocalName, Type<S>, TypeConstraint),
     TypeParameterConstraintMismatch(Span, LocalName, TypeConstraint, TypeConstraint),
     UnfulfilledObligations(Span, Vec<LocalName>),
@@ -293,7 +294,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     )
                 }
             }
-            Self::CannotAssignFromTo(span, from_type, to_type) => {
+            Self::CannotAssignFromTo(span, from_type, to_type, _cause) => {
                 let labels = labels_from_span(code, span);
                 let from_type_str = render_type(from_type, 1);
                 let to_type_str = render_type(to_type, 1);
@@ -605,7 +606,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::ShadowedObligation(span, _)
             | Self::TypeMustBeKnownAtThisPoint(span, _)
             | Self::ParameterTypeMustBeKnown(span, _)
-            | Self::CannotAssignFromTo(span, _, _)
+            | Self::CannotAssignFromTo(span, _, _, _)
             | Self::TypeDoesNotSatisfyConstraint(span, _, _, _)
             | Self::TypeParameterConstraintMismatch(span, _, _, _)
             | Self::UnfulfilledObligations(span, _)

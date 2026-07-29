@@ -34,10 +34,10 @@ pub fn union_types<S: Clone + Eq + std::hash::Hash>(
     type1: &Type<S>,
     type2: &Type<S>,
 ) -> Result<Type<S>, TypeError<S>> {
-    if type1.is_definitely_assignable_to(type2, typedefs)? {
+    if type1.is_definitely_assignable_to(type2, typedefs)?.is_assignable() {
         return Ok(type2.clone());
     }
-    if type2.is_definitely_assignable_to(type1, typedefs)? {
+    if type2.is_definitely_assignable_to(type1, typedefs)?.is_assignable() {
         return Ok(type1.clone());
     }
 
@@ -50,10 +50,10 @@ pub fn intersect_types<S: Clone + Eq + std::hash::Hash>(
     type1: &Type<S>,
     type2: &Type<S>,
 ) -> Result<Type<S>, TypeError<S>> {
-    if type1.is_definitely_assignable_to(type2, typedefs)? {
+    if type1.is_definitely_assignable_to(type2, typedefs)?.is_assignable() {
         return Ok(type1.clone());
     }
-    if type2.is_definitely_assignable_to(type1, typedefs)? {
+    if type2.is_definitely_assignable_to(type1, typedefs)?.is_assignable() {
         return Ok(type2.clone());
     }
 
