@@ -42,6 +42,7 @@ impl<'a, S: Clone + Eq + std::hash::Hash> SubtypeContext<'a, S> {
 enum SubtypeMismatchCause {
     MissingEitherBranch { branch: LocalName },
     MissingChoiceBranch { branch: LocalName },
+    ConstructorMismatch,
     Other,
 }
 
@@ -599,7 +600,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     debug_log("fallback => false");
                     debug_log_stack(&ctx);
                 }
-                Ok(Incompatible(SubtypeMismatchCause::Other))
+                Ok(Incompatible(SubtypeMismatchCause::ConstructorMismatch))
             }
         }
     }
