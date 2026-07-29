@@ -47,6 +47,7 @@ enum SubtypeMismatchCause {
     TypeParameterConstraintMismatch,
     TypeVariableMismatch,
     PrimitiveTypeMismatch,
+    HoleConstrainingIsDisabled,
     Other,
 }
 
@@ -300,7 +301,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Self::Hole(..), _)
             | (_, Self::Hole(..))
             | (Self::DualHole(..), _)
-            | (_, Self::DualHole(..)) => Some(Incompatible(SubtypeMismatchCause::Other)),
+            | (_, Self::DualHole(..)) => Some(Incompatible(
+                SubtypeMismatchCause::HoleConstrainingIsDisabled,
+            )),
             _ => None,
         }
     }
