@@ -30,8 +30,8 @@ pub struct LocalName {
 pub enum TypeConstraint {
     #[default]
     Any,
-    Once,
-    Box,
+    Drop,
+    Share,
     Data,
     Number,
     Signed,
@@ -61,8 +61,8 @@ impl TypeConstraint {
     fn rank(self) -> u8 {
         match self {
             TypeConstraint::Any => 0,
-            TypeConstraint::Once => 1,
-            TypeConstraint::Box => 2,
+            TypeConstraint::Drop => 1,
+            TypeConstraint::Share => 2,
             TypeConstraint::Data => 3,
             TypeConstraint::Number => 4,
             TypeConstraint::Signed => 5,
@@ -74,8 +74,8 @@ impl Display for TypeConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeConstraint::Any => Ok(()),
-            TypeConstraint::Once => write!(f, "once"),
-            TypeConstraint::Box => write!(f, "box"),
+            TypeConstraint::Drop => write!(f, "drop"),
+            TypeConstraint::Share => write!(f, "share"),
             TypeConstraint::Data => write!(f, "data"),
             TypeConstraint::Number => write!(f, "number"),
             TypeConstraint::Signed => write!(f, "signed"),
@@ -418,7 +418,6 @@ pub enum Expression<S> {
         then: Box<Self>,
     },
     Box(Span, Box<Self>),
-    Once(Span, Box<Self>),
     Chan {
         span: Span,
         pattern: Pattern<S>,
@@ -2045,15 +2044,6 @@ impl Context {
             Expression::Box(span, expression) => {
                 let expression = self.compile_expression(expression)?;
                 Arc::new(process::Expression::Box(
-                    span.clone(),
-                    Captures::new(),
-                    expression,
-                    (),
-                ))
-            }
-            Expression::Once(span, expression) => {
-                let expression = self.compile_expression(expression)?;
-                Arc::new(process::Expression::Once(
                     span.clone(),
                     Captures::new(),
                     expression,
@@ -3746,7 +3736,6 @@ impl<S> Spanning for Expression<S> {
             | Self::If { span, .. }
             | Self::Do { span, .. }
             | Self::Box(span, _)
-            | Self::Once(span, _)
             | Self::Chan { span, .. }
             | Self::Arithmetic { span, .. }
             | Self::Neg { span, .. }

@@ -10,8 +10,4 @@ pub enum FanBehavior {
     /// Propagate the fan operator through the captures
     /// Used in boxes.
     Propagate,
-    /// Close captures without instantiating the package when discarded. On duplication, instantiate
-    /// the body once and share the resulting value.
-    /// Used in `once` packages.
-    Once,
 }

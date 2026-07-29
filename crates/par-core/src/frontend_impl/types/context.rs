@@ -38,7 +38,6 @@ pub(crate) struct BlockScope<S> {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum CapturePolicy {
     Box,
-    Once,
     Linear,
 }
 
@@ -264,14 +263,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         Ok(())
     }
 
-    pub(crate) fn take_once_shadow(
+    pub(crate) fn take_drop_shadow(
         &mut self,
         name: &LocalName,
     ) -> Result<Option<Type<S>>, TypeError<S>> {
         let Some(typ) = self.variables.get(name) else {
             return Ok(None);
         };
-        if typ.is_linear(&self.type_defs)? && typ.is_once(&self.type_defs)? {
+        if typ.is_linear(&self.type_defs)? && typ.is_drop(&self.type_defs)? {
             return Ok(self.variables.shift_remove(name));
         }
         Ok(None)
@@ -298,22 +297,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let mut capture_error = None;
             if !typ.is_linear(&self.type_defs)? {
                 self.put(span, name.clone(), typ.clone())?;
-            } else {
-                match policy {
-                    CapturePolicy::Box => {
-                        capture_error = Some(TypeError::CannotUseLinearVariableInBox(
-                            span.clone(),
-                            name.clone(),
-                        ));
-                    }
-                    CapturePolicy::Once if !typ.is_once(&self.type_defs)? => {
-                        capture_error = Some(TypeError::CannotUseStrictLinearVariableInOnce(
-                            span.clone(),
-                            name.clone(),
-                        ));
-                    }
-                    CapturePolicy::Once | CapturePolicy::Linear => {}
-                }
+            } else if matches!(policy, CapturePolicy::Box) {
+                capture_error = Some(TypeError::CannotUseLinearVariableInBox(
+                    span.clone(),
+                    name.clone(),
+                ));
             }
             target.put(span, name.clone(), typ)?;
             if let Some(error) = capture_error {
@@ -370,7 +358,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut unfulfilled = Vec::new();
 
         for (name, typ) in obligations {
-            match typ.is_once(&self.type_defs) {
+            match typ.is_drop(&self.type_defs) {
                 Ok(true) => {
                     self.variables.shift_remove(&name);
                     builder.push(Step::Do {

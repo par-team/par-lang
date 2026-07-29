@@ -2860,9 +2860,9 @@ def Main : ! = chan exit {
             "\
 module Main
 
-dec UseBox : [type a: box] !
-def UseBox = [type a: box] !
-def Ok = UseBox(type !)
+dec UseShare : [type a: share] !
+def UseShare = [type a: share] !
+def Ok = UseShare(type !)
 ",
         );
     }
@@ -2872,9 +2872,9 @@ def Ok = UseBox(type !)
         let source = "\
 module Main
 
-dec UseBox : [type a: box] !
-def UseBox = [type a: box] !
-def Bad = UseBox(type [!] !)
+dec UseShare : [type a: share] !
+def UseShare = [type a: share] !
+def Bad = UseShare(type [!] !)
 ";
         let errors = workspace_type_errors(vec![WorkspacePackage::new(
             test_package_id(),
@@ -2883,7 +2883,7 @@ def Bad = UseBox(type [!] !)
 
         assert!(errors.iter().any(|error| matches!(
             error,
-            TypeError::TypeDoesNotSatisfyConstraint(_, name, _, TypeConstraint::Box)
+            TypeError::TypeDoesNotSatisfyConstraint(_, name, _, TypeConstraint::Share)
                 if name.string.as_str() == "a"
         )));
     }
@@ -2929,7 +2929,7 @@ def Bad = `#{[x: !] x}`
         let source = "\
 module Main
 
-def ExpectBox : [type a: box, a] a = [type a, x: a] x
+def ExpectShare : [type a: share, a] a = [type a, x: a] x
 ";
         let errors = workspace_type_errors(vec![WorkspacePackage::new(
             test_package_id(),
@@ -2938,7 +2938,7 @@ def ExpectBox : [type a: box, a] a = [type a, x: a] x
 
         assert!(errors.iter().any(|error| matches!(
             error,
-            TypeError::TypeParameterConstraintMismatch(_, name, TypeConstraint::Any, TypeConstraint::Box)
+            TypeError::TypeParameterConstraintMismatch(_, name, TypeConstraint::Any, TypeConstraint::Share)
                 if name.string.as_str() == "a"
         )));
     }
@@ -2990,7 +2990,7 @@ def Result = SignedId(5)
         let source = "\
 module Main
 
-def ChooseSecond : [<a: box> a, <b> b] b = [<a: box> first, <b> second] second
+def ChooseSecond : [<a: share> a, <b> b] b = [<a: share> first, <b> second] second
 def Result = ChooseSecond(5, \"chosen\")
 ";
         let checked = checked_workspace_from_source(source);
@@ -3010,11 +3010,11 @@ def Result = ChooseSecond(5, \"chosen\")
         let source = "\
 module Main
 
-type Packed = (<a: box> a)!
+type Packed = (<a: share> a)!
 
 def PackedUnit : Packed = (!)!
 def Unpack : [Packed] ! = [packed]
-  let (<a: box> value)! = packed
+  let (<a: share> value)! = packed
   in !
 def Result = Unpack(PackedUnit)
 ";

@@ -935,7 +935,6 @@ fn typ(input: &mut Input) -> Result<Type<Unresolved>> {
         typ_var,
         typ_name,
         typ_box,
-        typ_once,
         typ_chan,
         typ_either,
         typ_choice,
@@ -978,15 +977,6 @@ fn typ_box(input: &mut Input) -> Result<Type<Unresolved>> {
         typ.context(StrContext::Label("box type")),
     )
     .map(|(pre, typ)| Type::Box(pre.span.join(typ.span()), Box::new(typ)))
-    .parse_next(input)
-}
-
-fn typ_once(input: &mut Input) -> Result<Type<Unresolved>> {
-    commit_after(
-        t(TokenKind::Once),
-        typ.context(StrContext::Label("once type")),
-    )
-    .map(|(pre, typ)| Type::Once(pre.span.join(typ.span()), Box::new(typ)))
     .parse_next(input)
 }
 
@@ -1061,20 +1051,12 @@ fn fold_type_prefix<T>(
 }
 
 fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
-    let checkpoint = input.checkpoint();
-    if t::<Error>(TokenKind::Box).parse_next(input).is_ok() {
-        return Ok(TypeConstraint::Box);
-    }
-    input.reset(&checkpoint);
-    if t::<Error>(TokenKind::Once).parse_next(input).is_ok() {
-        return Ok(TypeConstraint::Once);
-    }
-    input.reset(&checkpoint);
-
     let name = local_name
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
     match name.string.as_str() {
+        "drop" => Ok(TypeConstraint::Drop),
+        "share" => Ok(TypeConstraint::Share),
         "data" => Ok(TypeConstraint::Data),
         "number" => Ok(TypeConstraint::Number),
         "signed" => Ok(TypeConstraint::Signed),
@@ -1608,7 +1590,6 @@ fn expression_without_construction(input: &mut Input) -> Result<Expression<Unres
         expr_if,
         expr_do,
         expr_box,
-        expr_once,
         expr_chan,
         infix_or,
     ))
@@ -1979,14 +1960,6 @@ fn expr_box(input: &mut Input) -> Result<Expression<Unresolved>> {
     commit_after(t(TokenKind::Box), expression)
         .map(|(pre, expression)| {
             Expression::Box(pre.span.join(expression.span()), Box::new(expression))
-        })
-        .parse_next(input)
-}
-
-fn expr_once(input: &mut Input) -> Result<Expression<Unresolved>> {
-    commit_after(t(TokenKind::Once), expression)
-        .map(|(pre, expression)| {
-            Expression::Once(pre.span.join(expression.span()), Box::new(expression))
         })
         .parse_next(input)
 }
@@ -4199,28 +4172,16 @@ module Minimal
 
 dec Explicit : [type a: number, (a) !] !
 dec Implicit : [<a: signed> a] a
-dec Once : [type a: once, a] !
-dec Wrapped : once [Nat] Nat
-dec DualWrapped : dual once [Nat] Nat
+dec Drop : [type a: drop, a] !
 def Explicit = [type a: number, p] !
 def Implicit = [<a: signed> x] x
-def Once = [type a: once, x] !
-def Wrapped = once [n] n
+def Drop = [type a: drop, x] !
 ";
         let parsed = parse_source_file(source, "minimal.par".into()).unwrap();
         let Type::Forall(_, parameter, _) = &parsed.body.declarations[2].typ else {
-            panic!("expected explicit once type parameter");
+            panic!("expected explicit drop type parameter");
         };
-        assert_eq!(parameter.constraint, TypeConstraint::Once);
-        assert!(matches!(parsed.body.declarations[3].typ, Type::Once(..)));
-        assert!(matches!(
-            parsed.body.declarations[4].typ,
-            Type::DualOnce(..)
-        ));
-        assert!(matches!(
-            parsed.body.definitions[3].body,
-            DefinitionBody::Par(Expression::Once(..))
-        ));
+        assert_eq!(parameter.constraint, TypeConstraint::Drop);
     }
 
     #[test]
@@ -4228,8 +4189,8 @@ def Wrapped = once [n] n
         let source = "\
 module Minimal
 
-dec Mixed : [type explicit, Nat, <a, b: box> (a) b, String, <c> c] (Nat, <d: data> d, <e> e)!
-def Mixed = [type explicit, n, <a, b: box> pair: (a) b, text: String, <c> value: c] (n, value)!
+dec Mixed : [type explicit, Nat, <a, b: share> (a) b, String, <c> c] (Nat, <d: data> d, <e> e)!
+def Mixed = [type explicit, n, <a, b: share> pair: (a) b, text: String, <c> value: c] (n, value)!
 ";
         let parsed = parse_source_file(source, "Minimal.par".into()).unwrap();
         let typ = &parsed.body.declarations[0].typ;
@@ -4250,7 +4211,7 @@ def Mixed = [type explicit, n, <a, b: box> pair: (a) b, text: String, <c> value:
         assert_eq!(vars.len(), 2);
         assert_eq!(vars[0].name.string.as_str(), "a");
         assert_eq!(vars[1].name.string.as_str(), "b");
-        assert_eq!(vars[1].constraint, TypeConstraint::Box);
+        assert_eq!(vars[1].constraint, TypeConstraint::Share);
 
         let Type::Function(_, _, typ, vars) = typ.as_ref() else {
             panic!("expected second ordinary function item: {typ:#?}");
@@ -4312,7 +4273,7 @@ def CommandMatch = [tagged] do {
         let source = "\
 module Minimal
 
-type Boxed<a: box> = a
+type Boxed<a: share> = a
 ";
         assert!(parse_module(source, "minimal.par".into()).is_err());
     }

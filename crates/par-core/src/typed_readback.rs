@@ -73,8 +73,6 @@ pub fn type_supports_readback(type_defs: &TypeDefs<Universal>, typ: &Type<Univer
 
         Type::Box(..)
         | Type::DualBox(..)
-        | Type::Once(..)
-        | Type::DualOnce(..)
         | Type::Exists(..)
         | Type::Forall(..)
         | Type::Var(..)
@@ -221,11 +219,8 @@ fn expand_type(typ: Type<Universal>, type_defs: &TypeDefs<Universal>) -> Type<Un
         typ = match typ {
             Type::Name(span, name, args) => type_defs.get(&span, &name, &args).unwrap(),
             Type::DualName(span, name, args) => type_defs.get_dual(&span, &name, &args).unwrap(),
-            Type::Box(_, inner) | Type::Once(_, inner) => expand_type(*inner, type_defs),
+            Type::Box(_, inner) => expand_type(*inner, type_defs),
             Type::DualBox(_, inner) if !inner.is_linear(type_defs).unwrap() => {
-                expand_type(inner.clone().dual(Span::None), type_defs)
-            }
-            Type::DualOnce(_, inner) if inner.is_once(type_defs).unwrap() => {
                 expand_type(inner.clone().dual(Span::None), type_defs)
             }
             Type::Recursive {

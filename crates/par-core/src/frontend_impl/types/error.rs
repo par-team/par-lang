@@ -59,7 +59,6 @@ pub enum TypeError<S> {
     PollVariableChangedType(Span, LocalName, Type<S>, Type<S>),
     PollBranchMustSubmit(Span),
     CannotUseLinearVariableInBox(Span, LocalName),
-    CannotUseStrictLinearVariableInOnce(Span, LocalName),
     NonExhaustiveIf(Span),
 }
 
@@ -536,10 +535,6 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 let labels = labels_from_span(code, span);
                 miette::miette!(labels = labels, "Cannot use linear variable `{}` in a `box` expression.", name)
             }
-            Self::CannotUseStrictLinearVariableInOnce(span, name) => {
-                let labels = labels_from_span(code, span);
-                miette::miette!(labels = labels, "Cannot use strictly linear variable `{}` in a `once` expression.", name)
-            }
             Self::NonExhaustiveIf(span) => {
                 let labels = labels_from_span(code, span);
                 miette::miette!(labels = labels, "Conditions are not exhaustive; an `else` branch is required here.")
@@ -623,7 +618,6 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::PollVariableChangedType(span, _, _, _)
             | Self::PollBranchMustSubmit(span)
             | Self::CannotUseLinearVariableInBox(span, _)
-            | Self::CannotUseStrictLinearVariableInOnce(span, _)
             | Self::NonExhaustiveIf(span)
             | Self::CannotUnrollAscendantIterative(span, _) => (span.clone(), None),
 

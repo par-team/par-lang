@@ -489,7 +489,7 @@ impl Compiler {
         match prev {
             Some(prev_tree) => {
                 let disposer = if prev_tree.ty.is_linear(&self.type_defs).unwrap_or(true)
-                    && prev_tree.ty.is_once(&self.type_defs).unwrap_or(false)
+                    && prev_tree.ty.is_drop(&self.type_defs).unwrap_or(false)
                 {
                     Tree::Close
                 } else {
@@ -605,23 +605,6 @@ impl Compiler {
                         })?;
                     Ok(
                         Tree::Package(package_id, Box::new(context_in), FanBehavior::Propagate)
-                            .with_type(typ.clone()),
-                    )
-                })
-            }
-            Expression::Once(span, captures, expression, typ) => {
-                self.with_captures(captures, |this| {
-                    let (context_in, pack_data) =
-                        this.context.pack(None, None, None, &mut this.net);
-                    let (package_id, _) =
-                        this.in_package(format!("Once at {span}"), |this, _| {
-                            let context_out = this.context.unpack(&pack_data, &mut this.net);
-                            let body = this.compile_expression(expression)?;
-                            this.end_context()?;
-                            Ok((body, context_out.with_type(Type::Break(Span::default()))))
-                        })?;
-                    Ok(
-                        Tree::Package(package_id, Box::new(context_in), FanBehavior::Once)
                             .with_type(typ.clone()),
                     )
                 })

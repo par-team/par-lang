@@ -245,7 +245,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             return Ok(result);
         }
 
-        if let Some(result) = Type::is_subtype_modal_positive(&type1, &type2, &ctx)? {
+        if let Some(result) = Type::is_subtype_box_positive(&type1, &type2, &ctx)? {
             return Ok(result.ttl_dec());
         }
 
@@ -292,32 +292,14 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         }
     }
 
-    fn is_subtype_modal_positive(
+    fn is_subtype_box_positive(
         type1: &Type<S>,
         type2: &Type<S>,
         ctx: &SubtypeContext<S>,
     ) -> Result<Option<SubtypeResult<S>>, TypeError<S>> {
         match (type1, type2) {
-            (t1, Self::Once(_, t2))
-                if t1.satisfies_constraint(TypeConstraint::Once, ctx.type_defs)? =>
-            {
-                Ok(Some(Type::is_subtype_helper(
-                    t1.clone(),
-                    t2.as_ref().clone(),
-                    ctx.clone(),
-                )?))
-            }
-            (Self::DualOnce(_, t1), t2)
-                if t1.satisfies_constraint(TypeConstraint::Once, ctx.type_defs)? =>
-            {
-                Ok(Some(Type::is_subtype_helper(
-                    t1.as_ref().clone().dual(Span::None),
-                    t2.clone(),
-                    ctx.clone(),
-                )?))
-            }
             (t1, Self::Box(_, t2))
-                if t1.satisfies_constraint(TypeConstraint::Box, ctx.type_defs)? =>
+                if t1.satisfies_constraint(TypeConstraint::Share, ctx.type_defs)? =>
             {
                 Ok(Some(Type::is_subtype_helper(
                     t1.clone(),
@@ -326,7 +308,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 )?))
             }
             (Self::DualBox(_, t1), t2)
-                if t1.satisfies_constraint(TypeConstraint::Box, ctx.type_defs)? =>
+                if t1.satisfies_constraint(TypeConstraint::Share, ctx.type_defs)? =>
             {
                 Ok(Some(Type::is_subtype_helper(
                     t1.as_ref().clone().dual(Span::None),
@@ -468,11 +450,11 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Incompatible
             }),
 
-            (t1, t2) => Type::is_subtype_modal_structural(t1, t2, ctx),
+            (t1, t2) => Type::is_subtype_box_structural(t1, t2, ctx),
         }
     }
 
-    fn is_subtype_modal_structural(
+    fn is_subtype_box_structural(
         type1: Self,
         type2: Self,
         ctx: SubtypeContext<S>,
@@ -488,19 +470,6 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Type::is_subtype_helper(t1, t2, ctx)
             }
             (t1, Self::DualBox(_, t2)) => {
-                let t2 = t2.as_ref().clone().dual(Span::None);
-                Type::is_subtype_helper(t1, t2, ctx)
-            }
-            (Self::Once(_, t1), Self::Once(_, t2)) => {
-                Type::is_subtype_helper(t1.as_ref().clone(), t2.as_ref().clone(), ctx)
-            }
-            (Self::Once(_, t1), t2) => Type::is_subtype_helper(t1.as_ref().clone(), t2, ctx),
-            (Self::DualOnce(_, t1), Self::DualOnce(_, t2)) => {
-                let t1 = t1.as_ref().clone().dual(Span::None);
-                let t2 = t2.as_ref().clone().dual(Span::None);
-                Type::is_subtype_helper(t1, t2, ctx)
-            }
-            (t1, Self::DualOnce(_, t2)) => {
                 let t2 = t2.as_ref().clone().dual(Span::None);
                 Type::is_subtype_helper(t1, t2, ctx)
             }

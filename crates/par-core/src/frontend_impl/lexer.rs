@@ -58,7 +58,6 @@ pub enum TokenKind {
     UppercaseIdentifier,
     Begin,
     Box,
-    Once,
     Case,
     Catch,
     Chan,
@@ -194,7 +193,6 @@ impl TokenKind {
             TokenKind::UppercaseIdentifier => "upper-case identifier",
             TokenKind::Begin => "begin",
             TokenKind::Box => "box",
-            TokenKind::Once => "once",
             TokenKind::Case => "case",
             TokenKind::Catch => "catch",
             TokenKind::Chan => "chan",
@@ -292,7 +290,6 @@ fn identifier_kind(raw: &str) -> Option<TokenKind> {
     Some(match raw {
         "begin" => TokenKind::Begin,
         "box" => TokenKind::Box,
-        "once" => TokenKind::Once,
         "case" => TokenKind::Case,
         "catch" => TokenKind::Catch,
         "chan" => TokenKind::Chan,

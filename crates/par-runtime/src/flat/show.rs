@@ -129,11 +129,6 @@ impl<'a, 'b, Ext: Clone> std::fmt::Display for Showable<'a, 'b, &'a Global<Ext>,
             Global::Package(index, captures, _) => {
                 write!(f, "@{}${}", index.0, Showable(captures, self.1))?;
             }
-            Global::OncePackage {
-                package, captures, ..
-            } => {
-                write!(f, "once @{}${}", package.0, Showable(captures, self.1))?;
-            }
             Global::Fanout(index) => {
                 write!(f, "{{")?;
                 for i in self.1.arena.get(index.clone()) {

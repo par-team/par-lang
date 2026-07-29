@@ -182,17 +182,12 @@ pub struct Package<Ext: Clone> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Global<Ext: Clone> {
     Variable(usize),
-    /// Compiler-inserted structural disposal for a value satisfying the `once` constraint.
+    /// Compiler-inserted structural disposal for a value satisfying the `drop` constraint.
     Close {
         signal: Str<Ext>,
         erase: GlobalPtr<Ext>,
     },
     Package(PackagePtr<Ext>, GlobalPtr<Ext>, FanBehavior),
-    OncePackage {
-        package: PackagePtr<Ext>,
-        captures: GlobalPtr<Ext>,
-        close: GlobalPtr<Ext>,
-    },
     /// Destruct attempts to convert the interacting node into a value,
     /// and then carries out a negative operation on it according to its variant
     /// This node is created from the Continue, Case, and Receive commands.
@@ -591,7 +586,7 @@ impl Runtime {
                 Global::Destruct(..) => None,
                 Global::Fanout(..) => None,
                 Global::Close { .. } => None,
-                Global::Package(package, captures, FanBehavior::Expand | FanBehavior::Once) => {
+                Global::Package(package, captures, FanBehavior::Expand) => {
                     let root = self.instantiate_package_captures(
                         package.clone(),
                         Node::Global(instance, captures.clone()),
@@ -604,15 +599,6 @@ impl Runtime {
                     Some(Shared::Sync(Arc::new(SyncShared::Package(
                         *package, captures,
                     ))))
-                }
-                Global::OncePackage {
-                    package, captures, ..
-                } => {
-                    let root = self.instantiate_package_captures(
-                        package.clone(),
-                        Node::Global(instance, captures.clone()),
-                    );
-                    self.share_inner(root)
                 }
                 Global::Value(value) => {
                     self.rewrites.share_sync += 1;
@@ -849,16 +835,6 @@ impl Runtime {
                 );
             }
             sym!(
-                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
-                NodeRef::Global(value_instance, _, Global::OncePackage { captures, .. })
-            ) => {
-                self.rewrites.fanout += 1;
-                self.link(
-                    Node::Global(value_instance, *captures),
-                    Node::Global(close_instance, close_index),
-                );
-            }
-            sym!(
                 NodeRef::Global(_, _, Global::Close { .. }),
                 NodeRef::Shared(_)
             ) => {
@@ -880,43 +856,6 @@ impl Runtime {
                         Node::Global(close_instance.clone(), erase),
                     );
                 }
-            }
-            sym!(
-                NodeRef::Global(_fanout_instance, _, Global::Fanout(destinations)),
-                NodeRef::Global(
-                    value_instance,
-                    _,
-                    Global::OncePackage {
-                        package,
-                        captures,
-                        close
-                    }
-                )
-            ) if self.arena().get(*destinations).is_empty() => {
-                self.rewrites.fanout += 1;
-                self.link(
-                    Node::Global(value_instance.clone(), *captures),
-                    Node::Global(value_instance, *close),
-                );
-            }
-            sym!(
-                NodeRef::Global(fanout_instance, _, Global::Fanout(destinations)),
-                NodeRef::Global(
-                    value_instance,
-                    _,
-                    Global::OncePackage {
-                        package,
-                        captures,
-                        ..
-                    }
-                )
-            ) => {
-                let package = package.clone();
-                let captures = *captures;
-                let destinations = *destinations;
-                let root = self
-                    .instantiate_package_captures(package, Node::Global(value_instance, captures));
-                self.interact_fanout(fanout_instance, destinations, root);
             }
             sym!(
                 NodeRef::Global(instance, _, Global::Fanout(destinations)),
@@ -952,24 +891,6 @@ impl Runtime {
                 self.interact_instantiate(
                     *package,
                     Node::Global(instance, *captures_in),
-                    other.into_node(),
-                );
-            }
-            sym!(
-                NodeRef::Global(
-                    instance,
-                    _,
-                    Global::OncePackage {
-                        package,
-                        captures,
-                        ..
-                    }
-                ),
-                other
-            ) => {
-                self.interact_instantiate(
-                    *package,
-                    Node::Global(instance, *captures),
                     other.into_node(),
                 );
             }
@@ -1316,7 +1237,6 @@ impl Global<Linked> {
             Global::Close { .. } => "Close".into(),
 
             Global::Package(_, _, _) => "Package".into(),
-            Global::OncePackage { .. } => "OncePackage".into(),
 
             Global::Destruct(c) => format!("Destruct({})", c.variant_name()),
 

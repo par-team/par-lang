@@ -13,11 +13,11 @@ enum FixpointKind {
 
 impl<S: Clone + Eq + std::hash::Hash> Type<S> {
     pub fn is_linear(&self, type_defs: &TypeDefs<S>) -> Result<bool, TypeError<S>> {
-        Ok(!self.satisfies_constraint(TypeConstraint::Box, type_defs)?)
+        Ok(!self.satisfies_constraint(TypeConstraint::Share, type_defs)?)
     }
 
-    pub fn is_once(&self, type_defs: &TypeDefs<S>) -> Result<bool, TypeError<S>> {
-        self.satisfies_constraint(TypeConstraint::Once, type_defs)
+    pub fn is_drop(&self, type_defs: &TypeDefs<S>) -> Result<bool, TypeError<S>> {
+        self.satisfies_constraint(TypeConstraint::Drop, type_defs)
     }
 
     pub fn satisfies_constraint(
@@ -51,9 +51,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(satisfies_at_least(TypeConstraint::Signed))
             }
             Type::Primitive(..) | Type::Break(_) => Ok(satisfies_at_least(TypeConstraint::Data)),
-            Type::DualSelf(..) if constraint == TypeConstraint::Once => Ok(false),
+            Type::DualSelf(..) if constraint == TypeConstraint::Drop => Ok(false),
             Type::DualSelf(..) => Ok(satisfies_at_least(TypeConstraint::Data)),
-            Type::Self_(_, label) if constraint == TypeConstraint::Once => Ok(fixpoints
+            Type::Self_(_, label) if constraint == TypeConstraint::Drop => Ok(fixpoints
                 .iter()
                 .rev()
                 .find(|(bound, _)| bound == label)
@@ -68,14 +68,13 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::Name(_, name, args) => defs
                 .get(&self.span(), name, args)
                 .and_then(|typ| typ.satisfies_constraint_with(constraint, defs, fixpoints)),
-            Type::Box(_, typ) => Ok(satisfies_at_least(TypeConstraint::Box)
+            Type::Box(_, typ) => Ok(satisfies_at_least(TypeConstraint::Share)
                 || typ.satisfies_constraint_with(constraint, defs, fixpoints)?),
-            Type::Once(..) => Ok(satisfies_at_least(TypeConstraint::Once)),
             Type::Pair(_, left, right, vars) => {
                 let minimum = if vars.is_empty() {
                     TypeConstraint::Data
                 } else {
-                    TypeConstraint::Box
+                    TypeConstraint::Share
                 };
                 if !satisfies_at_least(minimum) {
                     return Ok(false);
@@ -93,7 +92,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     Ok(acc && branch.satisfies_constraint_with(constraint, defs, fixpoints)?)
                 })
             }
-            Type::Choice(_, branches) if constraint == TypeConstraint::Once => match branches
+            Type::Choice(_, branches) if constraint == TypeConstraint::Drop => match branches
                 .iter()
                 .find(|(name, _)| name.string.as_str() == "close")
             {
@@ -123,7 +122,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 result
             }
             Type::Exists(_, param, body) | Type::Forall(_, param, body) => {
-                if !satisfies_at_least(TypeConstraint::Box) {
+                if !satisfies_at_least(TypeConstraint::Share) {
                     return Ok(false);
                 }
                 Self::with_type_parameter(defs, param, |defs| {
@@ -134,7 +133,6 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::DualPrimitive(..)
             | Type::DualVar(..)
             | Type::DualBox(..)
-            | Type::DualOnce(..)
             | Type::Function(..)
             | Type::Choice(..)
             | Type::Continue(_)

@@ -135,15 +135,6 @@ fn link_global(node: &Global<Unlinked>) -> Result<Global<Linked>, LinkError> {
             Index(global_ptr.0.clone()),
             fab_behavior.clone(),
         ),
-        Global::OncePackage {
-            package,
-            captures,
-            close,
-        } => Global::OncePackage {
-            package: Index(package.0.clone()),
-            captures: Index(captures.0.clone()),
-            close: Index(close.0.clone()),
-        },
         Global::Destruct(cont) => Global::Destruct(link_global_cont(cont)?),
         Global::Value(value) => Global::Value(link_global_value(value)?),
         Global::Fanout(fanout) => Global::Fanout(Index(fanout.0.clone())),

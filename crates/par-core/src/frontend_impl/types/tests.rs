@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::super::lattice::{intersect_types, union_types};
     use crate::frontend_impl::language::{
         GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
     };
@@ -158,25 +157,23 @@ mod tests {
     }
 
     #[test]
-    fn test_once_classification() {
+    fn test_drop_classification() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let resource = Type::choice(vec![("close", Type::break_())]);
         let strict = Type::choice(vec![("use", Type::break_())]);
 
-        assert!(Type::once(strict.clone()).is_once(&type_defs).unwrap());
         assert!(
-            !Type::once(strict.clone())
-                .satisfies_constraint(TypeConstraint::Box, &type_defs)
+            Type::box_(strict)
+                .satisfies_constraint(TypeConstraint::Drop, &type_defs)
                 .unwrap()
         );
-        assert!(Type::box_(strict).is_once(&type_defs).unwrap());
 
         assert!(
             Type::pair(
                 resource.clone(),
                 Type::either(vec![("some", resource.clone())])
             )
-            .is_once(&type_defs)
+            .is_drop(&type_defs)
             .unwrap()
         );
         assert!(
@@ -187,110 +184,61 @@ mod tests {
                     ("item", Type::pair(resource.clone(), Type::self_(None))),
                 ]),
             )
-            .is_once(&type_defs)
+            .is_drop(&type_defs)
             .unwrap()
         );
         assert!(
             Type::Forall(
                 Span::None,
-                constrained_param(TypeConstraint::Once),
+                constrained_param(TypeConstraint::Drop),
                 Box::new(Type::var("a")),
             )
-            .is_once(&type_defs)
+            .is_drop(&type_defs)
             .unwrap()
         );
         assert!(
             !Type::iterative(None, Type::choice(vec![("close", Type::self_(None))]),)
-                .is_once(&type_defs)
+                .is_drop(&type_defs)
                 .unwrap()
         );
         assert!(
             !Type::choice(vec![("use", Type::break_())])
-                .is_once(&type_defs)
+                .is_drop(&type_defs)
                 .unwrap()
         );
         assert!(
             !Type::DualSelf(Span::None, None)
-                .is_once(&type_defs)
+                .is_drop(&type_defs)
                 .unwrap()
         );
     }
 
     #[test]
-    fn test_once_modality_subtyping() {
+    fn test_box_modality_subtyping() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let shared = Type::string();
         let strict = Type::choice(vec![("use", Type::break_())]);
-        let closeable = Type::choice(vec![("close", Type::break_())]);
-        let once_strict = Type::once(strict.clone());
-        let nested_once = Type::once(once_strict.clone());
         let boxed_strict = Type::box_(strict.clone());
+        let nested_boxed_strict = Type::box_(boxed_strict.clone());
 
         assert!(
-            once_strict
-                .is_definitely_assignable_to(&strict, &type_defs)
+            shared
+                .is_definitely_assignable_to(&Type::box_(shared.clone()), &type_defs)
                 .unwrap()
         );
         assert!(
             !strict
-                .is_definitely_assignable_to(&once_strict, &type_defs)
-                .unwrap()
-        );
-        assert!(
-            closeable
-                .is_definitely_assignable_to(&Type::once(closeable.clone()), &type_defs)
-                .unwrap()
-        );
-        assert!(
-            nested_once
-                .is_definitely_assignable_to(&once_strict, &type_defs)
-                .unwrap()
-        );
-        assert!(
-            once_strict
-                .is_definitely_assignable_to(&nested_once, &type_defs)
+                .is_definitely_assignable_to(&Type::box_(strict.clone()), &type_defs)
                 .unwrap()
         );
         assert!(
             boxed_strict
-                .is_definitely_assignable_to(&Type::once(strict.clone()), &type_defs)
+                .is_definitely_assignable_to(&nested_boxed_strict, &type_defs)
                 .unwrap()
         );
         assert!(
-            !Type::once(strict)
+            nested_boxed_strict
                 .is_definitely_assignable_to(&boxed_strict, &type_defs)
-                .unwrap()
-        );
-        assert!(
-            Type::choice(vec![("use", Type::break_())])
-                .dual(Span::None)
-                .is_definitely_assignable_to(&once_strict.clone().dual(Span::None), &type_defs)
-                .unwrap()
-        );
-
-        let boxed_left = Type::box_(Type::either(vec![("left", Type::nat())]));
-        let once_right = Type::once(Type::either(vec![("right", Type::string())]));
-        let union = union_types(&type_defs, &Span::None, &boxed_left, &once_right).unwrap();
-        assert!(
-            boxed_left
-                .is_definitely_assignable_to(&union, &type_defs)
-                .unwrap()
-        );
-        assert!(
-            once_right
-                .is_definitely_assignable_to(&union, &type_defs)
-                .unwrap()
-        );
-
-        let intersection =
-            intersect_types(&type_defs, &Span::None, &boxed_left, &once_right).unwrap();
-        assert!(
-            intersection
-                .is_definitely_assignable_to(&boxed_left, &type_defs)
-                .unwrap()
-        );
-        assert!(
-            intersection
-                .is_definitely_assignable_to(&once_right, &type_defs)
                 .unwrap()
         );
     }
@@ -342,17 +290,17 @@ mod tests {
             )
         };
 
-        // A witness promising `box` may be used where no promise is needed...
+        // A witness promising `share` may be used where no promise is needed...
         assert!(
-            exists(TypeConstraint::Box)
+            exists(TypeConstraint::Share)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Any), &type_defs)
                 .unwrap()
         );
         // ...but an unconstrained (possibly linear) witness must not be
-        // passed off as a `box` one.
+        // passed off as a `share` one.
         assert!(
             !exists(TypeConstraint::Any)
-                .is_definitely_assignable_to(&exists(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&exists(TypeConstraint::Share), &type_defs)
                 .unwrap()
         );
     }
@@ -368,15 +316,15 @@ mod tests {
             )
         };
 
-        // Accepting any type is stronger than only accepting `box` types...
+        // Accepting any type is stronger than only accepting `share` types...
         assert!(
             forall(TypeConstraint::Any)
-                .is_definitely_assignable_to(&forall(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&forall(TypeConstraint::Share), &type_defs)
                 .unwrap()
         );
         // ...but not the other way around.
         assert!(
-            !forall(TypeConstraint::Box)
+            !forall(TypeConstraint::Share)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Any), &type_defs)
                 .unwrap()
         );
@@ -395,13 +343,13 @@ mod tests {
         };
 
         assert!(
-            pair(TypeConstraint::Box)
+            pair(TypeConstraint::Share)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Any), &type_defs)
                 .unwrap()
         );
         assert!(
             !pair(TypeConstraint::Any)
-                .is_definitely_assignable_to(&pair(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&pair(TypeConstraint::Share), &type_defs)
                 .unwrap()
         );
     }
@@ -441,7 +389,7 @@ mod tests {
                     Span::None,
                     Box::new(Type::var("b")),
                     Box::new(Type::int()),
-                    vec![parameter("b", TypeConstraint::Box)],
+                    vec![parameter("b", TypeConstraint::Share)],
                 )),
                 vec![],
             )),
@@ -451,7 +399,7 @@ mod tests {
         function
             .pretty_compact(&mut rendered, &TestNameWriter)
             .unwrap();
-        assert_eq!(rendered, "[<a> a, String, <b: box> b] Int");
+        assert_eq!(rendered, "[<a> a, String, <b: share> b] Int");
 
         let pair = Type::<Universal>::Pair(
             Span::None,
