@@ -4,7 +4,7 @@ Before we start writing our own package, it's helpful to see Par in action in th
 
 Let's open it:
 
-```
+```sh
 $ par playground
 ```
 

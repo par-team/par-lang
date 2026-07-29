@@ -12,7 +12,7 @@ Rust를 설치하는 가장 쉬운 방법은 [rustup](https://rustup.rs)이다. 
 
 > 터미널에서 다음 명령을 실행하고 화면상의 지시를 따라 주세요.
 >
-> ```
+> ```sh
 > $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 > ```
 
@@ -20,7 +20,7 @@ Rust를 설치하는 가장 쉬운 방법은 [rustup](https://rustup.rs)이다. 
 
 그 다음에는 [GitHub](https://github.com/par-team/par-lang)에 있는 Par의 소스 코드를 내려받아야 한다. 터미널에서 다음 명령어를 실행해 소스 코드를 로컬로 복제할 수 있다.
 
-```
+```sh
 $ git clone https://github.com/par-team/par-lang
 ```
 
@@ -28,13 +28,13 @@ $ git clone https://github.com/par-team/par-lang
 
 새로 생성된 디렉토리로 이동한다.
 
-```
+```sh
 $ cd par-lang
 ```
 
 그 다음에는 Cargo로 실행 파일을 설치한다.
 
-```
+```sh
 $ cargo install --path .
 ```
 
@@ -54,7 +54,7 @@ Visual Studio Code를 사용할 경우, [Par 확장](https://marketplace.visuals
 
 새로운 패키지를 만들어 보자.
 
-```
+```sh
 $ par new hello_par
 $ cd hello_par
 ```
@@ -70,13 +70,13 @@ hello_par/
 
 `src/Main.par`라는 작은 Par 프로그램도 같이 생성되었으며, 다음 명령으로 지금 바로 실행해볼 수 있다.
 
-```
+```sh
 $ par run
 ```
 
 실행하는 대신 패키지 타입 검사만 해볼 수도 있다.
 
-```
+```sh
 $ par check
 ```
 
@@ -84,7 +84,7 @@ $ par check
 
 Par에는 문서 탐색기가 내장되어 있다.
 
-```
+```sh
 $ par doc
 ```
 
@@ -98,7 +98,7 @@ $ par doc
 
 플레이그라운드는 자동 UI를 내장하고 있어 편리하게 코드를 작성해 보고 결과 값과 상호작용할 수 있다.
 
-```
+```sh
 $ par playground
 ```
 
