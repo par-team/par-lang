@@ -91,7 +91,7 @@ export {
   //
   // The item type must be safely discardable because earlier parsed items may
   // need to be discarded if a later item fails to parse.
-  dec List : [<a: once> Format<a>] Format<CoreList<a>>
+  dec List : [<a: drop> Format<a>] Format<CoreList<a>>
 
   // Parses a JSON object with the given object format.
   dec Object : [<a> ObjectFormat<a>] Format<a>
@@ -118,7 +118,7 @@ export {
   //
   // Both object formats return safely discardable values because either side
   // may need to be discarded if the other side fails.
-  dec And : [<a: once> ObjectFormat<a>, <b: once> ObjectFormat<b>] ObjectFormat<(b) a>
+  dec And : [<a: drop> ObjectFormat<a>, <b: drop> ObjectFormat<b>] ObjectFormat<(b) a>
 
   // Tries multiple formats in order and returns the first successful result.
   //
@@ -178,8 +178,8 @@ def Equals = [json1, json2] json1.begin.case {
   })
 }
 
-dec ListEquals : [<a: once> CoreList<a>, <b: once> CoreList<b>, box [a, b] CoreBool] CoreBool
-def ListEquals = [<a: once> list1, <b: once> list2, eq] list1.begin.case {
+dec ListEquals : [<a: drop> CoreList<a>, <b: drop> CoreList<b>, box [a, b] CoreBool] CoreBool
+def ListEquals = [<a: drop> list1, <b: drop> list2, eq] list1.begin.case {
   .end! => list2.case {
     .end! => .true!,
     .item(_) _ => .false!,
@@ -242,7 +242,7 @@ def Number = box case {
   }
 }
 
-def List = [<a: once> item] box case {
+def List = [<a: drop> item] box case {
   .parse(json) => json.case {
     .list xs => xs.begin.case {
       .end! => .ok .end!,
@@ -285,7 +285,7 @@ def OptionalField = [key, <a> format] box case {
   }
 }
 
-def And = [<a: once> format1, <b: once> format2] box case {
+def And = [<a: drop> format1, <b: drop> format2] box case {
   .parseObject(object) => if {
     not format2.parseObject(object) is .ok y => .err!,
     not format1.parseObject(object) is .ok x => .err!,
