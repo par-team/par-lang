@@ -45,7 +45,7 @@ def Main: ! = chan exit {
 
 A few things to note about this pattern:
 
-The `chan exit` creates a channel called `exit` of type `?` — [the continuation type](./processes/duality.md), which is dual to our `Main` function's return type `!`. The `exit!` syntax is the _break_ command applied to this continuation, which ends the process.
+The `chan exit` creates a channel called `exit` of type `?` — [the continuation type](../processes/duality.md), which is dual to our `Main` function's return type `!`. The `exit!` syntax is the _break_ command applied to this continuation, which ends the process.
 
 After the `.case` block, the `writer` variable is available in the surrounding scope. This is how process-scoped variables work in Par — variables bound in `.case` branches continue to exist after the case analysis.
 
@@ -60,7 +60,7 @@ After the `.case` block, the `writer` variable is available in the surrounding s
   }
 ```
 
-In [process syntax](./process_syntax.md), when we use `.ok =>`, the subject of the command (`writer`) gets updated to the payload of the .ok branch. Since `.write` returns the same `Os.Writer` type on success, `writer` remains usable.
+In [process syntax](../process_syntax.md), when we use `.ok =>`, the subject of the command (`writer`) gets updated to the payload of the .ok branch. Since `.write` returns the same `Os.Writer` type on success, `writer` remains usable.
 
 ```par
   writer.write("[INFO] Second new log\n").case {

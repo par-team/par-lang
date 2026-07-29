@@ -5,6 +5,12 @@ description = "Documentation for the Par programming language"
 src = "src"
 language = "en"
 
+[build]
+use-default-preprocessors = false
+create-missing = false
+
+[preprocessor.links]
+
 [output.html]
 theme = "par-theme"
 default-theme = "light"
@@ -16,3 +22,5 @@ edit-url-template = "https://github.com/par-team/par-lang/edit/main/docs/{path}"
 
 [output.html.code.hidelines]
 par = "# "
+
+[output.linkcheck2]
