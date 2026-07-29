@@ -5,6 +5,12 @@ description = "Par 프로그래밍 언어의 공식 문서"
 src = "src"
 language = "ko"
 
+[build]
+use-default-preprocessors = false
+create-missing = false
+
+[preprocessor.links]
+
 [output.html]
 theme = "par-theme"
 default-theme = "light"
@@ -16,3 +22,5 @@ edit-url-template = "https://github.com/par-team/par-lang/edit/main/docs-ko/{pat
 
 [output.html.code.hidelines]
 par = "# "
+
+[output.linkcheck2]

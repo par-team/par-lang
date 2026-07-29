@@ -42,3 +42,14 @@ jobs:
 
       - name: mdbook test (korean)
         run: cd docs-ko && mdbook test
+
+      - name: Install mdbook-linkcheck
+        run: |
+          curl -sSL https://github.com/marxin/mdbook-linkcheck2/releases/download/v0.12.2/mdbook-linkcheck2-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv mdbook-linkcheck2 /usr/local/bin/
+      
+      - name: mdbook linkcheck
+        run: cd docs && mdbook build
+
+      - name: mdbook linkcheck (korean)
+        run: cd docs-ko && mdbook build
