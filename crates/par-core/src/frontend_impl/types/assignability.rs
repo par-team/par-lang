@@ -48,7 +48,8 @@ enum SubtypeMismatchCause {
     TypeVariableMismatch,
     PrimitiveTypeMismatch,
     HoleConstrainingIsDisabled,
-    Other,
+    InvalidCycle,
+    FixpointGuardMismatch,
 }
 
 enum SubtypeResult<S> {
@@ -108,7 +109,7 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
                 if !matches!(min_left, Type::Recursive { .. })
                     && !matches!(min_right, Type::Iterative { .. })
                 {
-                    Incompatible(SubtypeMismatchCause::Other)
+                    Incompatible(SubtypeMismatchCause::InvalidCycle)
                 } else {
                     Cycle {
                         min_left,
@@ -369,7 +370,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if !matches!(min_left, Type::Recursive { .. })
             && !matches!(min_right, Type::Iterative { .. })
         {
-            return Ok(Some(Incompatible(SubtypeMismatchCause::Other)));
+            return Ok(Some(Incompatible(SubtypeMismatchCause::InvalidCycle)));
         }
         Ok(Some(Cycle {
             min_left: min_left.clone(),
@@ -387,10 +388,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     if asc1.is_subset(asc2) {
                         Compatible
                     } else {
-                        Incompatible(SubtypeMismatchCause::Other)
+                        Incompatible(SubtypeMismatchCause::FixpointGuardMismatch)
                     }
                 } else {
-                    Incompatible(SubtypeMismatchCause::Other)
+                    Incompatible(SubtypeMismatchCause::FixpointGuardMismatch)
                 });
             }
         }
@@ -401,10 +402,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     if asc2.is_subset(asc1) {
                         Compatible
                     } else {
-                        Incompatible(SubtypeMismatchCause::Other)
+                        Incompatible(SubtypeMismatchCause::FixpointGuardMismatch)
                     }
                 } else {
-                    Incompatible(SubtypeMismatchCause::Other)
+                    Incompatible(SubtypeMismatchCause::FixpointGuardMismatch)
                 });
             }
         }
