@@ -24,7 +24,9 @@ fn solve_constraints<S: Clone + Eq + std::hash::Hash>(
         upper = intersect_types(type_defs, span, &upper, &typ)?;
     }
     if let Assignability::Incompatible(cause) = lower.require_assignable_to(&upper, type_defs)? {
-        return Err(CannotAssignFromTo(span.clone(), lower, upper, cause));
+        let from_type = Type::unroll_type_along_path(lower, &cause.from_path, type_defs);
+        let to_type = Type::unroll_type_along_path(upper, &cause.to_path, type_defs);
+        return Err(CannotAssignFromTo(span.clone(), from_type, to_type, cause));
     }
 
     if matches!(constraint, TypeConstraint::Signed)

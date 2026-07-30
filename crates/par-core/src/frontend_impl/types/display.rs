@@ -12,7 +12,7 @@ pub trait GlobalNameWriter<S> {
     fn write_global_name<W: Write>(&self, f: &mut W, name: &GlobalName<S>) -> fmt::Result;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct TypeRenderOptions<'a> {
     indent: usize,
     compact: bool,
@@ -103,7 +103,7 @@ impl<S: Clone> Type<S> {
         &self,
         f: &mut impl Write,
         names: &N,
-        options: TypeRenderOptions,
+        options: TypeRenderOptions<'_>,
     ) -> fmt::Result {
         let mut current_path = TypePath::new();
         write_type_with_options(f, names, self, options, &mut current_path)
@@ -218,12 +218,13 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
     f: &mut impl Write,
     names: &N,
     typ: &Type<S>,
-    options: TypeRenderOptions,
+    options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
 ) -> fmt::Result {
     let is_this_node_target = options
         .highlight_path
         .map_or(false, |target| target == current_path);
+
     let start_underline = is_this_node_target && !options.is_underlined;
 
     if start_underline {
@@ -357,7 +358,7 @@ fn write_type_args<S: Clone, N: GlobalNameWriter<S>>(
     f: &mut impl Write,
     names: &N,
     args: &[Type<S>],
-    options: TypeRenderOptions,
+    options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
 ) -> fmt::Result {
     if args.is_empty() {
@@ -383,7 +384,7 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
     close: &str,
     typ: &Type<S>,
     function: bool,
-    options: TypeRenderOptions,
+    options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
 ) -> fmt::Result {
     let mut then = typ;
@@ -476,7 +477,7 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     prefix: &str,
     branches: &BTreeMap<LocalName, Type<S>>,
     choice: bool,
-    options: TypeRenderOptions,
+    options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
 ) -> fmt::Result {
     if branches.is_empty() {
@@ -488,7 +489,24 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     for (branch, branch_type) in branches {
         let options = options.next_indent();
         options.write_indentation(f)?;
-        write!(f, ".{branch}")?;
+
+        let label_seg = if choice {
+            TypePathSegment::ChoiceBranchLabel(branch.clone())
+        } else {
+            TypePathSegment::EitherBranchLabel(branch.clone())
+        };
+
+        current_path.push(label_seg);
+        let is_label_target = options
+            .highlight_path
+            .map_or(false, |target| target == current_path);
+        current_path.pop();
+
+        if is_label_target {
+            write!(f, "\x1b[4m.{branch}\x1b[24m")?;
+        } else {
+            write!(f, ".{branch}")?;
+        }
 
         let seg = if choice {
             TypePathSegment::ChoiceBranch(branch.clone())
@@ -527,7 +545,7 @@ fn write_named_type_display<S: Clone, N: GlobalNameWriter<S>>(
     f: &mut impl Write,
     names: &N,
     display_hint: &NamedTypeDisplay<S>,
-    options: TypeRenderOptions,
+    options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
 ) -> fmt::Result {
     if display_hint.dual {

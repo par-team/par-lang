@@ -184,14 +184,82 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         type_defs: &TypeDefs<S>,
     ) -> Result<(), TypeError<S>> {
         if let Assignability::Incompatible(cause) = self.require_assignable_to(u, type_defs)? {
+            let from_type = Self::unroll_type_along_path(self.clone(), &cause.from_path, type_defs);
+            let to_type = Self::unroll_type_along_path(u.clone(), &cause.to_path, type_defs);
+
             return Err(TypeError::CannotAssignFromTo(
                 span.clone(),
-                self.clone(),
-                u.clone(),
+                from_type,
+                to_type,
                 cause,
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn unroll_type_along_path(
+        typ: Self,
+        path: &TypePath,
+        type_defs: &TypeDefs<S>,
+    ) -> Self {
+        Self::unroll_along_path_segments(typ, path.as_slice(), type_defs)
+    }
+
+    fn unroll_along_path_segments(
+        mut typ: Self,
+        segments: &[TypePathSegment],
+        type_defs: &TypeDefs<S>,
+    ) -> Self {
+        while matches!(typ, Type::Name(..) | Type::DualName(..)) || typ.display_hint().is_some() {
+            if let Ok(expanded) = typ.expand_definition(type_defs) {
+                if expanded == typ {
+                    break;
+                }
+                typ = expanded;
+            } else {
+                break;
+            }
+        }
+
+        let Some((first, rest)) = segments.split_first() else {
+            return typ;
+        };
+
+        match (typ, first) {
+            (Type::Pair(span, left, right, vars), TypePathSegment::PairLeft) => {
+                let unrolled_left = Self::unroll_along_path_segments(*left, rest, type_defs);
+                Type::Pair(span, Box::new(unrolled_left), right, vars)
+            }
+            (Type::Pair(span, left, right, vars), TypePathSegment::PairRight) => {
+                let unrolled_right = Self::unroll_along_path_segments(*right, rest, type_defs);
+                Type::Pair(span, left, Box::new(unrolled_right), vars)
+            }
+            (Type::Function(span, arg, ret, vars), TypePathSegment::FunctionParam) => {
+                let unrolled_arg = Self::unroll_along_path_segments(*arg, rest, type_defs);
+                Type::Function(span, Box::new(unrolled_arg), ret, vars)
+            }
+            (Type::Function(span, arg, ret, vars), TypePathSegment::FunctionReturn) => {
+                let unrolled_ret = Self::unroll_along_path_segments(*ret, rest, type_defs);
+                Type::Function(span, arg, Box::new(unrolled_ret), vars)
+            }
+            (Type::Either(span, mut branches), TypePathSegment::EitherBranch(label))
+            | (Type::Either(span, mut branches), TypePathSegment::EitherBranchLabel(label)) => {
+                if let Some(branch_typ) = branches.remove(label) {
+                    let unrolled_branch = Self::unroll_along_path_segments(branch_typ, rest, type_defs);
+                    branches.insert(label.clone(), unrolled_branch);
+                }
+                Type::Either(span, branches)
+            }
+            (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranch(label))
+            | (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranchLabel(label)) => {
+                if let Some(branch_typ) = branches.remove(label) {
+                    let unrolled_branch = Self::unroll_along_path_segments(branch_typ, rest, type_defs);
+                    branches.insert(label.clone(), unrolled_branch);
+                }
+                Type::Choice(span, branches)
+            }
+            (other, _) => other,
+        }
     }
 
     pub fn require_assignable_to(
@@ -713,13 +781,16 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut res = Compatible;
                 for (branch, t1) in branches1 {
                     let Some(t2) = branches2.get(&branch) else {
-                        return Ok(incompatible(
+                        path1.push(TypePathSegment::EitherBranchLabel(branch.clone()));
+                        let res = incompatible(
                             path1,
                             path2,
                             SubtypeMismatchKind::MissingEitherBranch {
                                 branch: branch.clone(),
                             },
-                        ));
+                        );
+                        path1.pop();
+                        return Ok(res);
                     };
                     path1.push(TypePathSegment::EitherBranch(branch.clone()));
                     path2.push(TypePathSegment::EitherBranch(branch.clone()));
@@ -735,13 +806,16 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut res = Compatible;
                 for (branch, t2) in branches2 {
                     let Some(t1) = branches1.get(&branch) else {
-                        return Ok(incompatible(
+                        path2.push(TypePathSegment::ChoiceBranchLabel(branch.clone()));
+                        let res = incompatible(
                             path1,
                             path2,
                             SubtypeMismatchKind::MissingChoiceBranch {
                                 branch: branch.clone(),
                             },
-                        ));
+                        );
+                        path2.pop();
+                        return Ok(res);
                     };
                     path1.push(TypePathSegment::ChoiceBranch(branch.clone()));
                     path2.push(TypePathSegment::ChoiceBranch(branch.clone()));
