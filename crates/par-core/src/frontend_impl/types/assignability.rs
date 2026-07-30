@@ -94,6 +94,8 @@ enum SubtypeResult<S> {
     Compatible,
     Incompatible(SubtypeMismatchCause),
     Cycle {
+        from_path: TypePath,
+        to_path: TypePath,
         min_left: Type<S>,
         size_left: u32,
         min_right: Type<S>,
@@ -119,6 +121,8 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
             (c @ Cycle { .. }, Compatible) | (Compatible, c @ Cycle { .. }) => c,
             (
                 Cycle {
+                    from_path: from_path1,
+                    to_path: to_path1,
                     min_left: min_left1,
                     size_left: size_left1,
                     min_right: min_right1,
@@ -126,6 +130,8 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
                     ttl: ttl1,
                 },
                 Cycle {
+                    from_path: from_path2,
+                    to_path: to_path2,
                     min_left: min_left2,
                     size_left: size_left2,
                     min_right: min_right2,
@@ -133,27 +139,29 @@ impl<S: Clone> BitAnd for SubtypeResult<S> {
                     ttl: ttl2,
                 },
             ) => {
-                let (min_left, size_left) = if size_left1 <= size_left2 {
-                    (min_left1, size_left1)
+                let (from_path, min_left, size_left) = if size_left1 <= size_left2 {
+                    (from_path1, min_left1, size_left1)
                 } else {
-                    (min_left2, size_left2)
+                    (from_path2, min_left2, size_left2)
                 };
-                let (min_right, size_right) = if size_right1 <= size_right2 {
-                    (min_right1, size_right1)
+                let (to_path, min_right, size_right) = if size_right1 <= size_right2 {
+                    (to_path1, min_right1, size_right1)
                 } else {
-                    (min_right2, size_right2)
+                    (to_path2, min_right2, size_right2)
                 };
                 let ttl = max(ttl1, ttl2);
                 if !matches!(min_left, Type::Recursive { .. })
                     && !matches!(min_right, Type::Iterative { .. })
                 {
                     Incompatible(SubtypeMismatchCause {
-                        from_path: Vec::new(),
-                        to_path: Vec::new(),
+                        from_path,
+                        to_path,
                         kind: SubtypeMismatchKind::InvalidCycle,
                     })
                 } else {
                     Cycle {
+                        from_path,
+                        to_path,
                         min_left,
                         size_left,
                         min_right,
@@ -303,6 +311,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Compatible => Ok(Assignability::Assignable),
             Incompatible(cause) => Ok(Assignability::Incompatible(cause)),
             Cycle {
+                from_path,
+                to_path,
                 min_left,
                 min_right,
                 ..
@@ -313,8 +323,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     Ok(Assignability::Assignable)
                 } else {
                     Ok(Assignability::Incompatible(SubtypeMismatchCause {
-                        from_path: path1,
-                        to_path: path2,
+                        from_path,
+                        to_path,
                         kind: SubtypeMismatchKind::InvalidCycle,
                     }))
                 }
@@ -509,13 +519,29 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if !matches!(min_left, Type::Recursive { .. })
             && !matches!(min_right, Type::Iterative { .. })
         {
-            return Ok(Some(incompatible(
-                path1,
-                path2,
-                SubtypeMismatchKind::InvalidCycle,
-            )));
+            let mut from_path = path1.clone();
+            let mut to_path = path2.clone();
+            if from_path.last() == Some(&TypePathSegment::IterativeBody)
+                || from_path.last() == Some(&TypePathSegment::RecursiveBody)
+            {
+                from_path.pop();
+            }
+            if to_path.last() == Some(&TypePathSegment::IterativeBody)
+                || to_path.last() == Some(&TypePathSegment::RecursiveBody)
+            {
+                to_path.pop();
+            }
+            from_path.push(TypePathSegment::Self_);
+            to_path.push(TypePathSegment::Self_);
+            return Ok(Some(Incompatible(SubtypeMismatchCause {
+                from_path,
+                to_path,
+                kind: SubtypeMismatchKind::InvalidCycle,
+            })));
         }
         Ok(Some(Cycle {
+            from_path: path1.clone(),
+            to_path: path2.clone(),
             min_left: min_left.clone(),
             size_left: min_left.size(ctx.type_defs)?,
             min_right: min_right.clone(),

@@ -277,8 +277,12 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
             current_path.pop();
             r
         }
-        Type::Pair(_, _, _, _) => write_pair_like(f, names, "(", ")", typ, false, options, current_path),
-        Type::Function(_, _, _, _) => write_pair_like(f, names, "[", "]", typ, true, options, current_path),
+        Type::Pair(_, _, _, _) => {
+            write_pair_like(f, names, "(", ")", typ, false, options, current_path)
+        }
+        Type::Function(_, _, _, _) => {
+            write_pair_like(f, names, "[", "]", typ, true, options, current_path)
+        }
         Type::Either(_, branches) => {
             write_braced_branches(f, names, "either", branches, false, options, current_path)
         }
@@ -314,21 +318,49 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
             r
         }
         Type::Self_(_, label) => {
+            current_path.push(TypePathSegment::Self_);
+            let is_target = options
+                .highlight_path
+                .map_or(false, |target| target == current_path);
+            let start_underline = is_target && !options.is_underlined;
+            if start_underline {
+                write!(f, "\x1b[4m")?;
+            }
             write!(f, "self")?;
             if let Some(label) = label {
                 write!(f, "@{label}")?;
             }
+            if start_underline {
+                write!(f, "\x1b[24m")?;
+            }
+            current_path.pop();
             Ok(())
         }
         Type::DualSelf(_, label) => {
+            current_path.push(TypePathSegment::Self_);
+            let is_target = options
+                .highlight_path
+                .map_or(false, |target| target == current_path);
+            let start_underline = is_target && !options.is_underlined;
+            if start_underline {
+                write!(f, "\x1b[4m")?;
+            }
             write!(f, "dual self")?;
             if let Some(label) = label {
                 write!(f, "@{label}")?;
             }
+            if start_underline {
+                write!(f, "\x1b[24m")?;
+            }
+            current_path.pop();
             Ok(())
         }
-        Type::Exists(_, _, _) => write_pair_like(f, names, "(", ")", typ, false, options, current_path),
-        Type::Forall(_, _, _) => write_pair_like(f, names, "[", "]", typ, true, options, current_path),
+        Type::Exists(_, _, _) => {
+            write_pair_like(f, names, "(", ")", typ, false, options, current_path)
+        }
+        Type::Forall(_, _, _) => {
+            write_pair_like(f, names, "[", "]", typ, true, options, current_path)
+        }
         Type::Hole(_, name, _) => write!(f, "%{name}"),
         Type::DualHole(_, name, _) => write!(f, "dual %{name}"),
         Type::Fail(_) => write!(f, "<error>"),
@@ -453,7 +485,8 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                         let is_param_target = options
                             .highlight_path
                             .map_or(false, |target| target == current_path);
-                        let start_param_underline = is_param_target && !options.is_underlined && !start_underline;
+                        let start_param_underline =
+                            is_param_target && !options.is_underlined && !start_underline;
                         if start_param_underline {
                             write!(f, "\x1b[4m")?;
                         }
@@ -500,7 +533,8 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                         let is_param_target = options
                             .highlight_path
                             .map_or(false, |target| target == current_path);
-                        let start_param_underline = is_param_target && !options.is_underlined && !start_underline;
+                        let start_param_underline =
+                            is_param_target && !options.is_underlined && !start_underline;
                         if start_param_underline {
                             write!(f, "\x1b[4m")?;
                         }
@@ -602,7 +636,16 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
         if choice {
             if matches!(branch_type, Type::Function(..)) || matches!(branch_type, Type::Forall(..))
             {
-                write_pair_like(f, names, "(", ") =>", branch_type, true, options, current_path)?;
+                write_pair_like(
+                    f,
+                    names,
+                    "(",
+                    ") =>",
+                    branch_type,
+                    true,
+                    options,
+                    current_path,
+                )?;
             } else {
                 write!(f, " => ")?;
                 write_type_with_options(f, names, branch_type, options, current_path)?;

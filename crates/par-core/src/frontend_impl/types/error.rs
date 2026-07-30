@@ -330,6 +330,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                             format!("But an incompatible type was provided (expected `{expected_param}`, got `{provided_param}`):")
                         }
                     }
+                    SubtypeMismatchKind::InvalidCycle => {
+                        "But an incompatible type was provided (an iterative cannot be cast to a recursive):".to_string()
+                    }
                     _ => "But an incompatible type was provided:".to_string(),
                 };
                 miette::miette!(
