@@ -47,7 +47,11 @@ pub(crate) enum SubtypeMismatchKind {
         from_count: usize,
         to_count: usize,
     },
-    TypeParameterConstraintMismatch,
+    TypeParameterConstraintMismatch {
+        param_name: LocalName,
+        provided: TypeConstraint,
+        expected: TypeConstraint,
+    },
     TypeVariableMismatch,
     PrimitiveTypeMismatch,
     HoleConstrainingIsDisabled,
@@ -703,11 +707,24 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
                     // Covariant, like `Exists`: pair vars are existential binders.
                     if !var2.constraint.is_broader_or_equal_than(var1.constraint) {
-                        return Ok(incompatible(
+                        path1.push(TypePathSegment::ImplicitGenerics);
+                        path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
+                        path2.push(TypePathSegment::ImplicitGenerics);
+                        path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
+                        let res = incompatible(
                             path1,
                             path2,
-                            SubtypeMismatchKind::TypeParameterConstraintMismatch,
-                        ));
+                            SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                                param_name: var1.name.clone(),
+                                provided: var1.constraint,
+                                expected: var2.constraint,
+                            },
+                        );
+                        path1.pop();
+                        path1.pop();
+                        path2.pop();
+                        path2.pop();
+                        return Ok(res);
                     }
                     t2 = t2.substitute(BTreeMap::from([(
                         &var2.name,
@@ -754,11 +771,24 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
                     if !var1.constraint.is_broader_or_equal_than(var2.constraint) {
-                        return Ok(incompatible(
+                        path1.push(TypePathSegment::ImplicitGenerics);
+                        path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
+                        path2.push(TypePathSegment::ImplicitGenerics);
+                        path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
+                        let res = incompatible(
                             path1,
                             path2,
-                            SubtypeMismatchKind::TypeParameterConstraintMismatch,
-                        ));
+                            SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                                param_name: var1.name.clone(),
+                                provided: var1.constraint,
+                                expected: var2.constraint,
+                            },
+                        );
+                        path1.pop();
+                        path1.pop();
+                        path2.pop();
+                        path2.pop();
+                        return Ok(res);
                     }
                     t2 = t2.substitute(BTreeMap::from([(
                         &var2.name,
@@ -850,21 +880,39 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
 
             (Self::Exists(loc, name1, body1), Self::Exists(_, name2, body2)) => {
                 if !name2.constraint.is_broader_or_equal_than(name1.constraint) {
-                    return Ok(incompatible(
+                    path1.push(TypePathSegment::TypeParameter(name1.name.clone()));
+                    path2.push(TypePathSegment::TypeParameter(name2.name.clone()));
+                    let res = incompatible(
                         path1,
                         path2,
-                        SubtypeMismatchKind::TypeParameterConstraintMismatch,
-                    ));
+                        SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                            param_name: name1.name.clone(),
+                            provided: name1.constraint,
+                            expected: name2.constraint,
+                        },
+                    );
+                    path1.pop();
+                    path2.pop();
+                    return Ok(res);
                 }
                 Type::is_subtype_quantified(loc, name1, body1, name2, body2, path1, path2, ctx)
             }
             (Self::Forall(loc, name1, body1), Self::Forall(_, name2, body2)) => {
                 if !name1.constraint.is_broader_or_equal_than(name2.constraint) {
-                    return Ok(incompatible(
+                    path1.push(TypePathSegment::TypeParameter(name1.name.clone()));
+                    path2.push(TypePathSegment::TypeParameter(name2.name.clone()));
+                    let res = incompatible(
                         path1,
                         path2,
-                        SubtypeMismatchKind::TypeParameterConstraintMismatch,
-                    ));
+                        SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                            param_name: name1.name.clone(),
+                            provided: name1.constraint,
+                            expected: name2.constraint,
+                        },
+                    );
+                    path1.pop();
+                    path2.pop();
+                    return Ok(res);
                 }
                 Type::is_subtype_quantified(loc, name1, body1, name2, body2, path1, path2, ctx)
             }

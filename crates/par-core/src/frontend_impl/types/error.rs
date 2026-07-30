@@ -313,6 +313,23 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                         let plural = if *to_count == 1 { "" } else { "s" };
                         format!("But an incompatible type was provided (expected {to_count} generic{plural}, got {from_count}):")
                     }
+                    SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                        param_name,
+                        provided,
+                        expected,
+                    } => {
+                        let expected_param = if *expected == TypeConstraint::Any {
+                            format!("{param_name}")
+                        } else {
+                            format!("{param_name}: {expected}")
+                        };
+                        if *provided == TypeConstraint::Any {
+                            format!("But an incompatible type was provided (expected `{expected_param}`):")
+                        } else {
+                            let provided_param = format!("{param_name}: {provided}");
+                            format!("But an incompatible type was provided (expected `{expected_param}`, got `{provided_param}`):")
+                        }
+                    }
                     _ => "But an incompatible type was provided:".to_string(),
                 };
                 miette::miette!(

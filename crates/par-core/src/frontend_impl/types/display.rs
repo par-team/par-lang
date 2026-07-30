@@ -397,14 +397,38 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                 if wrote_prefix_item {
                     write!(f, ", ")?;
                 }
+                current_path.push(TypePathSegment::TypeParameter(name.name.clone()));
+                let is_param_target = options
+                    .highlight_path
+                    .map_or(false, |target| target == current_path);
+                let start_underline = is_param_target && !options.is_underlined;
+                if start_underline {
+                    write!(f, "\x1b[4m")?;
+                }
                 write!(f, "type {name}")?;
+                if start_underline {
+                    write!(f, "\x1b[24m")?;
+                }
+                current_path.pop();
                 then = next_then;
             }
             Type::Exists(_, name, next_then) if !function => {
                 if wrote_prefix_item {
                     write!(f, ", ")?;
                 }
+                current_path.push(TypePathSegment::TypeParameter(name.name.clone()));
+                let is_param_target = options
+                    .highlight_path
+                    .map_or(false, |target| target == current_path);
+                let start_underline = is_param_target && !options.is_underlined;
+                if start_underline {
+                    write!(f, "\x1b[4m")?;
+                }
                 write!(f, "type {name}")?;
+                if start_underline {
+                    write!(f, "\x1b[24m")?;
+                }
+                current_path.pop();
                 then = next_then;
             }
             Type::Function(_, arg, next_then, vars) if function => {
@@ -420,9 +444,24 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                     write!(f, "\x1b[4m")?;
                 }
                 if !vars.is_empty() {
-                    write!(f, "<{}", vars[0])?;
-                    for var in vars.iter().skip(1) {
-                        write!(f, ", {var}")?;
+                    write!(f, "<")?;
+                    for (i, var) in vars.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        current_path.push(TypePathSegment::TypeParameter(var.name.clone()));
+                        let is_param_target = options
+                            .highlight_path
+                            .map_or(false, |target| target == current_path);
+                        let start_param_underline = is_param_target && !options.is_underlined && !start_underline;
+                        if start_param_underline {
+                            write!(f, "\x1b[4m")?;
+                        }
+                        write!(f, "{var}")?;
+                        if start_param_underline {
+                            write!(f, "\x1b[24m")?;
+                        }
+                        current_path.pop();
                     }
                     write!(f, "> ")?;
                 } else if is_vars_target {
@@ -452,9 +491,24 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                     write!(f, "\x1b[4m")?;
                 }
                 if !vars.is_empty() {
-                    write!(f, "<{}", vars[0])?;
-                    for var in vars.iter().skip(1) {
-                        write!(f, ", {var}")?;
+                    write!(f, "<")?;
+                    for (i, var) in vars.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        current_path.push(TypePathSegment::TypeParameter(var.name.clone()));
+                        let is_param_target = options
+                            .highlight_path
+                            .map_or(false, |target| target == current_path);
+                        let start_param_underline = is_param_target && !options.is_underlined && !start_underline;
+                        if start_param_underline {
+                            write!(f, "\x1b[4m")?;
+                        }
+                        write!(f, "{var}")?;
+                        if start_param_underline {
+                            write!(f, "\x1b[24m")?;
+                        }
+                        current_path.pop();
                     }
                     write!(f, "> ")?;
                 } else if is_vars_target {

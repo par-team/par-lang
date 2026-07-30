@@ -52,6 +52,7 @@ pub(crate) enum TypePathSegment {
     IterativeBody,
     ExistsBody,
     ImplicitGenerics,
+    TypeParameter(LocalName),
 }
 
 pub(crate) type TypePath = Vec<TypePathSegment>;
