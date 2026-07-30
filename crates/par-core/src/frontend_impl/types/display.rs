@@ -1,7 +1,7 @@
 use crate::frontend_impl::language::{GlobalName, LocalName};
 use crate::frontend_impl::process::HoverInfo;
 use crate::frontend_impl::program::Docs;
-use crate::frontend_impl::types::core::NamedTypeDisplay;
+use crate::frontend_impl::types::core::{NamedTypeDisplay, TypePath, TypePathSegment};
 use crate::frontend_impl::types::{PrimitiveType, Type, TypeDefs};
 use crate::location::{Span, Spanning};
 use std::collections::BTreeMap;
@@ -13,18 +13,22 @@ pub trait GlobalNameWriter<S> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct TypeRenderOptions {
+pub(crate) struct TypeRenderOptions<'a> {
     indent: usize,
     compact: bool,
     prefer_display_hints: bool,
+    highlight_path: Option<&'a TypePath>,
+    is_underlined: bool,
 }
 
-impl TypeRenderOptions {
+impl<'a> TypeRenderOptions<'a> {
     pub(crate) const fn pretty(indent: usize) -> Self {
         Self {
             indent,
             compact: false,
             prefer_display_hints: true,
+            highlight_path: None,
+            is_underlined: false,
         }
     }
 
@@ -33,7 +37,17 @@ impl TypeRenderOptions {
             indent: 0,
             compact: true,
             prefer_display_hints: true,
+            highlight_path: None,
+            is_underlined: false,
         }
+    }
+
+    pub(crate) fn with_highlight(mut self, path: &'a TypePath) -> Self {
+        if !path.is_empty() {
+            self.prefer_display_hints = false;
+        }
+        self.highlight_path = Some(path);
+        self
     }
 
     pub(crate) const fn with_prefer_display_hints(self, prefer_display_hints: bool) -> Self {
@@ -52,9 +66,15 @@ impl TypeRenderOptions {
 
     fn write_indentation(self, f: &mut impl Write) -> fmt::Result {
         if !self.compact {
+            if self.is_underlined {
+                write!(f, "\x1b[24m")?;
+            }
             write!(f, "\n")?;
             for _ in 0..self.indent {
                 write!(f, "  ")?;
+            }
+            if self.is_underlined {
+                write!(f, "\x1b[4m")?;
             }
         }
         Ok(())
@@ -85,7 +105,8 @@ impl<S: Clone> Type<S> {
         names: &N,
         options: TypeRenderOptions,
     ) -> fmt::Result {
-        write_type_with_options(f, names, self, options)
+        let mut current_path = TypePath::new();
+        write_type_with_options(f, names, self, options, &mut current_path)
     }
 
     pub fn types_at_spans(
@@ -198,14 +219,33 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
     names: &N,
     typ: &Type<S>,
     options: TypeRenderOptions,
+    current_path: &mut TypePath,
 ) -> fmt::Result {
+    let is_this_node_target = options
+        .highlight_path
+        .map_or(false, |target| target == current_path);
+    let start_underline = is_this_node_target && !options.is_underlined;
+
+    if start_underline {
+        write!(f, "\x1b[4m")?;
+    }
+
+    let options = TypeRenderOptions {
+        is_underlined: options.is_underlined || is_this_node_target,
+        ..options
+    };
+
     if options.prefer_display_hints {
         if let Some(display_hint) = typ.display_hint() {
-            return write_named_type_display(f, names, display_hint, options);
+            let res = write_named_type_display(f, names, display_hint, options, current_path);
+            if start_underline {
+                write!(f, "\x1b[24m")?;
+            }
+            return res;
         }
     }
 
-    match typ {
+    let res = match typ {
         Type::Primitive(_, primitive) => write_primitive_type(f, primitive),
         Type::DualPrimitive(_, primitive) => {
             write!(f, "dual ")?;
@@ -215,28 +255,34 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
         Type::DualVar(_, name) => write!(f, "dual {name}"),
         Type::Name(_, name, args) => {
             names.write_global_name(f, name)?;
-            write_type_args(f, names, args, options)
+            write_type_args(f, names, args, options, current_path)
         }
         Type::DualName(_, name, args) => {
             write!(f, "dual ")?;
             names.write_global_name(f, name)?;
-            write_type_args(f, names, args, options)
+            write_type_args(f, names, args, options, current_path)
         }
         Type::Box(_, body) => {
             write!(f, "box ")?;
-            write_type_with_options(f, names, body, options)
+            current_path.push(TypePathSegment::BoxBody);
+            let r = write_type_with_options(f, names, body, options, current_path);
+            current_path.pop();
+            r
         }
         Type::DualBox(_, body) => {
             write!(f, "dual box ")?;
-            write_type_with_options(f, names, body, options)
+            current_path.push(TypePathSegment::BoxBody);
+            let r = write_type_with_options(f, names, body, options, current_path);
+            current_path.pop();
+            r
         }
-        Type::Pair(_, _, _, _) => write_pair_like(f, names, "(", ")", typ, false, options),
-        Type::Function(_, _, _, _) => write_pair_like(f, names, "[", "]", typ, true, options),
+        Type::Pair(_, _, _, _) => write_pair_like(f, names, "(", ")", typ, false, options, current_path),
+        Type::Function(_, _, _, _) => write_pair_like(f, names, "[", "]", typ, true, options, current_path),
         Type::Either(_, branches) => {
-            write_braced_branches(f, names, "either", branches, false, options)
+            write_braced_branches(f, names, "either", branches, false, options, current_path)
         }
         Type::Choice(_, branches) => {
-            write_braced_branches(f, names, "choice", branches, true, options)
+            write_braced_branches(f, names, "choice", branches, true, options, current_path)
         }
         Type::Break(_) => write!(f, "!"),
         Type::Continue(_) => write!(f, "?"),
@@ -248,7 +294,10 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
                 }
             }
             write!(f, " ")?;
-            write_type_with_options(f, names, body, options)
+            current_path.push(TypePathSegment::RecursiveBody);
+            let r = write_type_with_options(f, names, body, options, current_path);
+            current_path.pop();
+            r
         }
         Type::Iterative { label, body, .. } => {
             write!(f, "iterative")?;
@@ -258,7 +307,10 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
                 }
             }
             write!(f, " ")?;
-            write_type_with_options(f, names, body, options)
+            current_path.push(TypePathSegment::IterativeBody);
+            let r = write_type_with_options(f, names, body, options, current_path);
+            current_path.pop();
+            r
         }
         Type::Self_(_, label) => {
             write!(f, "self")?;
@@ -274,12 +326,18 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
             }
             Ok(())
         }
-        Type::Exists(_, _, _) => write_pair_like(f, names, "(", ")", typ, false, options),
-        Type::Forall(_, _, _) => write_pair_like(f, names, "[", "]", typ, true, options),
+        Type::Exists(_, _, _) => write_pair_like(f, names, "(", ")", typ, false, options, current_path),
+        Type::Forall(_, _, _) => write_pair_like(f, names, "[", "]", typ, true, options, current_path),
         Type::Hole(_, name, _) => write!(f, "%{name}"),
         Type::DualHole(_, name, _) => write!(f, "dual %{name}"),
         Type::Fail(_) => write!(f, "<error>"),
+    };
+
+    if start_underline {
+        write!(f, "\x1b[24m")?;
     }
+
+    res
 }
 
 fn write_primitive_type(f: &mut impl Write, primitive: &PrimitiveType) -> fmt::Result {
@@ -300,6 +358,7 @@ fn write_type_args<S: Clone, N: GlobalNameWriter<S>>(
     names: &N,
     args: &[Type<S>],
     options: TypeRenderOptions,
+    current_path: &mut TypePath,
 ) -> fmt::Result {
     if args.is_empty() {
         return Ok(());
@@ -310,7 +369,9 @@ fn write_type_args<S: Clone, N: GlobalNameWriter<S>>(
         if i > 0 {
             write!(f, ", ")?;
         }
-        write_type_with_options(f, names, arg, options)?;
+        current_path.push(TypePathSegment::NameArg(i));
+        write_type_with_options(f, names, arg, options, current_path)?;
+        current_path.pop();
     }
     write!(f, ">")
 }
@@ -323,6 +384,7 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
     typ: &Type<S>,
     function: bool,
     options: TypeRenderOptions,
+    current_path: &mut TypePath,
 ) -> fmt::Result {
     let mut then = typ;
     let mut wrote_prefix_item = false;
@@ -355,8 +417,11 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                     }
                     write!(f, "> ")?;
                 }
-                write_type_with_options(f, names, arg, options)?;
+                current_path.push(TypePathSegment::FunctionParam);
+                write_type_with_options(f, names, arg, options, current_path)?;
+                current_path.pop();
                 then = next_then;
+                current_path.push(TypePathSegment::FunctionReturn);
             }
             Type::Pair(_, arg, next_then, vars) if !function => {
                 if wrote_prefix_item {
@@ -369,8 +434,11 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                     }
                     write!(f, "> ")?;
                 }
-                write_type_with_options(f, names, arg, options)?;
+                current_path.push(TypePathSegment::PairLeft);
+                write_type_with_options(f, names, arg, options, current_path)?;
+                current_path.pop();
                 then = next_then;
+                current_path.push(TypePathSegment::PairRight);
             }
             _ => break,
         }
@@ -384,14 +452,22 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
     };
     if is_terminal {
         if function {
-            write!(f, "{close}?")
+            write!(f, "{close}?")?;
         } else {
-            write!(f, "{close}!")
+            write!(f, "{close}!")?;
         }
     } else {
         write!(f, "{close} ")?;
-        write_type_with_options(f, names, then, options)
+        write_type_with_options(f, names, then, options, current_path)?;
     }
+
+    while current_path.last() == Some(&TypePathSegment::FunctionReturn)
+        || current_path.last() == Some(&TypePathSegment::PairRight)
+    {
+        current_path.pop();
+    }
+
+    Ok(())
 }
 
 fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
@@ -401,6 +477,7 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     branches: &BTreeMap<LocalName, Type<S>>,
     choice: bool,
     options: TypeRenderOptions,
+    current_path: &mut TypePath,
 ) -> fmt::Result {
     if branches.is_empty() {
         return write!(f, "{prefix} {{}}");
@@ -412,13 +489,21 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
         let options = options.next_indent();
         options.write_indentation(f)?;
         write!(f, ".{branch}")?;
+
+        let seg = if choice {
+            TypePathSegment::ChoiceBranch(branch.clone())
+        } else {
+            TypePathSegment::EitherBranch(branch.clone())
+        };
+        current_path.push(seg);
+
         if choice {
             if matches!(branch_type, Type::Function(..)) || matches!(branch_type, Type::Forall(..))
             {
-                write_pair_like(f, names, "(", ") =>", branch_type, true, options)?;
+                write_pair_like(f, names, "(", ") =>", branch_type, true, options, current_path)?;
             } else {
                 write!(f, " => ")?;
-                write_type_with_options(f, names, branch_type, options)?;
+                write_type_with_options(f, names, branch_type, options, current_path)?;
             }
         } else {
             if matches!(
@@ -429,8 +514,9 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
             } else {
                 write!(f, " ")?;
             }
-            write_type_with_options(f, names, branch_type, options)?;
+            write_type_with_options(f, names, branch_type, options, current_path)?;
         }
+        current_path.pop();
         write!(f, ",")?;
     }
     options.write_indentation(f)?;
@@ -442,12 +528,13 @@ fn write_named_type_display<S: Clone, N: GlobalNameWriter<S>>(
     names: &N,
     display_hint: &NamedTypeDisplay<S>,
     options: TypeRenderOptions,
+    current_path: &mut TypePath,
 ) -> fmt::Result {
     if display_hint.dual {
         write!(f, "dual ")?;
     }
     names.write_global_name(f, &display_hint.name)?;
-    write_type_args(f, names, &display_hint.args, options)
+    write_type_args(f, names, &display_hint.args, options, current_path)
 }
 
 fn dual_name_hover_span<S>(full_span: &Span, name: &GlobalName<S>) -> Span {

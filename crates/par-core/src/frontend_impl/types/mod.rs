@@ -12,7 +12,7 @@ pub use error::TypeError;
 pub(crate) mod definitions;
 pub use definitions::TypeDefs;
 pub(crate) mod assignability;
-pub(crate) use assignability::{SubtypeMismatchCause, SubtypeMismatchKind};
+
 pub(crate) mod checking;
 pub(crate) mod context;
 pub(crate) use context::Context;

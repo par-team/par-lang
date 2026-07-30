@@ -1,8 +1,10 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, Universal};
 use crate::frontend_impl::types::assignability::SubtypeMismatchCause;
-use crate::frontend_impl::types::{LoopId, Operation, Type};
+use crate::frontend_impl::types::{LoopId, Operation, Type, TypePath};
 use crate::location::Span;
-use crate::workspace::{FileImportScope, render_global_name_in_scope, render_type_in_scope};
+use crate::workspace::{
+    FileImportScope, render_global_name_in_scope, render_type_in_scope_with_highlight,
+};
 use miette::{LabeledSpan, SourceOffset, SourceSpan};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -102,8 +104,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
         &self,
         source_code: Arc<str>,
         render_name: impl Fn(&GlobalName<S>) -> String,
-        render_type: impl Fn(&Type<S>, usize) -> String,
+        render_type_with_highlight: impl Fn(&Type<S>, usize, Option<&TypePath>) -> String,
     ) -> miette::Report {
+        let render_type = |typ, indent| render_type_with_highlight(typ, indent, None);
         let code = &source_code;
         match self {
             Self::TypeNameAlreadyDefined(span1, span2, name) => {
@@ -296,8 +299,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
             }
             Self::CannotAssignFromTo(span, from_type, to_type, cause) => {
                 let labels = labels_from_span(code, span);
-                let from_type_str = render_type(from_type, 1);
-                let to_type_str = render_type(to_type, 1);
+                let from_type_str =
+                    render_type_with_highlight(from_type, 1, Some(&cause.from_path));
+                let to_type_str = render_type_with_highlight(to_type, 1, Some(&cause.to_path));
                 miette::miette!(
                     labels = labels,
                     "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n",
@@ -574,7 +578,7 @@ impl TypeError<Universal> {
         self.to_report_with(
             source_code,
             |name| render_global_name_in_scope(scope, name),
-            |typ, indent| render_type_in_scope(scope, typ, indent),
+            |typ, indent, path| render_type_in_scope_with_highlight(scope, typ, indent, path),
         )
     }
 }

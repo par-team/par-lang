@@ -1302,15 +1302,29 @@ pub fn render_type_in_scope(
     typ: &Type<Universal>,
     indent: usize,
 ) -> String {
+    render_type_in_scope_with_highlight(scope, typ, indent, None)
+}
+
+pub(crate) fn render_type_in_scope_with_highlight(
+    scope: Option<&FileImportScope<Universal>>,
+    typ: &Type<Universal>,
+    indent: usize,
+    highlight_path: Option<&crate::frontend_impl::types::TypePath>,
+) -> String {
     let mut output = String::new();
+    let mut options = TypeRenderOptions::pretty(indent);
+    if let Some(path) = highlight_path {
+        options = options.with_highlight(path);
+    }
     let _ = write_type_in_scope_with_options(
         &mut output,
         scope,
         typ,
-        TypeRenderOptions::pretty(indent),
+        options,
     );
     output
 }
+
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct AbsoluteModuleLookupKey {
