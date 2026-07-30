@@ -1,5 +1,5 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, Universal};
-use crate::frontend_impl::types::assignability::SubtypeMismatchCause;
+use crate::frontend_impl::types::assignability::{SubtypeMismatchCause, SubtypeMismatchKind};
 use crate::frontend_impl::types::{LoopId, Operation, Type, TypePath};
 use crate::location::Span;
 use crate::workspace::{
@@ -302,10 +302,20 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 let from_type_str =
                     render_type_with_highlight(from_type, 1, Some(&cause.from_path));
                 let to_type_str = render_type_with_highlight(to_type, 1, Some(&cause.to_path));
+                let provided_header = match &cause.kind {
+                    SubtypeMismatchKind::MissingEitherBranch { branch } => {
+                        format!("But an incompatible type (containing an extra variant `.{branch}`) was provided:")
+                    }
+                    SubtypeMismatchKind::MissingChoiceBranch { branch } => {
+                        format!("But an incompatible type (missing option `.{branch}`) was provided:")
+                    }
+                    _ => "But an incompatible type was provided:".to_string(),
+                };
                 miette::miette!(
                     labels = labels,
-                    "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n",
+                    "This type was required:\n\n  {}\n\n{}\n\n  {}\n",
                     to_type_str,
+                    provided_header,
                     from_type_str,
                 )
             }
