@@ -1,6 +1,7 @@
 pub(crate) mod core;
 pub(crate) use core::LoopId;
 pub use core::{Operation, PrimitiveType, Type};
+pub(crate) use core::{TypePath, TypePathSegment};
 
 pub(crate) mod visibility;
 pub(crate) use visibility::{Visibility, VisibilityIndex, validate_visibility};
@@ -11,6 +12,7 @@ pub use error::TypeError;
 pub(crate) mod definitions;
 pub use definitions::TypeDefs;
 pub(crate) mod assignability;
+pub(crate) use assignability::{SubtypeMismatchCause, SubtypeMismatchKind};
 pub(crate) mod checking;
 pub(crate) mod context;
 pub(crate) use context::Context;

@@ -294,7 +294,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     )
                 }
             }
-            Self::CannotAssignFromTo(span, from_type, to_type, _cause) => {
+            Self::CannotAssignFromTo(span, from_type, to_type, cause) => {
                 let labels = labels_from_span(code, span);
                 let from_type_str = render_type(from_type, 1);
                 let to_type_str = render_type(to_type, 1);

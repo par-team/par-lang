@@ -36,6 +36,24 @@ pub enum PrimitiveType {
     Bytes,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TypePathSegment {
+    NameArg(usize),
+    BoxBody,
+    PairLeft,
+    PairRight,
+    FunctionParam,
+    FunctionReturn,
+    EitherBranch(LocalName),
+    ChoiceBranch(LocalName),
+    RecursiveBody,
+    IterativeBody,
+    ExistsBody,
+    ForallBody,
+}
+
+pub(crate) type TypePath = Vec<TypePathSegment>;
+
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct Ignored<T>(pub(crate) T);
