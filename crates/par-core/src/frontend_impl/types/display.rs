@@ -411,13 +411,28 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                 if wrote_prefix_item {
                     write!(f, ", ")?;
                 }
+                current_path.push(TypePathSegment::ImplicitGenerics);
+                let is_vars_target = options
+                    .highlight_path
+                    .map_or(false, |target| target == current_path);
+                let start_underline = is_vars_target && !options.is_underlined;
+                if start_underline {
+                    write!(f, "\x1b[4m")?;
+                }
                 if !vars.is_empty() {
                     write!(f, "<{}", vars[0])?;
                     for var in vars.iter().skip(1) {
                         write!(f, ", {var}")?;
                     }
                     write!(f, "> ")?;
+                } else if is_vars_target {
+                    write!(f, "<> ")?;
                 }
+                if start_underline {
+                    write!(f, "\x1b[24m")?;
+                }
+                current_path.pop();
+
                 current_path.push(TypePathSegment::FunctionParam);
                 write_type_with_options(f, names, arg, options, current_path)?;
                 current_path.pop();
@@ -428,13 +443,28 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                 if wrote_prefix_item {
                     write!(f, ", ")?;
                 }
+                current_path.push(TypePathSegment::ImplicitGenerics);
+                let is_vars_target = options
+                    .highlight_path
+                    .map_or(false, |target| target == current_path);
+                let start_underline = is_vars_target && !options.is_underlined;
+                if start_underline {
+                    write!(f, "\x1b[4m")?;
+                }
                 if !vars.is_empty() {
                     write!(f, "<{}", vars[0])?;
                     for var in vars.iter().skip(1) {
                         write!(f, ", {var}")?;
                     }
                     write!(f, "> ")?;
+                } else if is_vars_target {
+                    write!(f, "<> ")?;
                 }
+                if start_underline {
+                    write!(f, "\x1b[24m")?;
+                }
+                current_path.pop();
+
                 current_path.push(TypePathSegment::PairLeft);
                 write_type_with_options(f, names, arg, options, current_path)?;
                 current_path.pop();

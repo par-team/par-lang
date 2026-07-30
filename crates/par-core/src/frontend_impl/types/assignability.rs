@@ -43,7 +43,10 @@ pub(crate) enum SubtypeMismatchKind {
     MissingEitherBranch { branch: LocalName },
     MissingChoiceBranch { branch: LocalName },
     ConstructorMismatch,
-    ImplicitGenericCountMismatch,
+    ImplicitGenericCountMismatch {
+        from_count: usize,
+        to_count: usize,
+    },
     TypeParameterConstraintMismatch,
     TypeVariableMismatch,
     PrimitiveTypeMismatch,
@@ -681,11 +684,19 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         match (type1, type2) {
             (Self::Pair(_, t1, u1, vars1), Self::Pair(_, t2, u2, vars2)) => {
                 if vars1.len() != vars2.len() {
-                    return Ok(incompatible(
+                    path1.push(TypePathSegment::ImplicitGenerics);
+                    path2.push(TypePathSegment::ImplicitGenerics);
+                    let res = incompatible(
                         path1,
                         path2,
-                        SubtypeMismatchKind::ImplicitGenericCountMismatch,
-                    ));
+                        SubtypeMismatchKind::ImplicitGenericCountMismatch {
+                            from_count: vars1.len(),
+                            to_count: vars2.len(),
+                        },
+                    );
+                    path1.pop();
+                    path2.pop();
+                    return Ok(res);
                 }
                 let mut t2: Type<S> = *t2.clone();
                 let mut u2: Type<S> = *u2.clone();
@@ -725,11 +736,19 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 let t1 = t1.clone().dual(Span::None);
                 let t2 = t2.clone().dual(Span::None);
                 if vars1.len() != vars2.len() {
-                    return Ok(incompatible(
+                    path1.push(TypePathSegment::ImplicitGenerics);
+                    path2.push(TypePathSegment::ImplicitGenerics);
+                    let res = incompatible(
                         path1,
                         path2,
-                        SubtypeMismatchKind::ImplicitGenericCountMismatch,
-                    ));
+                        SubtypeMismatchKind::ImplicitGenericCountMismatch {
+                            from_count: vars1.len(),
+                            to_count: vars2.len(),
+                        },
+                    );
+                    path1.pop();
+                    path2.pop();
+                    return Ok(res);
                 }
                 let mut t2: Type<S> = t2;
                 let mut u2: Type<S> = *u2.clone();

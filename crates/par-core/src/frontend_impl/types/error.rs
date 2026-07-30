@@ -309,6 +309,10 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     SubtypeMismatchKind::MissingChoiceBranch { branch } => {
                         format!("But an incompatible type (missing option `.{branch}`) was provided:")
                     }
+                    SubtypeMismatchKind::ImplicitGenericCountMismatch { from_count, to_count } => {
+                        let plural = if *to_count == 1 { "" } else { "s" };
+                        format!("But an incompatible type was provided (expected {to_count} generic{plural}, got {from_count}):")
+                    }
                     _ => "But an incompatible type was provided:".to_string(),
                 };
                 miette::miette!(
@@ -588,9 +592,7 @@ impl TypeError<Universal> {
         self.to_report_with(
             source_code,
             |name| render_global_name_in_scope(scope, name),
-            |typ, indent, path| {
-                render_type_in_scope_with_highlight(scope, typ, indent, path)
-            },
+            |typ, indent, path| render_type_in_scope_with_highlight(scope, typ, indent, path),
         )
     }
 }
