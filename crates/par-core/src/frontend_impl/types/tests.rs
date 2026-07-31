@@ -3,7 +3,8 @@ mod tests {
     use crate::frontend_impl::language::{
         GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
     };
-    use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs};
+    use crate::frontend_impl::types::lattice::{intersect_types, union_types};
+    use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs, TypeError};
     use crate::location::Span;
     use crate::workspace::render_type_in_scope;
     use arcstr::{ArcStr, literal};
@@ -11,6 +12,33 @@ mod tests {
     use std::fmt::{self, Write};
 
     struct TestNameWriter;
+
+    fn marked_choice(name: &'static str, continuation: Type<Universal>) -> Type<Universal> {
+        let mut typ = Type::choice(vec![(name, continuation)]);
+        let Type::Choice(_, branches) = &mut typ else {
+            unreachable!()
+        };
+        branches.values_mut().next().unwrap().cleanup = true;
+        typ
+    }
+
+    fn marked_either(name: &'static str, continuation: Type<Universal>) -> Type<Universal> {
+        let mut typ = Type::either(vec![(name, continuation)]);
+        let Type::Either(_, branches) = &mut typ else {
+            unreachable!()
+        };
+        branches.values_mut().next().unwrap().cleanup = true;
+        typ
+    }
+
+    fn has_cleanup(typ: &Type<Universal>) -> bool {
+        match typ {
+            Type::Either(_, branches) | Type::Choice(_, branches) => {
+                branches.values().any(|branch| branch.cleanup)
+            }
+            _ => false,
+        }
+    }
 
     impl GlobalNameWriter<Universal> for TestNameWriter {
         fn write_global_name<W: Write>(
@@ -159,7 +187,7 @@ mod tests {
     #[test]
     fn test_drop_classification() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
-        let resource = Type::choice(vec![("close", Type::break_())]);
+        let resource = marked_choice("release", Type::break_());
         let strict = Type::choice(vec![("use", Type::break_())]);
 
         assert!(
@@ -197,7 +225,25 @@ mod tests {
             .unwrap()
         );
         assert!(
-            !Type::iterative(None, Type::choice(vec![("close", Type::self_(None))]),)
+            Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Drop),
+                Box::new(marked_choice("release", Type::var("a"))),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            !Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Any),
+                Box::new(marked_choice("release", Type::var("a"))),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            !Type::iterative(None, marked_choice("release", Type::self_(None)),)
                 .is_drop(&type_defs)
                 .unwrap()
         );
@@ -211,6 +257,93 @@ mod tests {
                 .is_drop(&type_defs)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_cleanup_branch_subtyping() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let plain_choice = Type::choice(vec![("method", Type::break_())]);
+        let cleanup_choice = marked_choice("method", Type::break_());
+        assert!(
+            cleanup_choice
+                .is_definitely_assignable_to(&plain_choice, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !plain_choice
+                .is_definitely_assignable_to(&cleanup_choice, &type_defs)
+                .unwrap()
+        );
+
+        let plain_either = Type::either(vec![("variant", Type::break_())]);
+        let cleanup_either = marked_either("variant", Type::break_());
+        assert!(
+            plain_either
+                .is_definitely_assignable_to(&cleanup_either, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !cleanup_either
+                .is_definitely_assignable_to(&plain_either, &type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_cleanup_branch_lattice_rules() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let span = Span::None;
+
+        let plain_choice = Type::choice(vec![("method", Type::break_())]);
+        let cleanup_choice = marked_choice("method", Type::break_());
+        assert!(!has_cleanup(
+            &union_types(&type_defs, &span, &plain_choice, &cleanup_choice).unwrap()
+        ));
+        assert!(has_cleanup(
+            &intersect_types(&type_defs, &span, &plain_choice, &cleanup_choice).unwrap()
+        ));
+
+        let plain_either = Type::either(vec![("variant", Type::break_())]);
+        let cleanup_either = marked_either("variant", Type::break_());
+        assert!(has_cleanup(
+            &union_types(&type_defs, &span, &plain_either, &cleanup_either).unwrap()
+        ));
+        assert!(!has_cleanup(
+            &intersect_types(&type_defs, &span, &plain_either, &cleanup_either).unwrap()
+        ));
+
+        let other_choice = marked_choice("other", Type::break_());
+        assert!(intersect_types(&type_defs, &span, &cleanup_choice, &other_choice).is_err());
+        let other_either = marked_either("other", Type::break_());
+        assert!(union_types(&type_defs, &span, &cleanup_either, &other_either).is_err());
+    }
+
+    #[test]
+    fn test_cleanup_branch_duality_rendering_and_validation() {
+        let typ = marked_choice("release", Type::break_());
+        let dual = typ.clone().dual(Span::None);
+        assert!(has_cleanup(&dual));
+        assert_eq!(dual.dual(Span::None), typ);
+
+        let mut rendered = String::new();
+        typ.pretty_compact(&mut rendered, &TestNameWriter).unwrap();
+        assert_eq!(rendered, "choice {.release* => !,}");
+
+        let mut invalid = marked_choice("first", Type::break_());
+        let Type::Choice(_, branches) = &mut invalid else {
+            unreachable!()
+        };
+        let mut second = Type::choice(vec![("second", Type::break_())]);
+        let Type::Choice(_, second_branches) = &mut second else {
+            unreachable!()
+        };
+        let (name, mut branch) = second_branches.pop_first().unwrap();
+        branch.cleanup = true;
+        branches.insert(name, branch);
+        assert!(matches!(
+            TypeDefs::default().validate_type(&invalid),
+            Err(TypeError::MultipleCleanupBranches(_))
+        ));
     }
 
     #[test]

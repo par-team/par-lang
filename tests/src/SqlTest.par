@@ -544,6 +544,58 @@ def TestCancelMidStream: [Test] ! = [test] chan done {
   }
 }
 
+// Dropping a live stream selects its marked `.cancel*` branch. The test process
+// can normalize only if the SQL external accepts and completes `#close`.
+def TestAutomaticCancelMidStream: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`automatic cancel test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE auto_nums (n INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO auto_nums (n) VALUES (1), (2), (3)", *())[try@db _]
+  db.query("SELECT n FROM auto_nums ORDER BY n", *())[try@db rows]
+
+  rows.case {
+    .end _ => {
+      db.close
+      test.assert("expected rows before automatic cancellation", .false!)
+      done!
+    },
+    .item rows => {
+      rows.get[row]
+      let firstOk = IntField(row, "n").case { .ok n => n == 1, .err _ => .false! }
+      db.close
+      test.assert("first row read before automatic cancel", firstOk)
+      done!
+    },
+  }
+}
+
+// Dropping a live transaction selects `.rollback*`. The test process can
+// normalize only if the SQL external accepts and completes `#close`.
+def TestAutomaticTransactionRollback: [Test] ! = [test] chan done {
+  catch e: Sql.Error => {
+    test.assert(`automatic rollback test should not error: ${e}`, .false!)
+    done!
+  }
+
+  let try db = Sql.Open("sqlite::memory:")
+  catch@db e => { db.close; throw e }
+
+  db.execute("CREATE TABLE auto_tx (id INTEGER PRIMARY KEY, v INTEGER)", *())[try@db _]
+  db.execute("INSERT INTO auto_tx (id, v) VALUES (1, 10)", *())[try@db _]
+  db.transaction[try@db tx]
+  tx.execute("UPDATE auto_tx SET v = 20 WHERE id = 1", *()).try@db[_]
+
+  db.close
+  test.assert("SQL transactions accept automatic rollback", .true!)
+  done!
+}
+
 // Statements issued on one handle run in submission order even when their
 // results are never inspected.
 def TestExecuteOrdering: [Test] ! = [test] chan done {
