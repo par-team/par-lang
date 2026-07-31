@@ -27,7 +27,7 @@ export {
   // Incrementally constructs a list.
   type Builder<a> = iterative choice {
     .add(a) => self,
-    .build => List<a>,
+    .build* => List<a>,
   }
 
   // Creates a new list `Builder`.
@@ -147,7 +147,7 @@ def Builder = [type a]
   let append: [List<a>] List<a> = [xs] xs
   in begin case {
     .add(x) => let append = [xs: List<a>] append(.item(x) xs) in loop,
-    .build => append(.end!),
+    .build* => append(.end!),
   }
 
 def Map = [<a> list, <b> f] list.begin.case {
