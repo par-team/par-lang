@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
+use crate::frontend_impl::process::CLEANUP_BRANCH;
 use crate::frontend_impl::types::{Type, TypeDefs, TypeError, visit};
 
 use std::sync::OnceLock;
@@ -259,7 +260,7 @@ impl ProgramTranspiler {
             Tree::Continue => Global::Destruct(GlobalCont::Continue),
             Tree::Era => Global::Fanout(self.dest.alloc_clone(&[])),
             Tree::Close => {
-                let signal = self.dest.intern(&ArcStr::from("close"));
+                let signal = self.dest.intern(&ArcStr::from(CLEANUP_BRANCH));
                 let empty: &[Global<Unlinked>] = &[];
                 let destinations = self.dest.alloc_clone(empty);
                 let erase = self.dest.alloc(Global::Fanout(destinations));

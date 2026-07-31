@@ -13,6 +13,7 @@ use futures::channel::oneshot;
 use indexmap::IndexMap;
 use num_bigint::BigInt;
 
+use crate::frontend_impl::process::CLEANUP_BRANCH;
 use par_runtime::fan_behavior::FanBehavior;
 use par_runtime::primitive::{ParString, Primitive, format_float};
 use par_runtime::readback::Number;
@@ -396,9 +397,9 @@ impl<Ext: Clone> Net<Ext> {
             }
             sym!(Close, Choice(context, branches, _)) => {
                 let package = branches
-                    .get("close")
+                    .get(CLEANUP_BRANCH)
                     .copied()
-                    .expect("Close interacted with a choice without a `.close` branch");
+                    .expect("Close interacted with a choice without a cleanup branch");
                 self.link(Close, Tree::Package(package, context, FanBehavior::Expand));
                 self.rewrites.signal += 1;
             }
@@ -442,7 +443,7 @@ impl<Ext: Clone> Net<Ext> {
                 self.primitive_interact(p, a);
             }
             sym!(SignalRequest(tx), Close) => {
-                tx.send((ArcStr::from("close"), Box::new(Close)))
+                tx.send((ArcStr::from(CLEANUP_BRANCH), Box::new(Close)))
                     .expect("receiver dropped");
                 self.rewrites.resp += 1;
             }
