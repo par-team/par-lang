@@ -1316,15 +1316,9 @@ pub(crate) fn render_type_in_scope_with_highlight(
     if let Some(path) = highlight_path {
         options = options.with_highlight(path);
     }
-    let _ = write_type_in_scope_with_options(
-        &mut output,
-        scope,
-        typ,
-        options,
-    );
+    let _ = write_type_in_scope_with_options(&mut output, scope, typ, options);
     output
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct AbsoluteModuleLookupKey {

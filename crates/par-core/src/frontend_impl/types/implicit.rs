@@ -30,11 +30,18 @@ fn solve_constraints<S: Clone + Eq + std::hash::Hash>(
     }
 
     if matches!(constraint, TypeConstraint::Signed)
-        && lower.is_definitely_assignable_to(&Type::nat(), type_defs)?.is_assignable()
-        && Type::nat().is_definitely_assignable_to(&lower, type_defs)?.is_assignable()
+        && lower
+            .is_definitely_assignable_to(&Type::nat(), type_defs)?
+            .is_assignable()
+        && Type::nat()
+            .is_definitely_assignable_to(&lower, type_defs)?
+            .is_assignable()
     {
         let promoted = Type::int();
-        if promoted.is_definitely_assignable_to(&upper, type_defs)?.is_assignable() {
+        if promoted
+            .is_definitely_assignable_to(&upper, type_defs)?
+            .is_assignable()
+        {
             return Ok(promoted);
         }
     }
