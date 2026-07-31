@@ -1,7 +1,7 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, TypeParameter};
 use crate::frontend_impl::types::core::NamedTypeDisplay;
 use crate::frontend_impl::types::{Type, TypeError, visit};
-use crate::location::Span;
+use crate::location::{Span, Spanning};
 use indexmap::{IndexMap, IndexSet};
 use std::sync::Arc;
 
@@ -274,6 +274,17 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
                     visit::continue_deref_polarized(typ, positive, &ctx.defs, |typ, positive| {
                         inner(typ, positive, ctx.clone())
                     })?;
+                }
+                Type::Either(_, branches) | Type::Choice(_, branches)
+                    if branches.values().filter(|branch| branch.cleanup).count() > 1 =>
+                {
+                    let span = branches
+                        .iter()
+                        .filter(|(_, branch)| branch.cleanup)
+                        .nth(1)
+                        .map(|(name, _)| name.span())
+                        .unwrap_or(Span::None);
+                    return Err(TypeError::MultipleCleanupBranches(span));
                 }
                 Type::Either(..) if ctx.check_self => {
                     ctx.unguarded_self_rec = IndexSet::new();

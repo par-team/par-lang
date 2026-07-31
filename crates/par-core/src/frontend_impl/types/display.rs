@@ -163,12 +163,12 @@ impl<S: Clone> Type<S> {
             }
             Self::Either(_, branches) => {
                 for (_, t) in branches.iter() {
-                    t.types_at_spans(type_defs, docs, consume);
+                    t.typ.types_at_spans(type_defs, docs, consume);
                 }
             }
             Self::Choice(_, branches) => {
                 for (_, t) in branches.iter() {
-                    t.types_at_spans(type_defs, docs, consume);
+                    t.typ.types_at_spans(type_defs, docs, consume);
                 }
             }
             Self::Break(_) => {}
@@ -398,7 +398,7 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     f: &mut impl Write,
     names: &N,
     prefix: &str,
-    branches: &BTreeMap<LocalName, Type<S>>,
+    branches: &BTreeMap<LocalName, super::TypeBranch<S>>,
     choice: bool,
     options: TypeRenderOptions,
 ) -> fmt::Result {
@@ -409,9 +409,14 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     write!(f, "{prefix} {{")?;
 
     for (branch, branch_type) in branches {
+        let cleanup = branch_type.cleanup;
+        let branch_type = &branch_type.typ;
         let options = options.next_indent();
         options.write_indentation(f)?;
         write!(f, ".{branch}")?;
+        if cleanup {
+            write!(f, "*")?;
+        }
         if choice {
             if matches!(branch_type, Type::Function(..)) || matches!(branch_type, Type::Forall(..))
             {

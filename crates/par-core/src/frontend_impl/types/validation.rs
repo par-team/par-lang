@@ -89,18 +89,20 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     return Ok(false);
                 }
                 branches.values().try_fold(true, |acc, branch| {
-                    Ok(acc && branch.satisfies_constraint_with(constraint, defs, fixpoints)?)
+                    Ok(acc
+                        && branch
+                            .typ
+                            .satisfies_constraint_with(constraint, defs, fixpoints)?)
                 })
             }
-            Type::Choice(_, branches) if constraint == TypeConstraint::Drop => match branches
-                .iter()
-                .find(|(name, _)| name.string.as_str() == "close")
-            {
-                Some((_, continuation)) => {
-                    continuation.satisfies_constraint_with(constraint, defs, fixpoints)
+            Type::Choice(_, branches) if constraint == TypeConstraint::Drop => {
+                match branches.values().find(|branch| branch.cleanup) {
+                    Some(continuation) => continuation
+                        .typ
+                        .satisfies_constraint_with(constraint, defs, fixpoints),
+                    None => Ok(false),
                 }
-                None => Ok(false),
-            },
+            }
             Type::Recursive { label, body, .. } => {
                 fixpoints.push((label.clone(), FixpointKind::Recursive));
                 let result = if satisfies_at_least(TypeConstraint::Data) {

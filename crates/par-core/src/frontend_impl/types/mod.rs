@@ -1,6 +1,6 @@
 pub(crate) mod core;
 pub(crate) use core::LoopId;
-pub use core::{Operation, PrimitiveType, Type};
+pub use core::{Operation, PrimitiveType, Type, TypeBranch};
 
 pub(crate) mod visibility;
 pub(crate) use visibility::{Visibility, VisibilityIndex, validate_visibility};

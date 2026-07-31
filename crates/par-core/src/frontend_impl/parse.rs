@@ -21,7 +21,7 @@ use crate::frontend_impl::{
         Declaration, Definition, DocComment, ImportDecl, ImportPath, Module, ModuleDecl,
         SourceFile, TypeDef,
     },
-    types::Type,
+    types::{Type, TypeBranch},
 };
 use crate::location::{FileName, Point, Span, Spanning};
 use arcstr::ArcStr;
@@ -857,7 +857,7 @@ fn definition(
 
 fn branches_body<'i, P, O>(
     branch: P,
-) -> impl Parser<Input<'i>, (Span, BTreeMap<LocalName, O>, Option<Box<O>>), Error> + use<'i, P, O>
+) -> impl Parser<Input<'i>, (Span, BTreeMap<LocalName, (bool, O)>, Option<Box<O>>), Error> + use<'i, P, O>
 where
     P: Clone + Parser<Input<'i>, O, Error>,
 {
@@ -869,14 +869,15 @@ where
                 (
                     t(TokenKind::Dot),
                     local_name,
+                    opt(t(TokenKind::Star)),
                     cut_err(branch.clone()),
                     opt(t(TokenKind::Comma)),
                 ),
             )
             .fold(
-                || BTreeMap::new(),
-                |mut branches, (_, name, branch, _)| {
-                    branches.insert(name, branch);
+                BTreeMap::new,
+                |mut branches, (_, name, cleanup, branch, _)| {
+                    branches.insert(name, (cleanup.is_some(), branch));
                     branches
                 },
             ),
@@ -900,7 +901,7 @@ where
 
 fn branches_without_else_body<'i, P, O>(
     branch: P,
-) -> impl Parser<Input<'i>, (Span, BTreeMap<LocalName, O>), Error> + use<'i, P, O>
+) -> impl Parser<Input<'i>, (Span, BTreeMap<LocalName, (bool, O)>), Error> + use<'i, P, O>
 where
     P: Clone + Parser<Input<'i>, O, Error>,
 {
@@ -912,14 +913,15 @@ where
                 (
                     t(TokenKind::Dot),
                     local_name,
+                    opt(t(TokenKind::Star)),
                     cut_err(branch.clone()),
                     opt(t(TokenKind::Comma)),
                 ),
             )
             .fold(
-                || BTreeMap::new(),
-                |mut branches, (_, name, branch, _)| {
-                    branches.insert(name, branch);
+                BTreeMap::new,
+                |mut branches, (_, name, cleanup, branch, _)| {
+                    branches.insert(name, (cleanup.is_some(), branch));
                     branches
                 },
             ),
@@ -1125,7 +1127,13 @@ fn send_prefix_item(close: TokenKind, input: &mut Input) -> Result<SendPrefixIte
 fn typ_either(input: &mut Input) -> Result<Type<Unresolved>> {
     commit_after(t(TokenKind::Either), branches_without_else_body(typ))
         .map(|(pre, (branches_span, branches))| {
-            Type::Either(pre.span.join(branches_span), branches)
+            Type::Either(
+                pre.span.join(branches_span),
+                branches
+                    .into_iter()
+                    .map(|(name, (cleanup, typ))| (name, TypeBranch { cleanup, typ }))
+                    .collect(),
+            )
         })
         .parse_next(input)
 }
@@ -1133,7 +1141,13 @@ fn typ_either(input: &mut Input) -> Result<Type<Unresolved>> {
 fn typ_choice(input: &mut Input) -> Result<Type<Unresolved>> {
     commit_after(t(TokenKind::Choice), branches_without_else_body(typ_branch))
         .map(|(pre, (branches_span, branches))| {
-            Type::Choice(pre.span.join(branches_span), branches)
+            Type::Choice(
+                pre.span.join(branches_span),
+                branches
+                    .into_iter()
+                    .map(|(name, (cleanup, typ))| (name, TypeBranch { cleanup, typ }))
+                    .collect(),
+            )
         })
         .parse_next(input)
 }
@@ -2135,6 +2149,13 @@ fn cons_signal(input: &mut Input) -> Result<ConstructionPiece> {
 fn cons_case(input: &mut Input) -> Result<ConstructionPiece> {
     commit_after(t(TokenKind::Case), branches_body(cons_branch))
         .map(|(pre, (branches_span, branches, else_branch))| {
+            let branches = branches
+                .into_iter()
+                .map(|(name, (cleanup, mut branch))| {
+                    branch.cleanup = cleanup;
+                    (name, branch)
+                })
+                .collect();
             let full_span = pre.span.join(branches_span);
             let short_span = pre.span();
             ConstructionPiece::Terminator(
@@ -2232,7 +2253,11 @@ fn cons_branch(input: &mut Input) -> Result<ConstructBranch<Unresolved>> {
         match alt((cons_branch_then, cons_branch_receive)).parse_next(input)? {
             ConstructBranchPiece::Steps(mut parsed) => steps.append(&mut parsed),
             ConstructBranchPiece::Terminator(terminator) => {
-                return Ok(ConstructBranch { steps, terminator });
+                return Ok(ConstructBranch {
+                    cleanup: false,
+                    steps,
+                    terminator,
+                });
             }
         }
     }
@@ -2386,6 +2411,13 @@ fn apply_case(input: &mut Input) -> Result<ApplyPiece> {
         branches_body(apply_branch),
     )
     .map(|((pre, case_kw), (branches_span, branches, else_branch))| {
+        let branches = branches
+            .into_iter()
+            .map(|(name, (cleanup, mut branch))| {
+                branch.cleanup = cleanup;
+                (name, branch)
+            })
+            .collect();
         let full_span = pre.span.join(branches_span);
         let short_span = pre.span.join(case_kw.span());
         ApplyPiece::Terminator(
@@ -2521,7 +2553,11 @@ fn apply_branch(input: &mut Input) -> Result<ApplyBranch<Unresolved>> {
         {
             ApplyBranchPiece::Steps(mut parsed) => steps.append(&mut parsed),
             ApplyBranchPiece::Terminator(terminator) => {
-                return Ok(ApplyBranch { steps, terminator });
+                return Ok(ApplyBranch {
+                    cleanup: false,
+                    steps,
+                    terminator,
+                });
             }
         }
     }
@@ -3379,6 +3415,13 @@ fn cmd_case(input: &mut Input) -> Result<CommandPiece> {
         branches_body(cmd_branch),
     )
     .map(|((pre, case_kw), (branches_span, branches, else_branch))| {
+        let branches = branches
+            .into_iter()
+            .map(|(name, (cleanup, mut branch))| {
+                branch.cleanup = cleanup;
+                (name, branch)
+            })
+            .collect();
         let full_span = pre.span.join(branches_span);
         let short_span = pre.span.join(case_kw.span());
         CommandPiece::Terminator(
@@ -3527,7 +3570,11 @@ fn cmd_branch(input: &mut Input) -> Result<CommandBranch<Unresolved>> {
         {
             CommandBranchPiece::Steps(mut parsed) => steps.append(&mut parsed),
             CommandBranchPiece::Terminator(terminator) => {
-                return Ok(CommandBranch { steps, terminator });
+                return Ok(CommandBranch {
+                    cleanup: false,
+                    steps,
+                    terminator,
+                });
             }
         }
     }

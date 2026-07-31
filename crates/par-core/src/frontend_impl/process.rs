@@ -15,6 +15,8 @@ use std::{
     sync::Arc,
 };
 
+pub const CLEANUP_BRANCH: &str = "#close";
+
 #[derive(Clone, Debug)]
 pub enum PollKind {
     Poll,
@@ -100,10 +102,25 @@ pub enum Command<Typ, S> {
 }
 
 #[derive(Clone, Debug)]
+pub struct CaseBranch {
+    pub name: LocalName,
+    pub cleanup: bool,
+}
+
+impl From<LocalName> for CaseBranch {
+    fn from(name: LocalName) -> Self {
+        Self {
+            name,
+            cleanup: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum TerminalCommand<Typ, S> {
     Link(Arc<Expression<Typ, S>>),
     Case(
-        Arc<[LocalName]>,
+        Arc<[CaseBranch]>,
         Box<[Arc<Process<Typ, S>>]>,
         Option<Arc<Process<Typ, S>>>,
     ),
@@ -1617,7 +1634,11 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                         write!(f, ".case {{")?;
                         for (choice, process) in choices.iter().zip(branches.iter()) {
                             indentation(f, indent + 1)?;
-                            write!(f, ".{} => {{", choice)?;
+                            write!(f, ".{}", choice.name)?;
+                            if choice.cleanup {
+                                write!(f, "*")?;
+                            }
+                            write!(f, " => {{")?;
                             process.pretty(f, indent + 2)?;
                             indentation(f, indent + 1)?;
                             write!(f, "}}")?;

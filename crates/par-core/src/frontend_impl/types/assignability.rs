@@ -547,7 +547,11 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     let Some(t2) = branches2.get(&branch) else {
                         return Ok(Incompatible);
                     };
-                    res = res & Type::is_subtype_helper(t1.clone(), t2.clone(), ctx.clone())?;
+                    if t1.cleanup && !t2.cleanup {
+                        return Ok(Incompatible);
+                    }
+                    res =
+                        res & Type::is_subtype_helper(t1.typ.clone(), t2.typ.clone(), ctx.clone())?;
                 }
                 Ok(res)
             }
@@ -558,7 +562,11 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     let Some(t1) = branches1.get(&branch) else {
                         return Ok(Incompatible);
                     };
-                    res = res & Type::is_subtype_helper(t1.clone(), t2.clone(), ctx.clone())?;
+                    if t2.cleanup && !t1.cleanup {
+                        return Ok(Incompatible);
+                    }
+                    res =
+                        res & Type::is_subtype_helper(t1.typ.clone(), t2.typ.clone(), ctx.clone())?;
                 }
                 Ok(res)
             }

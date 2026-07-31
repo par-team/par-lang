@@ -39,6 +39,9 @@ pub enum TypeError<S> {
     InvalidBranch(Span, LocalName, Type<S>),
     MissingBranch(Span, LocalName, Type<S>),
     RedundantBranch(Span, LocalName, Type<S>),
+    MultipleCleanupBranches(Span),
+    CleanupBranchMismatch(Span, LocalName, bool),
+    CleanupBranchMustBeExplicit(Span, LocalName),
     BlockVariableNotPreserved(Span, LocalName),
     MergeVariableTypesCannotBeUnified(Span, LocalName, Type<S>, Type<S>),
     VariableEscapesTypeScope(Span, LocalName),
@@ -389,6 +392,37 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     typ_str
                 )
             }
+            Self::MultipleCleanupBranches(span) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    labels = labels,
+                    "An `either` or `choice` may have at most one cleanup branch."
+                )
+            }
+            Self::CleanupBranchMismatch(span, branch, expected) => {
+                let labels = labels_from_span(code, span);
+                if *expected {
+                    miette::miette!(
+                        labels = labels,
+                        "Branch `{}` must be marked `*` to match its type.",
+                        branch
+                    )
+                } else {
+                    miette::miette!(
+                        labels = labels,
+                        "Branch `{}` must not be marked `*`; its type does not mark it as the cleanup branch.",
+                        branch
+                    )
+                }
+            }
+            Self::CleanupBranchMustBeExplicit(span, branch) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    labels = labels,
+                    "Cleanup branch `{}` must be handled explicitly and marked `*`; it cannot be covered by `else`.",
+                    branch
+                )
+            }
             Self::BlockVariableNotPreserved(span, name) => {
                 let labels = labels_from_span(code, span);
                 miette::miette!(
@@ -600,6 +634,9 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::InvalidBranch(span, _, _)
             | Self::MissingBranch(span, _, _)
             | Self::RedundantBranch(span, _, _)
+            | Self::MultipleCleanupBranches(span)
+            | Self::CleanupBranchMismatch(span, _, _)
+            | Self::CleanupBranchMustBeExplicit(span, _)
             | Self::BlockVariableNotPreserved(span, _)
             | Self::MergeVariableTypesCannotBeUnified(span, _, _, _)
             | Self::VariableEscapesTypeScope(span, _)

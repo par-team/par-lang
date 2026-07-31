@@ -14,8 +14,8 @@ fn solve_constraints<S: Clone + Eq + std::hash::Hash>(
     span: &Span,
 ) -> Result<Type<S>, TypeError<S>> {
     let (lower_bounds, upper_bounds) = hole.get_constraints();
-    let mut lower = Type::Either(Span::None, BTreeMap::new());
-    let mut upper = Type::Choice(Span::None, BTreeMap::new());
+    let mut lower = Type::Either(Span::None, BTreeMap::new().into());
+    let mut upper = Type::Choice(Span::None, BTreeMap::new().into());
     for typ in lower_bounds {
         lower = union_types(type_defs, span, &lower, &typ)?;
     }

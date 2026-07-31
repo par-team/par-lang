@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::frontend_impl::process::VariableUsage;
+use crate::frontend_impl::process::{CLEANUP_BRANCH, CaseBranch, VariableUsage};
 use crate::frontend_impl::program::DefinitionBody;
 use crate::frontend_impl::types::core::get_primitive_type;
 use crate::frontend_impl::{
@@ -1086,7 +1086,7 @@ impl Compiler {
         span: &Span,
         name: LocalName,
         usage: &VariableUsage,
-        names: &[LocalName],
+        names: &[CaseBranch],
         processes: &[Arc<Process<Type<Universal>, Universal>>],
         else_process: &Option<Arc<Process<Type<Universal>, Universal>>>,
     ) -> Result<()> {
@@ -1096,10 +1096,11 @@ impl Compiler {
 
         let mut branches = HashMap::new();
         let mut choice_and_process: Vec<_> = names.iter().zip(processes.iter()).collect();
-        choice_and_process.sort_by_key(|k| k.0);
+        choice_and_process.sort_by_key(|k| &k.0.name);
 
         for (branch_name, process) in choice_and_process {
-            let branch_name = ArcStr::from(&branch_name.string);
+            let cleanup = branch_name.cleanup;
+            let branch_name = ArcStr::from(&branch_name.name.string);
             let (package_id, _) =
                 self.in_package(format!("Branch {branch_name} at {span}"), |this, id| {
                     this.package_is_case_branch.insert(id, branch_name.clone());
@@ -1113,6 +1114,9 @@ impl Compiler {
                     ))
                 })?;
             branches.insert(branch_name, package_id);
+            if cleanup {
+                branches.insert(ArcStr::from(CLEANUP_BRANCH), package_id);
+            }
         }
 
         let else_branch = match else_process {

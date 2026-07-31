@@ -1,6 +1,6 @@
 use super::super::language::LocalName;
 use super::core::Ignored;
-use super::core::Type;
+use super::core::{Type, TypeBranch};
 use crate::frontend_impl::types::visit;
 use crate::location::Span;
 
@@ -29,14 +29,30 @@ impl<S> Type<S> {
                 span0.join(span),
                 branches
                     .into_iter()
-                    .map(|(branch, t)| (branch, t.dual(Span::None)))
+                    .map(|(branch, t)| {
+                        (
+                            branch,
+                            TypeBranch {
+                                cleanup: t.cleanup,
+                                typ: t.typ.dual(Span::None),
+                            },
+                        )
+                    })
                     .collect(),
             ),
             Self::Choice(span, branches) => Self::Either(
                 span0.join(span),
                 branches
                     .into_iter()
-                    .map(|(branch, t)| (branch.clone(), t.dual(Span::None)))
+                    .map(|(branch, t)| {
+                        (
+                            branch,
+                            TypeBranch {
+                                cleanup: t.cleanup,
+                                typ: t.typ.dual(Span::None),
+                            },
+                        )
+                    })
                     .collect(),
             ),
             Self::Break(span) => Self::Continue(span0.join(span)),

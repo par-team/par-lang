@@ -27,7 +27,7 @@ where
         }
         Type::Either(_, branches) | Type::Choice(_, branches) => {
             for (_name, typ) in branches {
-                visit(typ)?;
+                visit(&typ.typ)?;
             }
         }
         Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
@@ -75,7 +75,7 @@ where
         }
         Type::Either(_, branches) | Type::Choice(_, branches) => {
             for (_name, typ) in branches {
-                visit(typ)?;
+                visit(&mut typ.typ)?;
             }
         }
         Type::Recursive { body, .. } | Type::Iterative { body, .. } => {

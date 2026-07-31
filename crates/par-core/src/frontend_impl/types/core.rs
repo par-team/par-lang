@@ -190,6 +190,12 @@ impl<S: Clone> Hole<S> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TypeBranch<S> {
+    pub cleanup: bool,
+    pub typ: Type<S>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type<S> {
     Primitive(Span, PrimitiveType),
     DualPrimitive(Span, PrimitiveType),
@@ -201,8 +207,8 @@ pub enum Type<S> {
     DualBox(Span, Box<Self>),
     Pair(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Function(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
-    Either(Span, BTreeMap<LocalName, Self>),
-    Choice(Span, BTreeMap<LocalName, Self>),
+    Either(Span, BTreeMap<LocalName, TypeBranch<S>>),
+    Choice(Span, BTreeMap<LocalName, TypeBranch<S>>),
     Break(Span),
     Continue(Span),
     Recursive {
@@ -303,9 +309,9 @@ impl<S: Clone> Type<S> {
             Self::Pair(_, left, right, _) | Self::Function(_, left, right, _) => {
                 current_depth_from_children([left.current_depth(), right.current_depth()])
             }
-            Self::Either(_, branches) | Self::Choice(_, branches) => {
-                current_depth_from_children(branches.values().map(|branch| branch.current_depth()))
-            }
+            Self::Either(_, branches) | Self::Choice(_, branches) => current_depth_from_children(
+                branches.values().map(|branch| branch.typ.current_depth()),
+            ),
             Self::Recursive { body, .. } | Self::Iterative { body, .. } => {
                 current_depth_from_children([body.current_depth()])
             }
@@ -336,7 +342,7 @@ impl<S: Clone> Type<S> {
                 flattened_depth_with_tail(right.flattened_depth(), [left.flattened_depth()])
             }
             Self::Either(_, branches) | Self::Choice(_, branches) => flattened_depth_from_branches(
-                branches.values().map(|branch| branch.flattened_depth()),
+                branches.values().map(|branch| branch.typ.flattened_depth()),
             ),
             Self::Recursive { body, .. } | Self::Iterative { body, .. } => body.flattened_depth(),
         }
@@ -475,7 +481,10 @@ impl<S: Clone> Type<S> {
                             span: Span::None,
                             string: ArcStr::from(name),
                         },
-                        typ,
+                        TypeBranch {
+                            cleanup: false,
+                            typ,
+                        },
                     )
                 })
                 .collect(),
@@ -493,7 +502,10 @@ impl<S: Clone> Type<S> {
                             span: Span::None,
                             string: ArcStr::from(name),
                         },
-                        typ,
+                        TypeBranch {
+                            cleanup: false,
+                            typ,
+                        },
                     )
                 })
                 .collect(),
@@ -581,7 +593,7 @@ impl<S: Clone> Type<S> {
             Self::Either(_, branches) | Self::Choice(_, branches) => {
                 let mut res: u32 = 1;
                 for branch in branches.values() {
-                    res += branch.size(defs)?
+                    res += branch.typ.size(defs)?
                 }
                 res
             }
@@ -652,14 +664,30 @@ impl<S: Clone> Type<S> {
             Self::Either(span, branches) => {
                 let mapped = branches
                     .into_iter()
-                    .map(|(name, branch)| Ok((name, branch.map_global_names(f)?)))
+                    .map(|(name, branch)| {
+                        Ok((
+                            name,
+                            TypeBranch {
+                                cleanup: branch.cleanup,
+                                typ: branch.typ.map_global_names(f)?,
+                            },
+                        ))
+                    })
                     .collect::<Result<BTreeMap<_, _>, E>>()?;
                 Type::Either(span, mapped)
             }
             Self::Choice(span, branches) => {
                 let mapped = branches
                     .into_iter()
-                    .map(|(name, branch)| Ok((name, branch.map_global_names(f)?)))
+                    .map(|(name, branch)| {
+                        Ok((
+                            name,
+                            TypeBranch {
+                                cleanup: branch.cleanup,
+                                typ: branch.typ.map_global_names(f)?,
+                            },
+                        ))
+                    })
                     .collect::<Result<BTreeMap<_, _>, E>>()?;
                 Type::Choice(span, mapped)
             }

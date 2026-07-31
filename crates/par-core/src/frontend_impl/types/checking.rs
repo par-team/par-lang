@@ -1,10 +1,10 @@
 use super::super::language::{LocalName, TypeConstraint, TypeParameter};
 use super::super::process::{
-    Captures, Command, Expression, PollKind, Process, Step, TerminalCommand, Terminator,
-    VariableUsage,
+    Captures, CaseBranch, Command, Expression, PollKind, Process, Step, TerminalCommand,
+    Terminator, VariableUsage,
 };
 use super::context::{BlockPathContext, BlockScope, CapturePolicy, PollPointScope, PollScope};
-use super::core::{LoopId, Operation, Type, get_primitive_type};
+use super::core::{LoopId, Operation, Type, TypeBranch, get_primitive_type};
 use super::error::TypeError;
 use super::lattice::union_types;
 use super::{Context, TypeDefs};
@@ -1067,16 +1067,17 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             Command::Signal(chosen) => {
                 let branch_type = match &typ {
-                    Type::Choice(_, branches) => {
-                        branches.get(chosen).cloned().unwrap_or_else(|| {
+                    Type::Choice(_, branches) => branches
+                        .get(chosen)
+                        .map(|branch| branch.typ.clone())
+                        .unwrap_or_else(|| {
                             emit(TypeError::InvalidBranch(
                                 span.clone(),
                                 chosen.clone(),
                                 typ.clone(),
                             ));
                             Type::Fail(span.clone())
-                        })
-                    }
+                        }),
                     _ => {
                         if !matches!(typ, Type::Fail(_)) {
                             emit(TypeError::InvalidOperation(
@@ -1246,12 +1247,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         object: &LocalName,
         typ: &Type<S>,
-        branches: &Arc<[LocalName]>,
+        branches: &Arc<[CaseBranch]>,
         processes: &Box<[Arc<Process<(), S>>]>,
         else_process: &Option<Arc<Process<(), S>>>,
         mode: &ProcessAnalyzerMode,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> (TerminalCommand<Type<S>, S>, Option<Type<S>>) {
+        if let Some(branch) = branches.iter().filter(|branch| branch.cleanup).nth(1) {
+            emit(TypeError::MultipleCleanupBranches(branch.name.span()));
+        }
         let Type::Either(_, branch_types) = typ else {
             if !matches!(typ, Type::Fail(_)) {
                 emit(TypeError::InvalidOperation(
@@ -1309,16 +1313,26 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
 
         let typed_else_process = match else_process {
-            Some(process) => Some(self.check_command_case_else(
-                span,
-                object,
-                &mut remaining_branches,
-                &original_context,
-                process,
-                &mut inferred_type,
-                mode,
-                emit,
-            )),
+            Some(process) => {
+                if let Some((name, _)) =
+                    remaining_branches.iter().find(|(_, branch)| branch.cleanup)
+                {
+                    emit(TypeError::CleanupBranchMustBeExplicit(
+                        span.clone(),
+                        name.clone(),
+                    ));
+                }
+                Some(self.check_command_case_else(
+                    span,
+                    object,
+                    &mut remaining_branches,
+                    &original_context,
+                    process,
+                    &mut inferred_type,
+                    mode,
+                    emit,
+                ))
+            }
             None => None,
         };
 
@@ -1345,9 +1359,9 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         span: &Span,
         object: &LocalName,
         typ: &Type<S>,
-        branch: &LocalName,
+        branch: &CaseBranch,
         process: &Arc<Process<(), S>>,
-        remaining_branches: &mut BTreeMap<LocalName, Type<S>>,
+        remaining_branches: &mut BTreeMap<LocalName, TypeBranch<S>>,
         original_context: &mut Self,
         typed_processes: &mut Vec<Arc<Process<Type<S>, S>>>,
         inferred_type: &mut Option<Type<S>>,
@@ -1356,15 +1370,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     ) {
         *self = original_context.clone();
 
-        let Some(branch_type) = remaining_branches.remove(branch) else {
+        let Some(branch_type) = remaining_branches.remove(&branch.name) else {
             emit(TypeError::RedundantBranch(
                 span.clone(),
-                branch.clone(),
+                branch.name.clone(),
                 typ.clone(),
             ));
             return;
         };
-        if let Err(e) = self.put(span, object.clone(), branch_type) {
+        if branch.cleanup != branch_type.cleanup {
+            emit(TypeError::CleanupBranchMismatch(
+                branch.name.span(),
+                branch.name.clone(),
+                branch_type.cleanup,
+            ));
+        }
+        if let Err(e) = self.put(span, object.clone(), branch_type.typ) {
             emit(e);
         }
         let (process, inferred_in_branch) = self.analyze_process(process, mode, emit);
@@ -1377,7 +1398,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         &mut self,
         span: &Span,
         object: &LocalName,
-        remaining_branches: &mut BTreeMap<LocalName, Type<S>>,
+        remaining_branches: &mut BTreeMap<LocalName, TypeBranch<S>>,
         original_context: &Self,
         process: &Arc<Process<(), S>>,
         inferred_type: &mut Option<Type<S>>,
@@ -1934,7 +1955,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 } => {
                     inferred_type = Type::Choice(
                         span.clone(),
-                        BTreeMap::from([(chosen.clone(), inferred_type)]),
+                        BTreeMap::from([(
+                            chosen.clone(),
+                            TypeBranch {
+                                cleanup: false,
+                                typ: inferred_type,
+                            },
+                        )]),
                     );
                     typed_steps[index] = Some(Step::Do {
                         span,
@@ -2675,7 +2702,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         &mut self,
         span: &Span,
         subject: &LocalName,
-        branches: &Arc<[LocalName]>,
+        branches: &Arc<[CaseBranch]>,
         processes: &Box<[Arc<Process<(), S>>]>,
         else_process: &Option<Arc<Process<(), S>>>,
         emit: &mut impl FnMut(TypeError<S>),
@@ -2707,12 +2734,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut original_context = self.clone();
         let mut typed_processes = Vec::new();
         let mut branch_types = BTreeMap::new();
+        let mut saw_cleanup = false;
 
         for (branch, process) in branches.iter().zip(processes.iter()) {
+            if branch.cleanup && std::mem::replace(&mut saw_cleanup, true) {
+                emit(TypeError::MultipleCleanupBranches(branch.name.span()));
+            }
             *self = original_context.clone();
             let (process, typ) = self.infer_process(process, subject, emit);
             typed_processes.push(process);
-            branch_types.insert(branch.clone(), typ);
+            branch_types.insert(
+                branch.name.clone(),
+                TypeBranch {
+                    cleanup: branch.cleanup,
+                    typ,
+                },
+            );
             original_context.blocks = self.blocks.clone();
         }
 
@@ -3283,7 +3320,7 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
             }
             Type::Either(_, branches) | Type::Choice(_, branches) => {
                 for branch in branches.values() {
-                    inner(branch, bound, out);
+                    inner(&branch.typ, bound, out);
                 }
             }
             Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
@@ -3407,12 +3444,13 @@ mod flat_ir_tests {
         context
             .put(&Span::None, other, Type::Continue(Span::None))
             .unwrap();
+        let mut resource_type = Type::choice(vec![("release", Type::break_())]);
+        let Type::Choice(_, branches) = &mut resource_type else {
+            unreachable!()
+        };
+        branches.values_mut().next().unwrap().cleanup = true;
         context
-            .put(
-                &Span::None,
-                resource.clone(),
-                Type::choice(vec![("close", Type::break_())]),
-            )
+            .put(&Span::None, resource.clone(), resource_type)
             .unwrap();
         let mut errors = Vec::new();
         let (checked, inferred) =
