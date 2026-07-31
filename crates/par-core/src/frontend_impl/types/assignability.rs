@@ -2,7 +2,9 @@ use crate::frontend_impl::language::LocalName;
 use crate::frontend_impl::language::TypeConstraint;
 use crate::frontend_impl::language::TypeParameter;
 use crate::frontend_impl::types::assignability::SubtypeResult::{Compatible, Cycle, Incompatible};
-use crate::frontend_impl::types::{PrimitiveType, Type, TypeDefs, TypeError, TypePath, TypePathSegment};
+use crate::frontend_impl::types::{
+    PrimitiveType, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
+};
 use crate::location::Span;
 use indexmap::IndexSet;
 use std::cmp::max;
@@ -40,8 +42,12 @@ impl<'a, S: Clone + Eq + std::hash::Hash> SubtypeContext<'a, S> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SubtypeMismatchKind {
-    MissingEitherBranch { branch: LocalName },
-    MissingChoiceBranch { branch: LocalName },
+    MissingEitherBranch {
+        branch: LocalName,
+    },
+    MissingChoiceBranch {
+        branch: LocalName,
+    },
     ConstructorMismatch,
     ImplicitGenericCountMismatch {
         from_count: usize,
@@ -56,7 +62,8 @@ pub(crate) enum SubtypeMismatchKind {
     PrimitiveTypeMismatch,
     HoleConstrainingIsDisabled,
     InvalidCycle,
-    FixpointGuardMismatch,
+    CannotCastDownIterative,
+    CannotCastUpRecursive,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -260,7 +267,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Type::Either(span, mut branches), TypePathSegment::EitherBranch(label))
             | (Type::Either(span, mut branches), TypePathSegment::EitherBranchLabel(label)) => {
                 if let Some(branch_typ) = branches.remove(label) {
-                    let unrolled_branch = Self::unroll_along_path_segments(branch_typ, rest, type_defs);
+                    let unrolled_branch =
+                        Self::unroll_along_path_segments(branch_typ, rest, type_defs);
                     branches.insert(label.clone(), unrolled_branch);
                 }
                 Type::Either(span, branches)
@@ -268,7 +276,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranch(label))
             | (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranchLabel(label)) => {
                 if let Some(branch_typ) = branches.remove(label) {
-                    let unrolled_branch = Self::unroll_along_path_segments(branch_typ, rest, type_defs);
+                    let unrolled_branch =
+                        Self::unroll_along_path_segments(branch_typ, rest, type_defs);
                     branches.insert(label.clone(), unrolled_branch);
                 }
                 Type::Choice(span, branches)
@@ -367,7 +376,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             return Ok(Compatible);
         }
 
-        if let Some(result) = Type::is_subtype_hole(&type1, &type2, path1, path2, ctx.constrain_holes) {
+        if let Some(result) =
+            Type::is_subtype_hole(&type1, &type2, path1, path2, ctx.constrain_holes)
+        {
             return Ok(result);
         }
 
@@ -395,7 +406,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             return Ok(result.ttl_dec());
         }
 
-        if let Some(result) = Type::is_subtype_expand_fixpoints(&type1, &type2, path1, path2, &ctx)? {
+        if let Some(result) = Type::is_subtype_expand_fixpoints(&type1, &type2, path1, path2, &ctx)?
+        {
             return Ok(result);
         }
 
@@ -558,14 +570,14 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
     ) -> Option<SubtypeResult<S>> {
         if let Type::Iterative { asc: asc1, .. } = type1 {
             if !asc1.is_empty() {
-                return Some(if let Self::Recursive { asc: asc2, .. } = type2 {
+                return Some(if let Self::Iterative { asc: asc2, .. } = type2 {
                     if asc1.is_subset(asc2) {
                         Compatible
                     } else {
-                        incompatible(path1, path2, SubtypeMismatchKind::FixpointGuardMismatch)
+                        incompatible(path1, path2, SubtypeMismatchKind::CannotCastDownIterative)
                     }
                 } else {
-                    incompatible(path1, path2, SubtypeMismatchKind::FixpointGuardMismatch)
+                    incompatible(path1, path2, SubtypeMismatchKind::CannotCastDownIterative)
                 });
             }
         }
@@ -576,10 +588,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     if asc2.is_subset(asc1) {
                         Compatible
                     } else {
-                        incompatible(path1, path2, SubtypeMismatchKind::FixpointGuardMismatch)
+                        incompatible(path1, path2, SubtypeMismatchKind::CannotCastUpRecursive)
                     }
                 } else {
-                    incompatible(path1, path2, SubtypeMismatchKind::FixpointGuardMismatch)
+                    incompatible(path1, path2, SubtypeMismatchKind::CannotCastUpRecursive)
                 });
             }
         }
@@ -602,7 +614,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             };
             let type1 = Type::expand_fixpoint_unfounded(type1)?;
             path1.push(seg);
-            let res = Type::is_subtype_helper(type1, type2.clone(), path1, path2, ctx.clone())?.ttl_dec();
+            let res =
+                Type::is_subtype_helper(type1, type2.clone(), path1, path2, ctx.clone())?.ttl_dec();
             path1.pop();
             return Ok(Some(res));
         }
@@ -615,7 +628,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             };
             let type2 = Type::expand_fixpoint_unfounded(type2)?;
             path2.push(seg);
-            let res = Type::is_subtype_helper(type1.clone(), type2, path1, path2, ctx.clone())?.ttl_dec();
+            let res =
+                Type::is_subtype_helper(type1.clone(), type2, path1, path2, ctx.clone())?.ttl_dec();
             path2.pop();
             return Ok(Some(res));
         }
@@ -672,7 +686,13 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             (Self::Box(_, t1), Self::Box(_, t2)) => {
                 path1.push(TypePathSegment::BoxBody);
                 path2.push(TypePathSegment::BoxBody);
-                let res = Type::is_subtype_helper(t1.as_ref().clone(), t2.as_ref().clone(), path1, path2, ctx);
+                let res = Type::is_subtype_helper(
+                    t1.as_ref().clone(),
+                    t2.as_ref().clone(),
+                    path1,
+                    path2,
+                    ctx,
+                );
                 path1.pop();
                 path2.pop();
                 res
@@ -869,7 +889,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     };
                     path1.push(TypePathSegment::EitherBranch(branch.clone()));
                     path2.push(TypePathSegment::EitherBranch(branch.clone()));
-                    let branch_res = Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
+                    let branch_res =
+                        Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
                     path1.pop();
                     path2.pop();
                     res = res & branch_res;
@@ -894,7 +915,8 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                     };
                     path1.push(TypePathSegment::ChoiceBranch(branch.clone()));
                     path2.push(TypePathSegment::ChoiceBranch(branch.clone()));
-                    let branch_res = Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
+                    let branch_res =
+                        Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
                     path1.pop();
                     path2.pop();
                     res = res & branch_res;

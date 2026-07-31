@@ -302,16 +302,45 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 let from_type_str =
                     render_type_with_highlight(from_type, 1, Some(&cause.from_path));
                 let to_type_str = render_type_with_highlight(to_type, 1, Some(&cause.to_path));
-                let provided_header = match &cause.kind {
+                match &cause.kind {
+                    SubtypeMismatchKind::CannotCastDownIterative => {
+                        miette::miette!(
+                            labels = labels,
+                            "This `loop` may diverge. Casting the loop variable is not allowed:\n\n  {}\n If this is intended, use `unfounded`.",
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::CannotCastUpRecursive => {
+                        miette::miette!(
+                            labels = labels,
+                            "This `loop` may diverge. This variable does descend from the corresponding begin:\n\n  {}\n If this is intended, use `unfounded`.",
+                            from_type_str,
+                        )
+                    }
                     SubtypeMismatchKind::MissingEitherBranch { branch } => {
-                        format!("But an incompatible type (containing an extra variant `.{branch}`) was provided:")
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type (containing an extra variant `.{branch}`) was provided:\n\n  {}\n",
+                            to_type_str,
+                            from_type_str,
+                        )
                     }
                     SubtypeMismatchKind::MissingChoiceBranch { branch } => {
-                        format!("But an incompatible type (missing option `.{branch}`) was provided:")
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type (missing option `.{branch}`) was provided:\n\n  {}\n",
+                            to_type_str,
+                            from_type_str,
+                        )
                     }
                     SubtypeMismatchKind::ImplicitGenericCountMismatch { from_count, to_count } => {
                         let plural = if *to_count == 1 { "" } else { "s" };
-                        format!("But an incompatible type was provided (expected {to_count} generic{plural}, got {from_count}):")
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided (expected {to_count} generic{plural}, got {from_count}):\n\n  {}\n",
+                            to_type_str,
+                            from_type_str,
+                        )
                     }
                     SubtypeMismatchKind::TypeParameterConstraintMismatch {
                         param_name,
@@ -324,24 +353,39 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                             format!("{param_name}: {expected}")
                         };
                         if *provided == TypeConstraint::Any {
-                            format!("But an incompatible type was provided (expected `{expected_param}`):")
+                            miette::miette!(
+                                labels = labels,
+                                "This type was required:\n\n  {}\n\nBut an incompatible type was provided (expected `{expected_param}`):\n\n  {}\n",
+                                to_type_str,
+                                from_type_str,
+                            )
                         } else {
                             let provided_param = format!("{param_name}: {provided}");
-                            format!("But an incompatible type was provided (expected `{expected_param}`, got `{provided_param}`):")
+                            miette::miette!(
+                                labels = labels,
+                                "This type was required:\n\n  {}\n\nBut an incompatible type was provided (expected `{expected_param}`, got `{provided_param}`):\n\n  {}\n",
+                                to_type_str,
+                                from_type_str,
+                            )
                         }
                     }
                     SubtypeMismatchKind::InvalidCycle => {
-                        "But an incompatible type was provided (an iterative cannot be cast to a recursive):".to_string()
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided (an iterative cannot be cast to a recursive):\n\n  {}\n",
+                            to_type_str,
+                            from_type_str,
+                        )
                     }
-                    _ => "But an incompatible type was provided:".to_string(),
-                };
-                miette::miette!(
-                    labels = labels,
-                    "This type was required:\n\n  {}\n\n{}\n\n  {}\n",
-                    to_type_str,
-                    provided_header,
-                    from_type_str,
-                )
+                    _ => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                }
             }
             Self::TypeDoesNotSatisfyConstraint(span, name, typ, constraint) => {
                 let labels = labels_from_span(code, span);
