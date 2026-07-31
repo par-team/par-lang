@@ -10,7 +10,7 @@ dec PlayFanIn : [List<Source<!, String>>] Source<(!) List<!>, String>
 def PlayFanIn = [sources] SourceFanIn(sources)
 
 type Source<e, a> = recursive choice {
-  .close => Try<e, !>,
+  .close* => Try<e, !>,
   .next => either {
     .end Try<e, !>,
     .item(a) self,
@@ -21,7 +21,7 @@ type SourceFan<e, a> = recursive either {
   .end!,
   .split(self) self,
   .client choice {
-    .close => Try<e, !>,
+    .close* => Try<e, !>,
     .next => either {
       .end Try<e, !>,
       .item(a) self,
@@ -34,7 +34,7 @@ def SourceFanIn = [<e, a> sources]
   let fan: SourceFan<e, a> = sources.begin.case {
     .end! => .end!,
     .item(source) sources => .split(do { source.begin } in .client case {
-      .close => source.close,
+      .close* => source.close,
       .next => source.next.case {
         .end result => .end result,
         .item(value) source => .item(value) source.loop,
@@ -46,7 +46,7 @@ def SourceFanIn = [<e, a> sources]
       .split(fan1) fan2 => submit(fan1, fan2),
 
       .client session => case {
-        .close =>
+        .close* =>
           let state: Try<(e) List.Builder<e>, !> = .ok! in
           repoll(type SourceFan<e, a> in .client session) {
             fan => fan.case {
@@ -102,7 +102,7 @@ def SourceFanIn = [<e, a> sources]
     }
 
     else => case {
-      .close => .ok!,
+      .close* => .ok!,
       .next => .end .ok!,
     }
   }

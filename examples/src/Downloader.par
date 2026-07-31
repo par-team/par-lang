@@ -174,7 +174,7 @@ def ShowDownloadProgress = [events, rootPath] chan exit {
 }
 
 type ProgressTracker = iterative choice {
-  .close => !,
+  .close* => !,
   .stats => (Nat, Int, Int) self,
   .file(String) => choice {
     .started(Nat) => self,
@@ -188,7 +188,7 @@ def NewProgressTracker: ProgressTracker = do {
   let sumDownloaded: Int = 0
   let sumExpected: Int = 0
 } in begin case {
-  .close => !,
+  .close* => !,
 
   .stats => do {
     filesInProgress.size[numFiles]

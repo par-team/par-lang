@@ -6,7 +6,7 @@ import {
 }
 
 type Sequence<a> = iterative choice {
-  .close => !
+  .close* => !
   .next  => (a) self
 }
 
@@ -14,7 +14,7 @@ dec Fibonacci : Sequence<Nat>
 def Fibonacci =
   let (a) b = (0) 1
   in begin case {
-    .close => !
+    .close* => !
     .next =>
       let next = a + b in
       let (a) b = (b) next

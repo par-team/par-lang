@@ -80,7 +80,7 @@ def Contains = [needle, haystack]
 // ---
 
 type Iterator<e, a> = recursive choice {
-  .close => Try<e, !>,
+  .close* => Try<e, !>,
   .next => either {
     .end Try<e, !>,
     .item(a) self,
@@ -89,7 +89,7 @@ type Iterator<e, a> = recursive choice {
 
 dec Lines : [<e> String.Parser<e>] Iterator<e, String>
 def Lines = [<e> parser] do { parser.begin } in case {
-  .close => parser.case {
+  .close* => parser.case {
     .empty! => .ok!,
     .ready parser => parser.close,
   },
@@ -102,7 +102,7 @@ def Lines = [<e> parser] do { parser.begin } in case {
         .fail parser => String.Remainder(.ready parser).case {
           .err e => .end.err e,
           .ok line => .item(line) case {
-            .close => .ok!,
+            .close* => .ok!,
             .next => .end.ok!,
           },
         },
@@ -114,7 +114,7 @@ def Lines = [<e> parser] do { parser.begin } in case {
 
 dec Filter : [<e, a> Iterator<e, box a>, box [a] Bool] Iterator<e, a>
 def Filter = [<e, a> iter, predicate] do { iter.begin } in case {
-  .close => iter.close,
+  .close* => iter.close,
   .next => iter.next.case {
     .end result => .end result,
     .item(value) iter => predicate(value).case {
@@ -135,7 +135,7 @@ def Enumerate1 = [<e, a> iter] do {
   let index = 1
   iter.begin
 } in case {
-  .close => iter.close,
+  .close* => iter.close,
   .next => iter.next.case {
     .end result => .end result,
     .item(value) iter => .item((index) value) do {

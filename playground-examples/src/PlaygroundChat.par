@@ -192,7 +192,7 @@ def ServeChat = [api] do {
 
   // If all clients have logged out, and no more are coming,
   // we discard all pending messages.
-  else => messages.close.begin.case {
+  else => messages.list.begin.case {
     .end! => !,
     .item((_) pending) rest => do {
       let _ = pending.build
