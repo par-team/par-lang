@@ -12,16 +12,16 @@ export {
   //
   // - `.size` — get the number of entries while keeping the map.
   // - `.keys` — get the keys in map order while keeping the map.
-  // - `.close` — consume the map and return its entries as `(key) value` pairs.
+  // - `.list` — consume the map and return its entries as `(key) value` pairs.
   // - `.entry(key)` — inspect the current `Option<v>` for `key`, then choose
   //   `.put(value)` or `.delete`.
   //
-  // The map is linear: `.close` consumes it, while `.size`, `.keys`, and `.entry`
+  // The map is linear: `.list` consumes it, while `.size`, `.keys`, and `.entry`
   // return a continuation for further use.
   type Map<k, v> = iterative choice {
     .size => (Nat) self,
     .keys => (List<k>) self,
-    .close => List<(k) v>,
+    .list* => List<(k) v>,
     .entry(k) => (Option<v>) choice {
       .put(v) => self,
       .delete => self,

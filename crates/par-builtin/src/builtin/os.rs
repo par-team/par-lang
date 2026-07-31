@@ -132,7 +132,7 @@ async fn provide_bytes_reader_from_async(mut handle: Handle, mut reader: impl As
     let mut buf = vec![0u8; 512];
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.signal(literal!("ok"));
                 return handle.break_();
             }
@@ -163,7 +163,7 @@ async fn provide_bytes_reader_from_async(mut handle: Handle, mut reader: impl As
 async fn provide_bytes_writer_from_async(mut handle: Handle, mut writer: impl AsyncWrite + Unpin) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 // Try to flush pending data before closing
                 match writer.flush().await {
                     Ok(()) => {

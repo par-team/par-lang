@@ -128,7 +128,7 @@ async fn provide_body_reader(mut handle: Handle, response: reqwest::Response) {
     let mut stream = response.bytes_stream();
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.signal(literal!("ok"));
                 return handle.break_();
             }
@@ -538,7 +538,7 @@ fn provide_header_list_value(mut handle: Handle, headers: Vec<(String, String)>)
 async fn provide_request_body_reader(mut handle: Handle, mut body: Incoming) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.signal(literal!("ok"));
                 return handle.break_();
             }

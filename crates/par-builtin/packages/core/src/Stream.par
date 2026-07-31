@@ -25,7 +25,7 @@ export {
   type Stream<e, a> = recursive either {
     .end Try<e, !>,
     .item choice {
-      .cancel => Try<e, !>,
+      .cancel* => Try<e, !>,
       .get => (a) self,
     },
   }
@@ -106,7 +106,7 @@ def ToList = [<e, a: drop> stream]
 def FromList = [<a: drop> list] list.begin.case {
   .end! => .end.ok!,
   .item(value) list => .item case {
-    .cancel => .ok!,
+    .cancel* => .ok!,
     .get => (value) list.loop,
   },
 }
@@ -114,7 +114,7 @@ def FromList = [<a: drop> list] list.begin.case {
 def Map = [<e, a> stream, <b> f] stream.begin.case {
   .end res => .end res,
   .item stream => .item case {
-    .cancel => stream.cancel,
+    .cancel* => stream.cancel,
     .get => do { stream.get[value] } in (f(value)) stream.loop,
   }
 }
@@ -124,7 +124,7 @@ def Enumerate = [<e, a> stream]
   stream.begin.case {
     .end result => .end result,
     .item stream => .item case {
-      .cancel => stream.cancel,
+      .cancel* => stream.cancel,
       .get => do {
         stream.get[value]
         let current = index
@@ -136,7 +136,7 @@ def Enumerate = [<e, a> stream]
 def MapErr = [<e1, a> stream, <e2> f] stream.begin.case {
   .end res => .end res->Try.MapErr(f),
   .item stream => .item case {
-    .cancel => stream.cancel->Try.MapErr(f),
+    .cancel* => stream.cancel->Try.MapErr(f),
     .get => do { stream.get[value] } in (value) stream.loop,
   },
 }
@@ -156,7 +156,7 @@ def Flatten = [<e: drop, a> streams] streams.begin@outer.case {
       },
     },
     .item stream => .item case {
-      .cancel => stream.cancel.case {
+      .cancel* => stream.cancel.case {
         .ok! => streams->Cancel,
         .err e => streams->Cancel.case {
           .ok! => .err e,
@@ -187,7 +187,7 @@ def Concat = [<e: drop, a> streams] streams.begin@outer.case {
       } in .end.err e,
     },
     .item stream => .item case {
-      .cancel => stream.cancel.case {
+      .cancel* => stream.cancel.case {
         .ok! => do {
           streams.begin@cancel.case {
             .end! => {},
@@ -224,7 +224,7 @@ def Filter = [<e, a: share> stream, predicate] stream.begin.case {
     stream.get[value]
   } in predicate(value).case {
     .true! => .item case {
-      .cancel => stream->Cancel,
+      .cancel* => stream->Cancel,
       .get => (value) stream.loop,
     },
     .false! => stream.loop,
@@ -237,7 +237,7 @@ def Take = [<e, a> stream, n]
     .step steps => stream.begin.case {
       .end result => .end result,
       .item stream => .item case {
-        .cancel => stream.cancel,
+        .cancel* => stream.cancel,
         .get => do { stream.get[value] } in (value) steps.loop@take,
       },
     },
@@ -258,7 +258,7 @@ def TakeWhile = [<e, a: share> stream, predicate] stream.begin.case {
     stream.get[value]
   } in predicate(value).case {
     .true! => .item case {
-      .cancel => stream->Cancel,
+      .cancel* => stream->Cancel,
       .get => (value) stream.loop,
     },
     .false! => .end stream->Cancel,
@@ -272,7 +272,7 @@ def DropWhile = [<e, a: share> stream, predicate] stream.begin.case {
   } in predicate(value).case {
     .true! => stream.loop,
     .false! => .item case {
-      .cancel => stream->Cancel,
+      .cancel* => stream->Cancel,
       .get => (value) stream,
     },
   },

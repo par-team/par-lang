@@ -58,7 +58,7 @@ export {
   type Parser<e> = recursive either {
     .empty!,
     .ready iterative@attempt choice {
-      .close => Try<e, !>,
+      .close* => Try<e, !>,
       .remainder => Try<e, String>,
       .char => Try<e, (Char) self>,
       .minMax(Pattern, Pattern) => Try<e, either {
@@ -240,12 +240,12 @@ def SplitByPattern = [<e> parser, separator] parser.begin.case {
       .fail parser => Remainder(.ready parser).case {
         .err e => .end.err e,
         .ok chunk => .item case {
-          .cancel => .ok!,
+          .cancel* => .ok!,
           .get => (chunk) .end.ok!,
         },
       },
       .match(chunk, _) parser => .item case {
-        .cancel => parser.begin.case {
+        .cancel* => parser.begin.case {
           .empty! => .ok!,
           .ready parser => parser.close,
         },

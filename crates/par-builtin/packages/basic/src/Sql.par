@@ -87,18 +87,19 @@ export {
 
     // Release this pool handle. This does not close the underlying pool while
     // sibling handles, query streams, or transactions still exist.
-    .close => !,
+    .close* => !,
   }
 
   // A transaction owns one connection. Statement failure consumes the
   // transaction and the implementation rolls back or drops the connection before
   // reporting the error. Successful statements return `self`. A `.commit` error
   // means the commit may or may not have taken effect (e.g. when it times out).
+  // Dropping a live transaction selects `.rollback*` automatically.
   type Transaction = iterative choice {
     .execute(String, List<Value>) => Try<Error, (Nat) self>,
     .query(String, List<Value>) => Try<Error, (List<Row>) self>,
     .commit => Try<Error, !>,
-    .rollback => Try<Error, !>,
+    .rollback* => Try<Error, !>,
   }
 
   // Connect and validate connectivity. The URL scheme picks the backend:

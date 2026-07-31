@@ -409,7 +409,7 @@ pub(super) async fn provide_bytes_parser<R: BytesRemainder>(mut handle: Handle, 
             state = match state {
                 ParserState::Poison(err) => {
                     match handle.case().await.as_str() {
-                        "close" | "remainder" | "byte" => {}
+                        "close" | "#close" | "remainder" | "byte" => {}
                         "minMax" | "minMaxEnd" => {
                             let _ = BytesPattern::readback(handle.receive()).await;
                             let _ = BytesPattern::readback(handle.receive()).await;
@@ -421,7 +421,7 @@ pub(super) async fn provide_bytes_parser<R: BytesRemainder>(mut handle: Handle, 
                 }
 
                 ParserState::Live(mut remainder) => match handle.case().await.as_str() {
-                    "close" => match remainder.close().await {
+                    "close" | "#close" => match remainder.close().await {
                         Ok(()) => {
                             handle.signal(literal!("ok"));
                             return handle.break_();
@@ -597,7 +597,7 @@ pub(super) async fn provide_string_parser<R: CharsRemainder>(mut handle: Handle,
             state = match state {
                 ParserState::Poison(err) => {
                     match handle.case().await.as_str() {
-                        "close" | "remainder" | "char" => {}
+                        "close" | "#close" | "remainder" | "char" => {}
                         "minMax" | "minMaxEnd" => {
                             let _ = StringPattern::readback(handle.receive()).await;
                             let _ = StringPattern::readback(handle.receive()).await;
@@ -609,7 +609,7 @@ pub(super) async fn provide_string_parser<R: CharsRemainder>(mut handle: Handle,
                 }
 
                 ParserState::Live(mut remainder) => match handle.case().await.as_str() {
-                    "close" => match remainder.close().await {
+                    "close" | "#close" => match remainder.close().await {
                         Ok(()) => {
                             handle.signal(literal!("ok"));
                             return handle.break_();

@@ -165,7 +165,7 @@ fn provide_database(handle: Handle, pool: AnyPool) -> BoxFuture<'static, ()> {
                 }
 
                 // .close => !
-                "close" => {
+                "close" | "#close" => {
                     handle.break_();
                     drop(pool);
                     return;
@@ -260,7 +260,7 @@ async fn db_query(mut handle: Handle, pool: AnyPool, sql: String, params: Vec<Da
             Some(Ok(cells)) => {
                 handle.signal(literal!("item"));
                 match handle.case().await.as_str() {
-                    "cancel" => {
+                    "cancel" | "#close" => {
                         handle.signal(literal!("ok"));
                         return handle.break_();
                     }
@@ -357,8 +357,8 @@ async fn provide_transaction(mut handle: Handle, mut tx: Transaction<'static, An
                 return;
             }
 
-            // .rollback => Try<Error, !>
-            "rollback" => {
+            // .rollback* => Try<Error, !>
+            "rollback" | "#close" => {
                 match timeout(OP_TIMEOUT, tx.rollback()).await {
                     Ok(Ok(())) => {
                         handle.signal(literal!("ok"));

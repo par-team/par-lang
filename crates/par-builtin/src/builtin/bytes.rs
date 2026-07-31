@@ -79,7 +79,7 @@ async fn bytes_reader(mut handle: Handle) {
 async fn bytes_empty_reader(mut handle: Handle) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.signal(literal!("ok"));
                 return handle.break_();
             }
@@ -98,7 +98,7 @@ async fn provide_bytes_reader_from_bytes(mut handle: Handle, bytes: Bytes) {
     let len = bytes.len();
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.signal(literal!("ok"));
                 return handle.break_();
             }
@@ -226,7 +226,7 @@ async fn bytes_pipe_reader(mut handle: Handle) {
 async fn provide_pipe_reader_writer(mut handle: Handle, state: Arc<PipeReaderState>) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 if state.reader_closed() || state.error_present() {
                     handle.signal(literal!("err"));
                     return handle.break_();
@@ -273,7 +273,7 @@ async fn provide_pipe_reader_output(
 ) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 state.mark_reader_closed();
                 state.wait_result().await;
                 match state.take_error() {
