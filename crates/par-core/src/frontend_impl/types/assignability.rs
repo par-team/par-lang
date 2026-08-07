@@ -40,6 +40,103 @@ impl<'a, S: Clone + Eq + std::hash::Hash> SubtypeContext<'a, S> {
     }
 }
 
+use std::fmt::Display;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TypeConstructor {
+    Primitive(PrimitiveType),
+    Var,
+    Name,
+    Box,
+    Pair,
+    Function,
+    Either,
+    Choice,
+    Break,
+    Continue,
+    Recursive,
+    Iterative,
+    Self_,
+    Exists,
+    Forall,
+    Hole,
+}
+
+impl Display for TypeConstructor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeConstructor::Primitive(p) => write!(f, "`{p}`"),
+            TypeConstructor::Var => write!(f, "a type variable"),
+            TypeConstructor::Name => write!(f, "a named type"),
+            TypeConstructor::Box => write!(f, "a `box` type"),
+            TypeConstructor::Pair => write!(f, "a tuple/pair type"),
+            TypeConstructor::Function => write!(f, "a function type"),
+            TypeConstructor::Either => write!(f, "an `either` type"),
+            TypeConstructor::Choice => write!(f, "a `choice` type"),
+            TypeConstructor::Break => write!(f, "a `break` type"),
+            TypeConstructor::Continue => write!(f, "a `continue` type"),
+            TypeConstructor::Recursive => write!(f, "a `recursive` type"),
+            TypeConstructor::Iterative => write!(f, "an `iterative` type"),
+            TypeConstructor::Self_ => write!(f, "a `self` type"),
+            TypeConstructor::Exists => write!(f, "an existential type"),
+            TypeConstructor::Forall => write!(f, "a universal type"),
+            TypeConstructor::Hole => write!(f, "a type hole"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ConstructorDifference {
+    Primitive {
+        provided: PrimitiveType,
+        expected: PrimitiveType,
+    },
+    TypeConstructor {
+        provided: TypeConstructor,
+        expected: TypeConstructor,
+    },
+}
+
+impl Display for ConstructorDifference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstructorDifference::Primitive { provided, expected } => {
+                write!(f, "Expected `{expected}`, got `{provided}`.")
+            }
+            ConstructorDifference::TypeConstructor { provided, expected } => {
+                if provided == expected {
+                    write!(f, "Expected a different {expected}.")
+                } else {
+                    write!(f, "Expected {expected}, got {provided}.")
+                }
+            }
+        }
+    }
+}
+
+impl<S> Type<S> {
+    pub(crate) fn constructor(&self) -> TypeConstructor {
+        match self {
+            Type::Primitive(_, p) | Type::DualPrimitive(_, p) => TypeConstructor::Primitive(*p),
+            Type::Var(_, _) | Type::DualVar(_, _) => TypeConstructor::Var,
+            Type::Name(_, _, _) | Type::DualName(_, _, _) => TypeConstructor::Name,
+            Type::Box(_, _) | Type::DualBox(_, _) => TypeConstructor::Box,
+            Type::Pair(_, _, _, _) => TypeConstructor::Pair,
+            Type::Function(_, _, _, _) => TypeConstructor::Function,
+            Type::Either(_, _) => TypeConstructor::Either,
+            Type::Choice(_, _) => TypeConstructor::Choice,
+            Type::Break(_) => TypeConstructor::Break,
+            Type::Continue(_) => TypeConstructor::Continue,
+            Type::Recursive { .. } => TypeConstructor::Recursive,
+            Type::Iterative { .. } => TypeConstructor::Iterative,
+            Type::Self_(_, _) | Type::DualSelf(_, _) => TypeConstructor::Self_,
+            Type::Exists(_, _, _) => TypeConstructor::Exists,
+            Type::Forall(_, _, _) => TypeConstructor::Forall,
+            Type::Hole(_, _, _) | Type::DualHole(_, _, _) | Type::Fail(_) => TypeConstructor::Hole,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SubtypeMismatchKind {
     MissingEitherBranch {
@@ -48,7 +145,7 @@ pub(crate) enum SubtypeMismatchKind {
     MissingChoiceBranch {
         branch: LocalName,
     },
-    ConstructorMismatch,
+    ConstructorMismatch(ConstructorDifference),
     ImplicitGenericCountMismatch {
         from_count: usize,
         to_count: usize,
@@ -59,7 +156,6 @@ pub(crate) enum SubtypeMismatchKind {
         expected: TypeConstraint,
     },
     TypeVariableMismatch,
-    PrimitiveTypeMismatch,
     HoleConstrainingIsDisabled,
     InvalidCycle,
     CannotCastDownIterative,
@@ -649,14 +745,32 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(if Self::is_primitive_subtype(&p1, &p2) {
                     Compatible
                 } else {
-                    incompatible(path1, path2, SubtypeMismatchKind::PrimitiveTypeMismatch)
+                    incompatible(
+                        path1,
+                        path2,
+                        SubtypeMismatchKind::ConstructorMismatch(
+                            ConstructorDifference::Primitive {
+                                provided: p1,
+                                expected: p2,
+                            },
+                        ),
+                    )
                 })
             }
             (Self::DualPrimitive(_, p1), Self::DualPrimitive(_, p2)) => {
                 Ok(if Self::is_primitive_subtype(&p2, &p1) {
                     Compatible
                 } else {
-                    incompatible(path1, path2, SubtypeMismatchKind::PrimitiveTypeMismatch)
+                    incompatible(
+                        path1,
+                        path2,
+                        SubtypeMismatchKind::ConstructorMismatch(
+                            ConstructorDifference::Primitive {
+                                provided: p1,
+                                expected: p2,
+                            },
+                        ),
+                    )
                 })
             }
 
@@ -973,7 +1087,12 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(incompatible(
                     path1,
                     path2,
-                    SubtypeMismatchKind::ConstructorMismatch,
+                    SubtypeMismatchKind::ConstructorMismatch(
+                        ConstructorDifference::TypeConstructor {
+                            provided: _t1.constructor(),
+                            expected: _t2.constructor(),
+                        },
+                    ),
                 ))
             }
         }
