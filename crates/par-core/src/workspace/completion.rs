@@ -31,28 +31,49 @@ impl CheckedWorkspace {
         let Some((dot, hover_row, hover_column)) = dot_before_position(source, row, column) else {
             return Vec::new();
         };
-        let Some(completion_context) = DotCompletionContext::before_dot(source, dot) else {
-            return Vec::new();
-        };
-        let active_loop_labels = loop_labels_before_dot(source, dot);
 
         let mut candidates = Vec::new();
-        let completed_module_alias =
-            self.push_module_alias_completion_candidates(file, source, dot, &mut candidates);
 
-        // `push_module_alias_completion_candidates` returns true only for `Alias.` receivers
-        // that resolve through imports (for example `Console.` or `raw->Os.`).
-        // In that case alias-member completion is authoritative: if we also ran hover/type-based
-        // completion, we'd incorrectly mix in value-type items like `begin`/branch labels.
-        if !completed_module_alias {
-            if let Some(hover) = self.hover_at(file, hover_row, hover_column) {
+        // Case-branch completions still use the normal type traversal, but they
+        // need to hover the enclosing `case` token instead of the branch-head `.`.
+        if let Some((case_row, case_column)) =
+            case_branch_completion_context_before_dot(source, dot)
+        {
+            if let Some(hover) = self.hover_at(file, case_row, case_column) {
                 if let Some(typ) = hover.typ() {
                     self.push_type_completion_candidates(
                         typ,
-                        completion_context,
-                        &active_loop_labels,
+                        DotCompletionContext::CaseBranch,
+                        &BTreeSet::new(),
                         &mut candidates,
                     );
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            let Some(completion_context) = DotCompletionContext::before_dot(source, dot) else {
+                return Vec::new();
+            };
+            let active_loop_labels = loop_labels_before_dot(source, dot);
+
+            let completed_module_alias =
+                self.push_module_alias_completion_candidates(file, source, dot, &mut candidates);
+
+            // `push_module_alias_completion_candidates` returns true only for `Alias.` receivers
+            // that resolve through imports (for example `Console.` or `raw->Os.`).
+            // In that case alias-member completion is authoritative: if we also ran hover/type-based
+            // completion, we'd incorrectly mix in value-type items like `begin`/branch labels.
+            if !completed_module_alias {
+                if let Some(hover) = self.hover_at(file, hover_row, hover_column) {
+                    if let Some(typ) = hover.typ() {
+                        self.push_type_completion_candidates(
+                            typ,
+                            completion_context,
+                            &active_loop_labels,
+                            &mut candidates,
+                        );
+                    }
                 }
             }
         }
@@ -134,6 +155,17 @@ impl CheckedWorkspace {
         match typ {
             Type::Choice(_, branches) => {
                 push_branch_completion_candidates(branches, "signal choice branch", candidates);
+            }
+            Type::Either(_, branches) if context == DotCompletionContext::CaseBranch => {
+                for branch in branches.keys() {
+                    let label = either_branch_completion_label(self, branch);
+                    candidates.push(CompletionCandidate {
+                        insert_text: label.clone(),
+                        label,
+                        detail: "branch head".to_string(),
+                        kind: CompletionCandidateKind::Branch,
+                    });
+                }
             }
             Type::Either(_, branches) if context == DotCompletionContext::Construction => {
                 push_branch_completion_candidates(branches, "construct either branch", candidates);
@@ -329,6 +361,139 @@ fn push_branch_completion_candidates(
     }
 }
 
+// If `dot` starts a top-level branch head inside `case { ... }`, return the
+// enclosing `case` token position so hover/type lookup uses the case subject.
+fn case_branch_completion_context_before_dot(source: &str, dot: usize) -> Option<(u32, u32)> {
+    let open_brace_position = innermost_unclosed_brace_before(source, dot)?;
+    if !is_case_branch_head_position(source, open_brace_position, dot) {
+        return None;
+    }
+    let before_brace = source.get(..open_brace_position)?.trim_end();
+    let before_case = before_brace.strip_suffix("case")?;
+    if before_case
+        .chars()
+        .next_back()
+        .is_some_and(is_completion_suffix_char)
+    {
+        return None;
+    }
+
+    let case_offset = before_brace.len() - "case".len();
+    let (case_row, case_column) = row_and_column_for_offset(source, case_offset)?;
+    Some((case_row, case_column))
+}
+
+// Checks whether `dot` is starting a top-level branch clause inside the
+// current `case { ... }` block, rather than appearing in a nested expression
+// or deeper nested block within one of the branches. For example, it should
+// return `false` for:
+// `RepeatValue.begin.case {
+//   .step remaining => {
+//     remaining.
+//   }
+// }`
+// and `true` for:
+// `RepeatValue.begin.case {
+//   .end! => {}
+//   .
+// }`
+fn is_case_branch_head_position(source: &str, open_brace_position: usize, dot: usize) -> bool {
+    let Some(between) = source.get(open_brace_position + 1..dot) else {
+        return false;
+    };
+
+    let mut paren_depth = 0_u32;
+    let mut bracket_depth = 0_u32;
+    let mut brace_depth = 0_u32;
+    let mut branch_start = 0_usize;
+
+    for (idx, ch) in between.char_indices() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth += 1,
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    branch_start = idx + ch.len_utf8();
+                }
+            }
+            '\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                branch_start = idx + ch.len_utf8();
+            }
+            ',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                branch_start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    if !between[branch_start..].trim().is_empty() {
+        return false;
+    }
+
+    let line_tail = source
+        .get(dot..)
+        .map(|line_tail| {
+            line_tail
+                .split_once('\n')
+                .map_or(line_tail, |(line, _)| line)
+        })
+        .unwrap_or_default();
+    if line_tail.contains("=>") {
+        return true;
+    }
+
+    between[..branch_start]
+        .rsplit('\n')
+        .find_map(|line| {
+            let trimmed = line.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .is_none_or(|line| !line.ends_with("=>"))
+}
+
+fn innermost_unclosed_brace_before(source: &str, dot: usize) -> Option<usize> {
+    let mut braces = Vec::new();
+    for (offset, ch) in source.get(..dot)?.char_indices() {
+        match ch {
+            '{' => braces.push(offset),
+            '}' => {
+                braces.pop();
+            }
+            _ => {}
+        }
+    }
+    braces.pop()
+}
+
+// Formats either branch-head completions as `name!` or `name()` based on the
+// branch definition's source text.
+fn either_branch_completion_label(checked: &CheckedWorkspace, branch: &LocalName) -> String {
+    let suffix = if branch
+        .span
+        .end()
+        .zip(branch.span.file())
+        .and_then(|(end, file)| {
+            checked
+                .workspace
+                .sources()
+                .get(&file)
+                .and_then(|source| source.get(end.offset as usize..))
+                .and_then(|after_name| after_name.chars().next())
+        })
+        .is_some_and(|ch| ch == '!')
+    {
+        "!"
+    } else {
+        "()"
+    };
+
+    format!("{branch}{suffix}")
+}
+
 /// Returns the identifier-like token immediately before `.`.
 ///
 /// Example: `module_alias_before_dot("Use(  Console .Open)", 14) == Some("Console")`.
@@ -355,6 +520,7 @@ enum DotCompletionContext {
     AfterBeginOrUnfounded,
     Construction,
     RecursiveBody,
+    CaseBranch,
 }
 
 impl DotCompletionContext {
@@ -411,6 +577,7 @@ impl DotCompletionContext {
         match self {
             Self::Construction => Self::Construction,
             Self::AfterBeginOrUnfounded => Self::AfterBeginOrUnfounded,
+            Self::CaseBranch => Self::CaseBranch,
             Self::Normal | Self::RecursiveBody => Self::Normal,
         }
     }
@@ -572,6 +739,15 @@ mod tests {
         checked
     }
 
+    fn replace_last(source: &str, from: &str, to: &str) -> String {
+        let index = source.rfind(from).unwrap();
+        let mut result = String::with_capacity(source.len() - from.len() + to.len());
+        result.push_str(&source[..index]);
+        result.push_str(to);
+        result.push_str(&source[index + from.len()..]);
+        result
+    }
+
     fn dot_completions_at_marker(
         checked: &CheckedWorkspace,
         live_source: &str,
@@ -606,7 +782,8 @@ mod tests {
                 completions
                     .iter()
                     .any(|candidate| candidate.label == *label),
-                "missing completion label {label:?}"
+                "missing completion label {label:?}: {:?}",
+                completions
             );
         }
         for label in unexpected {
@@ -614,7 +791,8 @@ mod tests {
                 completions
                     .iter()
                     .all(|candidate| candidate.label != *label),
-                "unexpected completion label {label:?}"
+                "unexpected completion label {label:?}: {:?}",
+                completions
             );
         }
     }
@@ -1137,6 +1315,227 @@ def Main : E = .a!
             let live_source = source.replace(before, after);
             assert_source_dot_completion_labels(source, &live_source, marker, expected, unexpected);
         }
+    }
+
+    #[test]
+    fn dot_completion_in_either_case_branch_heads_formats_branch_patterns() {
+        let source = "\
+module Main
+
+type Stream = either {
+    .end!,
+    .chunk !,
+}
+
+def StreamValue : Stream = external
+def Main : ! = StreamValue.case {
+    .end! => !,
+    .chunk value => !,
+}
+";
+
+        for marker in [".en", ".ch"] {
+            let live_source =
+                replace_last(source, "    .end! => !,", &format!("    {marker} => !,"));
+            assert_source_dot_completion_labels(
+                source,
+                &live_source,
+                marker,
+                &["chunk()", "end!"],
+                &["case", "chunk", "end"],
+            );
+        }
+
+        let live_source = replace_last(source, "    .chunk value => !,", "    .ch => !,");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            ".ch",
+            &["chunk()", "end!"],
+            &["case", "chunk", "end"],
+        );
+
+        let nested_source = "\
+module Main
+
+type Stream = either {
+    .end!,
+    .item !,
+}
+
+type Verdict = either {
+    .true!,
+    .false!,
+}
+
+dec Equal : [!, !] Verdict
+def Equal = external
+
+def StreamValue : Stream = external
+def Main : Verdict = StreamValue.case {
+    .end! => .false!,
+    .item x => Equal(x, x).case {
+        .true! => .true!,
+        .false! => .false!,
+    },
+}
+";
+        let nested_live_source = replace_last(
+            nested_source,
+            "    .item x => Equal(x, x).case {",
+            "    .it => Equal(x, x).case {",
+        );
+        assert_source_dot_completion_labels(
+            nested_source,
+            &nested_live_source,
+            ".it",
+            &["end!", "item()"],
+            &["case()", "false!", "true!"],
+        );
+    }
+
+    #[test]
+    fn dot_completion_in_choice_case_branch_heads_offers_branch_names() {
+        let source = "\
+module Main
+
+type Sequence = iterative choice {
+    .close => !,
+    .next => self,
+}
+
+def Main : Sequence = begin case {
+    .close => !,
+    .next => loop,
+}
+";
+
+        for marker in [".cl", ".n"] {
+            let live_source =
+                replace_last(source, "    .close => !,", &format!("    {marker} => !,"));
+            assert_source_dot_completion_labels(
+                source,
+                &live_source,
+                marker,
+                &["close", "next"],
+                &["case", "close!", "next()"],
+            );
+        }
+
+        let fibonacci_source = "\
+module Main
+
+type Sequence = iterative choice {
+    .close => !
+    .next => (!) self
+}
+
+dec Fibonacci : Sequence
+def Fibonacci =
+    let x = !
+  in begin case {
+    .close => !
+    .next => (x) loop
+  }
+";
+        let fibonacci_live_source = replace_last(
+            fibonacci_source,
+            "    .next => (x) loop",
+            "    .n => (x) loop",
+        );
+        assert_source_dot_completion_labels(
+            fibonacci_source,
+            &fibonacci_live_source,
+            ".n",
+            &["close", "next"],
+            &["case", "close!", "next()"],
+        );
+
+        let nat_repeat_source = "\
+module Main
+
+type Repeat = recursive either {
+    .end!,
+    .step self,
+}
+
+def RepeatValue : Repeat = external
+def Main: ! = do {
+    RepeatValue.begin.case {
+        .end! => {},
+        .step remaining => {
+            remaining.loop
+        }
+    }
+} in !
+";
+        let nat_repeat_live_source = replace_last(
+            nat_repeat_source,
+            "        .step remaining => {\n            remaining.loop\n        }\n",
+            "        .\n",
+        );
+        assert_source_dot_completion_labels(
+            nat_repeat_source,
+            &nat_repeat_live_source,
+            ".",
+            &["end!", "step()"],
+            &["case", "end", "step"],
+        );
+    }
+
+    #[test]
+    fn hover_on_case_token_carries_subject_type_probe() {
+        let source = "\
+module Main
+
+type Sequence = iterative choice {
+    .close => !
+    .next => (!) self
+}
+
+dec Fibonacci : Sequence
+def Fibonacci =
+    let x = !
+  in begin case {
+    .close => !
+    .next => (x) loop
+  }
+";
+        let checked = checked_workspace_from_source(source);
+        let file = checked.workspace().sources().keys().next().unwrap();
+        let case_index = source.match_indices("case").last().unwrap().0;
+        let (row, column) = row_and_column_for_offset(source, case_index).unwrap();
+        let hover = checked.hover_at(file, row, column).unwrap();
+
+        assert!(hover.typ().is_some(), "missing hover type at case token");
+    }
+
+    #[test]
+    fn hover_on_value_case_token_carries_subject_type_probe() {
+        let source = "\
+module Main
+
+type Stream = either {
+    .end!,
+    .chunk !,
+}
+
+def StreamValue : Stream = external
+def Main : ! = StreamValue.case {
+    .end! => !,
+    .chunk _ => !,
+}
+";
+        let checked = checked_workspace_from_source(source);
+        let file = checked.workspace().sources().keys().next().unwrap();
+        let case_index = source.match_indices("case").last().unwrap().0;
+        let (row, column) = row_and_column_for_offset(source, case_index).unwrap();
+        let hover = checked.hover_at(file, row, column).unwrap();
+
+        assert_eq!(
+            checked.render_hover_signature_in_file(file, &hover),
+            "Stream"
+        );
     }
 
     #[test]
