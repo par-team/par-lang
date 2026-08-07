@@ -392,7 +392,8 @@ fn require_assignable_type(
 ) -> Result<(), String> {
     let assignable = actual
         .is_definitely_assignable_to(expected, &program.checked_module().type_defs)
-        .map_err(|error| format!("Failed to check definition type: {error:?}"))?;
+        .map_err(|error| format!("Failed to check definition type: {error:?}"))?
+        .is_assignable();
     if assignable {
         Ok(())
     } else {

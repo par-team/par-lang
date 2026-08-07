@@ -25,7 +25,7 @@ impl LoopId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     Nat,
     Int,
@@ -35,6 +35,43 @@ pub enum PrimitiveType {
     Byte,
     Bytes,
 }
+
+impl std::fmt::Display for PrimitiveType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            PrimitiveType::Nat => "Nat",
+            PrimitiveType::Int => "Int",
+            PrimitiveType::Float => "Float",
+            PrimitiveType::String => "String",
+            PrimitiveType::Char => "Char",
+            PrimitiveType::Byte => "Byte",
+            PrimitiveType::Bytes => "Bytes",
+        };
+        write!(f, "{text}")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TypePathSegment {
+    NameArg(usize),
+    BoxBody,
+    PairLeft,
+    PairRight,
+    FunctionParam,
+    FunctionReturn,
+    EitherBranch(LocalName),
+    EitherBranchLabel(LocalName),
+    ChoiceBranch(LocalName),
+    ChoiceBranchLabel(LocalName),
+    RecursiveBody,
+    IterativeBody,
+    ExistsBody,
+    ImplicitGenerics,
+    TypeParameter(LocalName),
+    Self_,
+}
+
+pub(crate) type TypePath = Vec<TypePathSegment>;
 
 #[doc(hidden)]
 #[derive(Clone, Debug)]

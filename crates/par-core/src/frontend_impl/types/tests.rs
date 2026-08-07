@@ -166,6 +166,7 @@ mod tests {
             empty_either
                 .is_definitely_assignable_to(&any_type, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -179,6 +180,7 @@ mod tests {
             any_type
                 .is_definitely_assignable_to(&empty_choice, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -208,6 +210,7 @@ mod tests {
             exists(TypeConstraint::Box)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         // ...but an unconstrained (possibly linear) witness must not be
         // passed off as a `box` one.
@@ -215,6 +218,7 @@ mod tests {
             !exists(TypeConstraint::Any)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Box), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -234,12 +238,14 @@ mod tests {
             forall(TypeConstraint::Any)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Box), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         // ...but not the other way around.
         assert!(
             !forall(TypeConstraint::Box)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -259,11 +265,13 @@ mod tests {
             pair(TypeConstraint::Box)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             !pair(TypeConstraint::Any)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Box), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
