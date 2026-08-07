@@ -25,7 +25,7 @@ def Factorial = [n]
   }
 
 dec Fibonacci : iterative choice {
-  .next  => (Nat) self,
+  .next   => (Nat) self,
   .close* => !,
 }
 
