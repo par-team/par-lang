@@ -61,7 +61,7 @@ pub fn diagnostic_for_error(err: &CompileError, fallback_uri: &Uri) -> (Uri, lsp
             let (span, related_span) = error.error.spans();
             (
                 span,
-                format!("{:?}", error.to_report(sources)),
+                strip_ansi_underlining(format!("{:?}", error.to_report(sources))),
                 related_span.into_iter().collect(),
             )
         }
@@ -94,6 +94,10 @@ pub fn diagnostic_for_error(err: &CompileError, fallback_uri: &Uri) -> (Uri, lsp
             data: None,
         },
     )
+}
+
+fn strip_ansi_underlining(message: String) -> String {
+    message.replace("\x1b[4m", "").replace("\x1b[24m", "")
 }
 
 fn span_to_lsp_range(span: &Span) -> lsp::Range {
@@ -182,4 +186,17 @@ fn path_to_uri(path: &Path) -> Option<Uri> {
     Url::from_file_path(path)
         .ok()
         .and_then(|url| url.as_str().parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ansi_underlining;
+
+    #[test]
+    fn ansi_underlining_is_removed_from_diagnostic_messages() {
+        assert_eq!(
+            strip_ansi_underlining("before \x1b[4mhighlighted\x1b[24m after".to_string()),
+            "before highlighted after",
+        );
+    }
 }
