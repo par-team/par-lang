@@ -14,7 +14,7 @@ The easiest way to do that is via [rustup](https://rustup.rs). The website instr
 
 > Run the following in your terminal, then follow the onscreen instructions.
 >
-> ```
+> ```sh
 > $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 > ```
 
@@ -24,7 +24,7 @@ The next step is to obtain Par's source code. That is located on
 [GitHub](https://github.com/par-team/par-lang). Clone it locally by running the following
 in your terminal:
 
-```
+```sh
 $ git clone https://github.com/par-team/par-lang
 ```
 
@@ -32,13 +32,13 @@ $ git clone https://github.com/par-team/par-lang
 
 Navigate to the newly created directory:
 
-```
+```sh
 $ cd par-lang
 ```
 
 Then install the executable using Cargo:
 
-```
+```sh
 $ cargo install --path .
 ```
 
@@ -61,7 +61,7 @@ to restart the terminal for it to appear.
 
 Let's create a fresh package:
 
-```
+```sh
 $ par new hello_par
 $ cd hello_par
 ```
@@ -77,13 +77,13 @@ hello_par/
 
 The generated `src/Main.par` is a tiny runnable Par program. You can run it with:
 
-```
+```sh
 $ par run
 ```
 
 And you can type-check the package without running it:
 
-```
+```sh
 $ par check
 ```
 
@@ -91,7 +91,7 @@ $ par check
 
 Par comes with a built-in docs browser:
 
-```
+```sh
 $ par doc
 ```
 
@@ -107,7 +107,7 @@ This command is useful in three different situations:
 The playground is a great way to experiment with code and interact with values through the
 playground's automatic UI:
 
-```
+```sh
 $ par playground
 ```
 

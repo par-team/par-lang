@@ -25,3 +25,31 @@ jobs:
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --verbose
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mdBook
+        run: |
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv mdbook /usr/local/bin/
+      
+      - name: mdbook test
+        run: cd docs && mdbook test
+
+      - name: mdbook test (korean)
+        run: cd docs-ko && mdbook test
+
+      - name: Install mdbook-linkcheck
+        run: |
+          curl -sSL https://github.com/marxin/mdbook-linkcheck2/releases/download/v0.12.2/mdbook-linkcheck2-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv mdbook-linkcheck2 /usr/local/bin/
+      
+      - name: mdbook linkcheck
+        run: cd docs && mdbook build
+
+      - name: mdbook linkcheck (korean)
+        run: cd docs-ko && mdbook build

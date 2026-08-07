@@ -1,7 +1,10 @@
 use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, Universal};
-use crate::frontend_impl::types::{LoopId, Operation, Type};
+use crate::frontend_impl::types::assignability::{SubtypeMismatchCause, SubtypeMismatchKind};
+use crate::frontend_impl::types::{LoopId, Operation, Type, TypePath};
 use crate::location::Span;
-use crate::workspace::{FileImportScope, render_global_name_in_scope, render_type_in_scope};
+use crate::workspace::{
+    FileImportScope, render_global_name_in_scope, render_type_in_scope_with_highlight,
+};
 use miette::{LabeledSpan, SourceOffset, SourceSpan};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -31,7 +34,7 @@ pub enum TypeError<S> {
     ShadowedObligation(Span, LocalName),
     TypeMustBeKnownAtThisPoint(Span, #[allow(unused)] LocalName),
     ParameterTypeMustBeKnown(Span, LocalName),
-    CannotAssignFromTo(Span, Type<S>, Type<S>),
+    CannotAssignFromTo(Span, Type<S>, Type<S>, SubtypeMismatchCause),
     TypeDoesNotSatisfyConstraint(Span, LocalName, Type<S>, TypeConstraint),
     TypeParameterConstraintMismatch(Span, LocalName, TypeConstraint, TypeConstraint),
     UnfulfilledObligations(Span, Vec<LocalName>),
@@ -63,6 +66,7 @@ pub enum TypeError<S> {
     PollBranchMustSubmit(Span),
     CannotUseLinearVariableInBox(Span, LocalName),
     NonExhaustiveIf(Span),
+    Todo(Span),
 }
 
 /// Create a `LabeledSpan` without a label at `span`
@@ -103,8 +107,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
         &self,
         source_code: Arc<str>,
         render_name: impl Fn(&GlobalName<S>) -> String,
-        render_type: impl Fn(&Type<S>, usize) -> String,
+        render_type_with_highlight: impl Fn(&Type<S>, usize, Option<&TypePath>) -> String,
     ) -> miette::Report {
+        let render_type = |typ, indent| render_type_with_highlight(typ, indent, None);
         let code = &source_code;
         match self {
             Self::TypeNameAlreadyDefined(span1, span2, name) => {
@@ -295,16 +300,117 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     )
                 }
             }
-            Self::CannotAssignFromTo(span, from_type, to_type) => {
+            Self::CannotAssignFromTo(span, from_type, to_type, cause) => {
                 let labels = labels_from_span(code, span);
-                let from_type_str = render_type(from_type, 1);
-                let to_type_str = render_type(to_type, 1);
-                miette::miette!(
-                    labels = labels,
-                    "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n",
-                    to_type_str,
-                    from_type_str,
-                )
+                let from_type_str =
+                    render_type_with_highlight(from_type, 1, Some(&cause.from_path));
+                let to_type_str = render_type_with_highlight(to_type, 1, Some(&cause.to_path));
+                match &cause.kind {
+                    SubtypeMismatchKind::CannotCastDownIterative => {
+                        miette::miette!(
+                            labels = labels,
+                            "This loop may diverge. To ensure termination, the result of `loop` may only be used by substructures of the original consumer at `begin`.\n\n  {}\n If you wish to bypass the totality checker, use `unfounded`.",
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::CannotCastUpRecursive => {
+                        miette::miette!(
+                            labels = labels,
+                            "This loop may diverge. To ensure termination, `.loop` may only be applied to substructures of the original recursive value at .begin\n\n  {}\n If you wish to bypass the totality checker, use `unfounded`.",
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::MissingEitherBranch { branch } => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nThe latter contains an extra variant `.{branch}` which the former does not.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::MissingChoiceBranch { branch } => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nThe latter is missing the option `.{branch}` which the former requires.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::CleanupBranchMismatch {
+                        branch,
+                        provided,
+                        expected,
+                    } => {
+                        let explanation = match (*provided, *expected) {
+                            (false, true) => format!(
+                                "The required branch `.{branch}` is a cleanup branch, but the provided one is not."
+                            ),
+                            (true, false) => format!(
+                                "The provided branch `.{branch}` is a cleanup branch, but the required one is not."
+                            ),
+                            _ => unreachable!("a cleanup mismatch must have different markers"),
+                        };
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\n{}\n",
+                            to_type_str,
+                            from_type_str,
+                            explanation,
+                        )
+                    }
+                    SubtypeMismatchKind::ImplicitGenericCountMismatch { from_count, to_count } => {
+                        let to_plural = if *to_count == 1 { "" } else { "s" };
+                        let from_plural = if *from_count == 1 { "" } else { "s" };
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nExpected {to_count} generic parameter{to_plural}, but the provided type has {from_count} generic parameter{from_plural}.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                        param_name,
+                        provided,
+                        expected,
+                    } => {
+                        let expected_desc = format_constraint_desc(*expected);
+                        let provided_desc = format_constraint_desc(*provided);
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nExpected a generic type `{param_name}` with {expected_desc}, got a generic type with {provided_desc}.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::ConstructorMismatch(diff) => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\n{}\n",
+                            to_type_str,
+                            from_type_str,
+                            diff,
+                        )
+                    }
+                    SubtypeMismatchKind::TypeVariableMismatch => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nThese type variables refer to different scopes or parameters.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::InvalidCycle => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nAn iterative type cannot be cast to a recursive type.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
+                    SubtypeMismatchKind::HoleConstrainingIsDisabled => {
+                        unreachable!("This really shouldn't have happened. Please open an issue.")
+                    },
+                }
             }
             Self::TypeDoesNotSatisfyConstraint(span, name, typ, constraint) => {
                 let labels = labels_from_span(code, span);
@@ -465,7 +571,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 let labels = labels_from_span(code, span);
                 miette::miette!(
                     labels = labels,
-                    "This `loop` may diverge. Value does not descend from the corresponding `begin`.\n\nIf this is intended, use `unfounded`.",
+                    "This loop may diverge. To ensure termination, .loop may only be applied to substructures of the original recursive value at  the corresponding `.begin`.\n\nIf you wish to bypass the totality checker, use `unfounded`.",
                 )
             }
             Self::LoopVariableNotPreserved(span, name) => {
@@ -577,11 +683,23 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                 let labels = labels_from_span(code, span);
                 miette::miette!(
                     labels = labels,
-                    "This `loop` may diverge. Operating on the loop variable is not allowed.\n\nIf this is intended, use `unfounded`.",
+                    "This loop may diverge. To ensure termination, the result of loop may only be used by substructures of the original consumer at begin.\n\nIf you wish to bypass the totality checker, use `unfounded`.",
                 )
 
             }
+            Self::Todo(span) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    severity = miette::Severity::Warning,
+                    labels = labels,
+                    "Incomplete code (`todo`)"
+                )
+            }
         }.with_source_code(source_code)
+    }
+
+    pub fn is_warning(&self) -> bool {
+        matches!(self, Self::Todo(_))
     }
 }
 
@@ -594,7 +712,7 @@ impl TypeError<Universal> {
         self.to_report_with(
             source_code,
             |name| render_global_name_in_scope(scope, name),
-            |typ, indent| render_type_in_scope(scope, typ, indent),
+            |typ, indent, path| render_type_in_scope_with_highlight(scope, typ, indent, path),
         )
     }
 }
@@ -626,7 +744,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::ShadowedObligation(span, _)
             | Self::TypeMustBeKnownAtThisPoint(span, _)
             | Self::ParameterTypeMustBeKnown(span, _)
-            | Self::CannotAssignFromTo(span, _, _)
+            | Self::CannotAssignFromTo(span, _, _, _)
             | Self::TypeDoesNotSatisfyConstraint(span, _, _, _)
             | Self::TypeParameterConstraintMismatch(span, _, _, _)
             | Self::UnfulfilledObligations(span, _)
@@ -656,9 +774,21 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::PollBranchMustSubmit(span)
             | Self::CannotUseLinearVariableInBox(span, _)
             | Self::NonExhaustiveIf(span)
+            | Self::Todo(span)
             | Self::CannotUnrollAscendantIterative(span, _) => (span.clone(), None),
 
             Self::TypesCannotBeUnified(span, _typ1, _typ2) => (span.clone(), None),
         }
+    }
+}
+
+fn format_constraint_desc(constraint: TypeConstraint) -> &'static str {
+    match constraint {
+        TypeConstraint::Any => "no constraints",
+        TypeConstraint::Drop => "a `drop` constraint",
+        TypeConstraint::Share => "a `share` constraint",
+        TypeConstraint::Data => "a `data` constraint",
+        TypeConstraint::Number => "a `number` constraint",
+        TypeConstraint::Signed => "a `signed` constraint",
     }
 }

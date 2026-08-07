@@ -324,6 +324,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 captures,
             } => self.check_process_submit(span, driver, point, values, captures, emit),
             Terminator::Unreachable(span) => self.check_process_unreachable(span, emit),
+            Terminator::ToDo(span) => self.check_process_todo(span, emit),
             Terminator::Block(span, index, body, then) => {
                 self.check_process_block(span, *index, body, then, emit)
             }
@@ -420,6 +421,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 };
                 if !typ
                     .require_assignable_to(&poll_pool_type, &self.type_defs)
+                    .map(|a| a.is_assignable())
                     .unwrap_or(true)
                 {
                     emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -665,6 +667,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         if !current_point_client_type
             .require_assignable_to(&poll_point_client_type, &self.type_defs)
+            .map(|a| a.is_assignable())
             .unwrap_or(true)
         {
             emit(TypeError::SubmitCannotTargetPollPoint(
@@ -690,6 +693,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_pool_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -700,6 +704,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_point_client_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientDoesNotDescend(span.clone()));
@@ -717,6 +722,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_poll, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::PollVariableChangedType(
@@ -755,6 +761,45 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         self.variables.clear();
         Terminator::Unreachable(span.clone())
+    }
+
+    fn check_process_todo(
+        &mut self,
+        span: &Span,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Terminator<Type<S>, S> {
+        emit(TypeError::Todo(span.clone()));
+        for (name, typ) in &self.variables {
+            if self.type_has_holes(typ) {
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    name.clone(),
+                ));
+            }
+        }
+        self.variables.clear();
+        Terminator::ToDo(span.clone())
+    }
+
+    fn type_has_holes(&self, typ: &Type<S>) -> bool {
+        match typ {
+            Type::Hole(..) | Type::DualHole(..) => true,
+            Type::Name(_, _, args) | Type::DualName(_, _, args) => {
+                args.iter().any(|arg| self.type_has_holes(arg))
+            }
+            Type::Box(_, inner) | Type::DualBox(_, inner) => self.type_has_holes(inner),
+            Type::Pair(_, left, right, _) | Type::Function(_, left, right, _) => {
+                self.type_has_holes(left) || self.type_has_holes(right)
+            }
+            Type::Either(_, branches) | Type::Choice(_, branches) => branches
+                .values()
+                .any(|branch| self.type_has_holes(&branch.typ)),
+            Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
+                self.type_has_holes(body)
+            }
+            Type::Exists(_, _, body) | Type::Forall(_, _, body) => self.type_has_holes(body),
+            _ => false,
+        }
     }
 
     fn check_process_block(
@@ -1602,6 +1647,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_begin, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::LoopVariableChangedType(
@@ -2130,6 +2176,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 emit,
             ),
             Terminator::Unreachable(span) => self.infer_process_unreachable(span, emit),
+            Terminator::ToDo(span) => self.infer_process_todo(span, inference_subject, emit),
             Terminator::Block(span, index, body, then) => {
                 self.infer_process_block(span, *index, body, then, inference_subject, emit)
             }
@@ -2256,6 +2303,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 };
                 if !typ
                     .require_assignable_to(&poll_pool_type, &self.type_defs)
+                    .map(|a| a.is_assignable())
                     .unwrap_or(true)
                 {
                     emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -2518,6 +2566,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         if !current_point_client_type
             .require_assignable_to(&poll_point_client_type, &self.type_defs)
+            .map(|a| a.is_assignable())
             .unwrap_or(true)
         {
             emit(TypeError::SubmitCannotTargetPollPoint(
@@ -2543,6 +2592,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_pool_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientNotAssignableToPoll(
@@ -2553,6 +2603,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
             if !typ
                 .require_assignable_to(&poll_point_client_type, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::SubmittedClientDoesNotDescend(span.clone()));
@@ -2570,6 +2621,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_poll, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::PollVariableChangedType(
@@ -2611,6 +2663,21 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         self.variables.clear();
         (Terminator::Unreachable(span.clone()), Type::choice(vec![]))
+    }
+
+    fn infer_process_todo(
+        &mut self,
+        span: &Span,
+        inference_subject: &LocalName,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> (Terminator<Type<S>, S>, Type<S>) {
+        emit(TypeError::Todo(span.clone()));
+        emit(TypeError::TypeMustBeKnownAtThisPoint(
+            span.clone(),
+            inference_subject.clone(),
+        ));
+        self.variables.clear();
+        (Terminator::ToDo(span.clone()), Type::Fail(span.clone()))
     }
 
     fn infer_process_block(
@@ -2782,6 +2849,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             };
             if !current_type
                 .require_assignable_to(type_at_begin, &self.type_defs)
+                .map(|a| a.is_assignable())
                 .unwrap_or(true)
             {
                 emit(TypeError::LoopVariableChangedType(
@@ -2846,6 +2914,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.check_expression_primitive(span, value, target_type, emit)
             }
             Expression::External(f, ()) => self.check_expression_external(f, target_type, emit),
+            Expression::ToDo(span, ()) => {
+                emit(TypeError::Todo(span.clone()));
+                Arc::new(Expression::ToDo(span.clone(), target_type.clone()))
+            }
         }
     }
 
@@ -2883,6 +2955,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.infer_expression_primitive(span, value, emit)
             }
             Expression::External(_f, ()) => self.infer_expression_external(emit),
+            Expression::ToDo(span, ()) => {
+                emit(TypeError::Todo(span.clone()));
+                emit(TypeError::TypeMustBeKnownAtThisPoint(
+                    span.clone(),
+                    LocalName::result(),
+                ));
+                let typ = Type::Fail(span.clone());
+                (Arc::new(Expression::ToDo(span.clone(), typ.clone())), typ)
+            }
         }
     }
 

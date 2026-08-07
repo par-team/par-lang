@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
+use par_core::runtime::TranspiledGlobal;
 use par_core::{
     frontend::{
         Type,
@@ -64,7 +65,7 @@ fn build_for_run(
 ) -> Result<(CheckedWorkspace, Compiled<Linked>, Vec<ModulePath>), BuildError> {
     let build =
         checked_workspace_from_path(package_path, None).map_err(map_workspace_build_error)?;
-    if !build.type_errors.is_empty() {
+    if build.type_errors.iter().any(|e| !e.error.is_warning()) {
         return Err(BuildError::Type {
             errors: build.type_errors,
             sources: build.sources.clone(),
@@ -334,7 +335,13 @@ fn run_single_definition(
             .get_type_of(run_name)
             .ok_or_else(|| format!("Type not found for test '{}'", missing_type_name))?;
         require_assignable_type(program, &ty, &Type::Break(Span::None), "!")?;
-        let package = rt_compiled.code.get_with_name(run_name).unwrap();
+        let package = match rt_compiled.code.name_to_package.get(run_name) {
+            Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+            Some(TranspiledGlobal::Unimplemented) => {
+                return Err(format!("Test '{missing_type_name}' is incomplete (directly or indirectly contains a todo; run `par check` for details)"));
+            }
+            None => return Err(format!("Test package not found for '{missing_type_name}'")),
+        };
 
         let (handle, fut) = par_runtime::start_and_instantiate(
             Arc::new(TokioSpawn::new()),
@@ -385,7 +392,8 @@ fn require_assignable_type(
 ) -> Result<(), String> {
     let assignable = actual
         .is_definitely_assignable_to(expected, &program.checked_module().type_defs)
-        .map_err(|error| format!("Failed to check definition type: {error:?}"))?;
+        .map_err(|error| format!("Failed to check definition type: {error:?}"))?
+        .is_assignable();
     if assignable {
         Ok(())
     } else {
@@ -401,7 +409,13 @@ async fn run_test(
 ) -> Result<TestStatus, String> {
     let (sender, receiver) = mpsc::channel();
 
-    let package = rt_compiled.code.get_with_name(name).unwrap();
+    let package = match rt_compiled.code.name_to_package.get(name) {
+        Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+        Some(TranspiledGlobal::Unimplemented) => {
+            return Err("Test is incomplete (directly or indirectly contains a todo; run `par check` for details)".to_string());
+        }
+        None => return Err("Test package not found".to_string()),
+    };
     let (mut root, reducer_future) = par_runtime::start_and_instantiate(
         Arc::new(TokioSpawn::new()),
         rt_compiled.code.arena.clone(),

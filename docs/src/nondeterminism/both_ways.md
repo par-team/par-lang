@@ -11,7 +11,7 @@ All of the above require information flowing not just from clients to the server
 
 Two things this is **not** about:
 - **A server initiating an interaction.** With `poll`/`submit`, the client is always the one who initiates an interaction by becoming ready.
-- **Nondeterministic direction of communication.** As we learned in the [introduction to this section](./README.md), Par does **not** support this, at least yet. The types always say which direction is the next one.
+- **Nondeterministic direction of communication.** As we learned in the [introduction to this section](./index.md), Par does **not** support this, at least yet. The types always say which direction is the next one.
 
 ## Reminder: [Construction by destruction](../processes/duality.md)
 

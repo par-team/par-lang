@@ -74,11 +74,17 @@ pub fn diagnostic_for_error(err: &CompileError, fallback_uri: &Uri) -> (Uri, lsp
             (span, error.to_string(), related_spans)
         }
     };
+    let severity = match err {
+        CompileError::Type { error, .. } if error.error.is_warning() => {
+            lsp::DiagnosticSeverity::WARNING
+        }
+        _ => lsp::DiagnosticSeverity::ERROR,
+    };
     (
         uri_for_error(err).unwrap_or_else(|| fallback_uri.clone()),
         lsp::Diagnostic {
             range: span_to_lsp_range(&span),
-            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            severity: Some(severity),
             code: None,
             code_description: None,
             source: None,

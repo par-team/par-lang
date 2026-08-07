@@ -324,7 +324,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if matches!(typ, Type::Fail(_)) {
                 continue;
             }
-            if typ.is_definitely_assignable_to(&impossible, &self.type_defs)? {
+            if typ
+                .is_definitely_assignable_to(&impossible, &self.type_defs)?
+                .is_assignable()
+            {
                 return Ok(true);
             }
         }

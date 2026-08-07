@@ -168,10 +168,16 @@ pub fn link_package_ptr(package: &PackagePtr<Unlinked>) -> PackagePtr<Linked> {
     Index(package.0.clone())
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ArtifactGlobal<Ext: Clone> {
+    Package(PackagePtr<Ext>),
+    Unimplemented,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Artifact<Ext: Clone> {
     pub arena: Arc<Arena<Ext>>,
-    pub definition_to_package: HashMap<String, PackagePtr<Ext>>,
+    pub definition_to_package: HashMap<String, ArtifactGlobal<Ext>>,
 }
 
 impl Artifact<Unlinked> {
@@ -181,7 +187,12 @@ impl Artifact<Unlinked> {
             definition_to_package: self
                 .definition_to_package
                 .iter()
-                .map(|(k, v)| (k.clone(), link_package_ptr(v)))
+                .map(|(k, v)| match v {
+                    ArtifactGlobal::Package(pkg) => {
+                        (k.clone(), ArtifactGlobal::Package(link_package_ptr(pkg)))
+                    }
+                    ArtifactGlobal::Unimplemented => (k.clone(), ArtifactGlobal::Unimplemented),
+                })
                 .collect(),
         })
     }

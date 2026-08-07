@@ -317,7 +317,8 @@ fn validate_expression_visibility(
         }
         process::Expression::Variable(..)
         | process::Expression::Primitive(..)
-        | process::Expression::External(..) => {}
+        | process::Expression::External(..)
+        | process::Expression::ToDo(..) => {}
         process::Expression::Box(_, _, expression, _) => {
             validate_expression_visibility(current_module, expression, visibility, errors);
         }
@@ -386,7 +387,9 @@ fn validate_process_visibility(
             validate_process_visibility(current_module, body, visibility, errors);
             validate_process_visibility(current_module, then, visibility, errors);
         }
-        process::Terminator::Goto(..) | process::Terminator::Unreachable(..) => {}
+        process::Terminator::Goto(..)
+        | process::Terminator::Unreachable(..)
+        | process::Terminator::ToDo(..) => {}
     }
 }
 

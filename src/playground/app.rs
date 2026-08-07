@@ -712,6 +712,14 @@ impl Playground {
                         );
                     }
 
+                    if let Some(warnings) = self.build.warnings() {
+                        ui.label(
+                            egui::RichText::new(warnings.display(self.built_code.clone()))
+                                .color(yellow())
+                                .code(),
+                        );
+                    }
+
                     let theme = self.get_theme(ui);
 
                     if self.show_compiled {
@@ -797,6 +805,7 @@ fn par_syntax() -> Syntax {
             "poll",
             "repoll",
             "submit",
+            "todo",
         ]),
         types: BTreeSet::from([]),
         special: BTreeSet::from(["<>"]),
@@ -818,6 +827,11 @@ fn fix_light_theme(mut theme: ColorTheme) -> ColorTheme {
 #[allow(unused)]
 fn red() -> egui::Color32 {
     egui::Color32::from_hex("#DE3C4B").unwrap()
+}
+
+#[allow(unused)]
+fn yellow() -> egui::Color32 {
+    egui::Color32::from_hex("#e09f3e").unwrap()
 }
 
 #[allow(unused)]

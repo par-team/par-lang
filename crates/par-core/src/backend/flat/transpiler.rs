@@ -7,7 +7,7 @@ use crate::frontend_impl::types::{Type, TypeDefs, TypeError, visit};
 
 use std::sync::OnceLock;
 
-use crate::backend::tree::compiler::IcCompiled;
+use crate::backend::tree::compiler::{CompiledGlobal, IcCompiled};
 use crate::frontend_impl::language::{GlobalName, Universal};
 use crate::runtime_impl::tree;
 use arcstr::ArcStr;
@@ -19,7 +19,9 @@ use par_runtime::flat::runtime::{
 
 use crate::runtime_impl::tree::Net;
 use par_runtime::flat::runtime::Global;
-use par_runtime::linker::{Artifact, LinkError, Linked, Unlinked, link_arena, link_package_ptr};
+use par_runtime::linker::{
+    Artifact, ArtifactGlobal, LinkError, Linked, Unlinked, link_arena, link_package_ptr,
+};
 use par_runtime::pkgid::PackageId;
 
 #[derive(Default)]
@@ -37,10 +39,16 @@ pub(crate) struct ProgramTranspiler {
     id_to_package: Arc<IndexMap<usize, Net<Unlinked>>>,
 }
 
+#[derive(Clone, Debug)]
+pub enum TranspiledGlobal<Ext: Clone> {
+    Package(PackagePtr<Ext>),
+    Unimplemented,
+}
+
 #[derive(Clone)]
 pub struct Transpiled<Ext: Clone> {
     pub arena: Arc<Arena<Ext>>,
-    pub name_to_package: HashMap<GlobalName<Universal>, PackagePtr<Ext>>,
+    pub name_to_package: HashMap<GlobalName<Universal>, TranspiledGlobal<Ext>>,
     pub type_defs: TypeDefs<Universal>,
 }
 
@@ -55,7 +63,12 @@ impl Transpiled<Unlinked> {
                 .map(|(k, v)| {
                     let mut path = k.module.directories.clone();
                     path.push(k.module.module.clone());
-                    (format!("{}.{}", path.join("/"), k.primary), v.clone())
+                    let key = format!("{}.{}", path.join("/"), k.primary);
+                    let val = match v {
+                        TranspiledGlobal::Package(pkg) => ArtifactGlobal::Package(pkg.clone()),
+                        TranspiledGlobal::Unimplemented => ArtifactGlobal::Unimplemented,
+                    };
+                    (key, val)
                 })
                 .collect(),
         }
@@ -100,7 +113,13 @@ impl Transpiled<Unlinked> {
             name_to_package: ic_compiled
                 .name_to_id
                 .iter()
-                .map(|(a, b)| (a.clone(), this.packages_in_nodes.get(b).unwrap().clone()))
+                .map(|(a, b)| match b {
+                    CompiledGlobal::Package(id) => (
+                        a.clone(),
+                        TranspiledGlobal::Package(this.packages_in_nodes.get(id).unwrap().clone()),
+                    ),
+                    CompiledGlobal::Unimplemented => (a.clone(), TranspiledGlobal::Unimplemented),
+                })
                 .collect(),
         }
     }
@@ -117,12 +136,6 @@ impl Transpiled<Unlinked> {
     }
 }
 
-impl<Ext: Clone> Transpiled<Ext> {
-    pub fn get_with_name(&self, name: &GlobalName<Universal>) -> Option<PackagePtr<Ext>> {
-        Some(self.name_to_package.get(name).cloned()?)
-    }
-}
-
 pub(crate) fn link_transpiled(
     transpiled: Transpiled<Unlinked>,
 ) -> Result<Transpiled<Linked>, LinkError> {
@@ -132,7 +145,12 @@ pub(crate) fn link_transpiled(
         name_to_package: transpiled
             .name_to_package
             .iter()
-            .map(|(k, v)| (k.clone(), link_package_ptr(v)))
+            .map(|(k, v)| match v {
+                TranspiledGlobal::Package(pkg) => {
+                    (k.clone(), TranspiledGlobal::Package(link_package_ptr(pkg)))
+                }
+                TranspiledGlobal::Unimplemented => (k.clone(), TranspiledGlobal::Unimplemented),
+            })
             .collect(),
     })
 }

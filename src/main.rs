@@ -11,6 +11,7 @@ use clap::{Command, arg, command, value_parser};
 use colored::Colorize;
 #[cfg(feature = "playground")]
 use eframe::egui;
+use par_core::runtime::TranspiledGlobal;
 use par_core::{
     frontend::{Type, is_lowercase_identifier, set_miette_hook},
     runtime::RuntimeCompilerError,
@@ -21,7 +22,7 @@ use tokio::time::Instant;
 #[cfg(not(target_family = "wasm"))]
 use url::Url;
 
-use par_runtime::linker::{Artifact, Linked, Unlinked};
+use par_runtime::linker::{Artifact, ArtifactGlobal, Linked, Unlinked};
 use par_runtime::spawn::TokioSpawn;
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -93,17 +94,26 @@ enum BuildError {
 impl BuildError {
     fn display(&self) -> String {
         match self {
-            Self::Discovery(error) => error.to_string(),
-            Self::Workspace(error) => error.to_string(),
+            Self::Discovery(error) => error.to_string().bright_red().to_string(),
+            Self::Workspace(error) => error.to_string().bright_red().to_string(),
             Self::Type { errors, sources } => errors
                 .iter()
-                .map(|error| format!("{:?}", error.to_report(sources)))
+                .map(|error| {
+                    let report = format!("{:?}", error.to_report(sources));
+                    if error.error.is_warning() {
+                        report.yellow().to_string()
+                    } else {
+                        report.bright_red().to_string()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n"),
             Self::InetCompile { error, sources } => format!(
                 "inet compilation error: {}",
                 error.display(&source_for_fallback(sources))
-            ),
+            )
+            .bright_red()
+            .to_string(),
         }
     }
 }
@@ -169,11 +179,17 @@ impl Display for NewPackageError {
 fn build_checked_package(package_path: &PathBuf) -> Result<CheckedWorkspaceBuild, BuildError> {
     let build =
         checked_workspace_from_path(package_path, None).map_err(map_workspace_build_error)?;
-    if !build.type_errors.is_empty() {
+    if build.type_errors.iter().any(|e| !e.error.is_warning()) {
         return Err(BuildError::Type {
             errors: build.type_errors,
             sources: build.sources.clone(),
         });
+    }
+    for warning in build.warnings() {
+        eprintln!(
+            "{}",
+            format!("{:?}", warning.to_report(&build.sources)).yellow()
+        );
     }
     Ok(build)
 }
@@ -640,7 +656,7 @@ fn run_definition(
             match build_runtime_package(&package_path, max_interactions) {
                 Ok((checked, rt_compiled, local_modules)) => (checked, rt_compiled, local_modules),
                 Err(error) => {
-                    println!("{}", error.display().bright_red());
+                    println!("{}", error.display());
                     return;
                 }
             };
@@ -661,8 +677,32 @@ fn run_definition(
             return;
         };
 
+        let package_to_run = match rt_compiled.code.name_to_package.get(name) {
+            Some(TranspiledGlobal::Package(pkg)) => pkg.clone(),
+            Some(TranspiledGlobal::Unimplemented) => {
+                println!(
+                    "{}",
+                    format!(
+                        "Definition {} is incomplete (directly or indirectly contains a todo; run `par check` for details)",
+                        target.unwrap_or_else(|| "Main.Main".to_string())
+                    )
+                    .bright_red()
+                );
+                return;
+            }
+            None => {
+                println!(
+                    "{}",
+                    format!(
+                        "Definition {} not found",
+                        target.unwrap_or_else(|| "Main.Main".to_string())
+                    )
+                    .bright_red()
+                );
+                return;
+            }
+        };
         let start = Instant::now();
-        let package_to_run = rt_compiled.code.get_with_name(name).unwrap();
         let start_runtime = if print_stats {
             par_runtime::start_and_instantiate_with_stats
         } else {
@@ -706,10 +746,20 @@ fn run_definition_vm(binary_path: PathBuf, target: Option<String>, print_stats: 
         let target = format!("{}.{}", parsed_target.module_path, definition_target);
 
         let start = Instant::now();
-        let package_to_run = artifact
-            .definition_to_package
-            .get(&target)
-            .expect(format!("Definition {target} not found").as_str());
+        let package_to_run = match artifact.definition_to_package.get(&target) {
+            Some(ArtifactGlobal::Package(pkg)) => pkg,
+            Some(ArtifactGlobal::Unimplemented) => {
+                println!(
+                    "{}",
+                    format!("Definition {target} is incomplete (directly or indirectly contains a todo; run `par check` for details)").bright_red()
+                );
+                return;
+            }
+            None => {
+                println!("{}", format!("Definition {target} not found").bright_red());
+                return;
+            }
+        };
         let start_runtime = if print_stats {
             par_runtime::start_and_instantiate_with_stats
         } else {
@@ -738,7 +788,7 @@ fn compile(package_path: PathBuf, max_interactions: u32) {
                 (checked, rt_compiled, local_modules, sources)
             }
             Err(error) => {
-                println!("{}", error.display().bright_red());
+                println!("{}", error.display());
                 return;
             }
         };
@@ -783,7 +833,7 @@ fn check(package_path: PathBuf) -> Result<(), String> {
     let build_result = build_runtime_package(&package_path, MAX_INTERACTIONS_DEFAULT);
     if let Err(error) = build_result {
         let error_string = error.display();
-        eprintln!("{}", error_string.bright_red());
+        eprintln!("{error_string}");
         return Err(error_string);
     }
     Ok(())

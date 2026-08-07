@@ -1627,6 +1627,7 @@ fn postfix_base(input: &mut Input) -> Result<Expression<Unresolved>> {
         global_name.map(|name| Expression::Global(name.span(), name)),
         local_name.map(|name| Expression::Variable(name.span(), name)),
         expr_grouped,
+        expr_todo,
     ))
     .parse_next(input)
 }
@@ -2673,6 +2674,7 @@ fn process_head(input: &mut Input) -> Result<(Span, ProcessHead)> {
         proc_compound_assign,
         proc_catch,
         proc_throw,
+        proc_todo,
         expression_command,
         global_command,
         command,
@@ -2916,6 +2918,23 @@ fn proc_throw(input: &mut Input) -> Result<(Span, ProcessHead)> {
                 )),
             )
         })
+        .parse_next(input)
+}
+
+fn proc_todo(input: &mut Input) -> Result<(Span, ProcessHead)> {
+    t(TokenKind::Todo)
+        .map(|token| {
+            (
+                token.span.clone(),
+                ProcessHead::Terminator(ProcessTerminator::ToDo(token.span.clone())),
+            )
+        })
+        .parse_next(input)
+}
+
+fn expr_todo(input: &mut Input) -> Result<Expression<Unresolved>> {
+    t(TokenKind::Todo)
+        .map(|token| Expression::ToDo(token.span.clone()))
         .parse_next(input)
 }
 

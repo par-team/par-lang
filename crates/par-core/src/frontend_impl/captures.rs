@@ -315,6 +315,7 @@ impl CaptureAnalysis {
             Terminator::Unreachable(span) => {
                 (Terminator::Unreachable(span.clone()), Captures::new())
             }
+            Terminator::ToDo(span) => (Terminator::ToDo(span.clone()), Captures::new()),
         }
     }
 
@@ -515,6 +516,10 @@ impl CaptureAnalysis {
                 Arc::new(Expression::External(f.clone(), typ.clone())),
                 Captures::new(),
             ),
+            Expression::ToDo(span, typ) => (
+                Arc::new(Expression::ToDo(span.clone(), typ.clone())),
+                Captures::new(),
+            ),
         }
     }
 }
@@ -567,7 +572,8 @@ impl<Typ, S> BlockEnvAnalyzer<Typ, S> {
             Expression::Global(_, _, _)
             | Expression::Variable(_, _, _, _)
             | Expression::Primitive(_, _, _)
-            | Expression::External(_, _) => {}
+            | Expression::External(_, _)
+            | Expression::ToDo(_, _) => {}
         }
     }
 
@@ -612,7 +618,7 @@ impl<Typ, S> BlockEnvAnalyzer<Typ, S> {
             Terminator::Goto(_, index, _) => {
                 self.schedule_block(*index, env);
             }
-            Terminator::Unreachable(_) => {}
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => {}
         }
     }
 
@@ -777,6 +783,7 @@ impl<'a> CaptureCollector<'a> {
             }
             Expression::Primitive(_, _, _) => Captures::new(),
             Expression::External(_, _) => Captures::new(),
+            Expression::ToDo(_, _) => Captures::new(),
         }
     }
 
@@ -867,7 +874,7 @@ impl<'a> CaptureCollector<'a> {
             Terminator::Goto(_, index, _) => {
                 self.old_block_caps.get(index).cloned().unwrap_or_default()
             }
-            Terminator::Unreachable(_) => Captures::new(),
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => Captures::new(),
         }
     }
 

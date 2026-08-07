@@ -83,6 +83,7 @@ pub enum Terminator<Typ, S> {
     Block(Span, usize, Arc<Process<Typ, S>>, Arc<Process<Typ, S>>),
     Goto(Span, usize, Captures),
     Unreachable(Span),
+    ToDo(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +151,7 @@ pub enum Expression<Typ, S> {
     },
     Primitive(Span, Primitive, Typ),
     External(Unlinked, Typ),
+    ToDo(Span, Typ),
 }
 
 impl<Typ, S> Spanning for Process<Typ, S> {
@@ -170,6 +172,7 @@ impl<Typ, S> Spanning for Terminator<Typ, S> {
             Self::Block(span, _, _, _) => span.clone(),
             Self::Goto(span, _, _) => span.clone(),
             Self::Unreachable(span) => span.clone(),
+            Self::ToDo(span) => span.clone(),
         }
     }
 }
@@ -257,6 +260,10 @@ impl<Typ, S> Process<Typ, S> {
             typ,
             command,
         })
+    }
+
+    pub fn todo(span: Span) -> Arc<Self> {
+        Self::terminal(Terminator::ToDo(span))
     }
 }
 
@@ -458,6 +465,7 @@ impl<S: Clone> Process<(), S> {
                 Terminator::Goto(span.clone(), *index, caps.clone())
             }
             Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+            Terminator::ToDo(span) => Terminator::ToDo(span.clone()),
         };
 
         Arc::new(Process::new(steps, terminator))
@@ -552,7 +560,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
                 body.types_at_spans(program, docs, consume);
                 process.types_at_spans(program, docs, consume);
             }
-            Terminator::Goto(_, _, _) | Terminator::Unreachable(_) => {}
+            Terminator::Goto(_, _, _) | Terminator::Unreachable(_) | Terminator::ToDo(_) => {}
         }
     }
 }
@@ -682,6 +690,7 @@ impl<S: Clone> Expression<(), S> {
                 Arc::new(Self::Primitive(span.clone(), value.clone(), typ.clone()))
             }
             Self::External(f, typ) => Arc::new(Self::External(f.clone(), typ.clone())),
+            Self::ToDo(span, typ) => Arc::new(Self::ToDo(span.clone(), typ.clone())),
         }
     }
 }
@@ -978,6 +987,9 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Expression<Type<S>, S>
             }
             Self::Primitive(_, _, _) => {}
             Self::External(_, _) => {}
+            Self::ToDo(span, typ) => {
+                consume(span.clone(), HoverInfo::unnamed(typ.clone()));
+            }
         }
     }
 }
@@ -991,6 +1003,7 @@ impl<Typ: Clone, S> Expression<Typ, S> {
             Self::Chan { expr_type, .. } => expr_type.clone(),
             Self::Primitive(_, _, typ) => typ.clone(),
             Self::External(_, typ) => typ.clone(),
+            Self::ToDo(_, typ) => typ.clone(),
         }
     }
 }
@@ -1086,6 +1099,7 @@ impl<S: Clone> Process<Type<S>, S> {
                 Terminator::Goto(span.clone(), *index, captures.clone())
             }
             Terminator::Unreachable(span) => Terminator::Unreachable(span.clone()),
+            Terminator::ToDo(span) => Terminator::ToDo(span.clone()),
         };
         Arc::new(Process::new(steps, terminator))
     }
@@ -1184,6 +1198,7 @@ impl<S: Clone> Expression<Type<S>, S> {
             Expression::External(external, typ) => {
                 Arc::new(Expression::External(external.clone(), f(typ.clone())))
             }
+            Expression::ToDo(span, typ) => Arc::new(Expression::ToDo(span.clone(), f(typ.clone()))),
         }
     }
 }
@@ -1304,6 +1319,7 @@ impl<S: Clone> Process<(), S> {
             ),
             Terminator::Goto(span, index, captures) => Terminator::Goto(span, index, captures),
             Terminator::Unreachable(span) => Terminator::Unreachable(span),
+            Terminator::ToDo(span) => Terminator::ToDo(span),
         };
         Ok(Process::new(steps, terminator))
     }
@@ -1395,6 +1411,7 @@ impl<S: Clone> Expression<(), S> {
                 Ok(Expression::Primitive(span, primitive, ()))
             }
             Expression::External(external, ()) => Ok(Expression::External(external, ())),
+            Expression::ToDo(span, ()) => Ok(Expression::ToDo(span, ())),
         }
     }
 
@@ -1523,7 +1540,7 @@ impl<Typ, S> Process<Typ, S> {
             }
             Terminator::Block(_, _, _body, process) => process.free_variables(),
             Terminator::Goto(_, _, caps) => caps.names.keys().cloned().collect(),
-            Terminator::Unreachable(_) => IndexSet::new(),
+            Terminator::Unreachable(_) | Terminator::ToDo(_) => IndexSet::new(),
         };
 
         for step in self.steps.iter().rev() {
@@ -1565,6 +1582,10 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
         match &self.terminator {
             Terminator::Unreachable(_) => {
                 write!(f, "unreachable")
+            }
+
+            Terminator::ToDo(_) => {
+                write!(f, "todo")
             }
 
             Terminator::Poll {
@@ -1746,6 +1767,7 @@ impl<Typ, S> Expression<Typ, S> {
             Expression::Chan { captures, .. } => captures.names.keys().cloned().collect(),
             Expression::Primitive(_, _, _) => IndexSet::new(),
             Expression::External(_, _) => IndexSet::new(),
+            Expression::ToDo(_, _) => IndexSet::new(),
         }
     }
 }
@@ -1779,6 +1801,10 @@ impl<Typ, S: Clone + std::fmt::Display> Expression<Typ, S> {
 
             Self::External(_, _) => {
                 write!(f, "<external>")
+            }
+
+            Self::ToDo(_, _) => {
+                write!(f, "todo")
             }
         }
     }

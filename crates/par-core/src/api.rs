@@ -101,6 +101,7 @@ pub mod frontend {
 }
 
 pub mod runtime {
+    pub use crate::backend::flat::transpiler::{Transpiled, TranspiledGlobal};
     pub use crate::runtime_impl::{Compiled, RuntimeCompilerError};
     pub use crate::typed_readback::{TypedHandle, TypedReadback, type_supports_readback};
     pub use par_runtime::data::Data;

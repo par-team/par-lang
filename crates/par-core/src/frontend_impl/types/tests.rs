@@ -3,6 +3,7 @@ mod tests {
     use crate::frontend_impl::language::{
         GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
     };
+    use crate::frontend_impl::types::assignability::{Assignability, SubtypeMismatchKind};
     use crate::frontend_impl::types::lattice::{intersect_types, union_types};
     use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs, TypeError};
     use crate::location::Span;
@@ -268,12 +269,29 @@ mod tests {
             cleanup_choice
                 .is_definitely_assignable_to(&plain_choice, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             !plain_choice
                 .is_definitely_assignable_to(&cleanup_choice, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
+
+        let Assignability::Incompatible(choice_cause) = plain_choice
+            .is_definitely_assignable_to(&cleanup_choice, &type_defs)
+            .unwrap()
+        else {
+            panic!("expected a cleanup mismatch")
+        };
+        assert!(matches!(
+            choice_cause.kind,
+            SubtypeMismatchKind::CleanupBranchMismatch {
+                provided: false,
+                expected: true,
+                ..
+            }
+        ));
 
         let plain_either = Type::either(vec![("variant", Type::break_())]);
         let cleanup_either = marked_either("variant", Type::break_());
@@ -281,12 +299,29 @@ mod tests {
             plain_either
                 .is_definitely_assignable_to(&cleanup_either, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             !cleanup_either
                 .is_definitely_assignable_to(&plain_either, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
+
+        let Assignability::Incompatible(either_cause) = cleanup_either
+            .is_definitely_assignable_to(&plain_either, &type_defs)
+            .unwrap()
+        else {
+            panic!("expected a cleanup mismatch")
+        };
+        assert!(matches!(
+            either_cause.kind,
+            SubtypeMismatchKind::CleanupBranchMismatch {
+                provided: true,
+                expected: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -358,21 +393,25 @@ mod tests {
             shared
                 .is_definitely_assignable_to(&Type::box_(shared.clone()), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             !strict
                 .is_definitely_assignable_to(&Type::box_(strict.clone()), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             boxed_strict
                 .is_definitely_assignable_to(&nested_boxed_strict, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             nested_boxed_strict
                 .is_definitely_assignable_to(&boxed_strict, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -386,6 +425,7 @@ mod tests {
             empty_either
                 .is_definitely_assignable_to(&any_type, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -399,6 +439,7 @@ mod tests {
             any_type
                 .is_definitely_assignable_to(&empty_choice, &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -428,6 +469,7 @@ mod tests {
             exists(TypeConstraint::Share)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         // ...but an unconstrained (possibly linear) witness must not be
         // passed off as a `share` one.
@@ -435,6 +477,7 @@ mod tests {
             !exists(TypeConstraint::Any)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Share), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -454,12 +497,14 @@ mod tests {
             forall(TypeConstraint::Any)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Share), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         // ...but not the other way around.
         assert!(
             !forall(TypeConstraint::Share)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
@@ -479,11 +524,13 @@ mod tests {
             pair(TypeConstraint::Share)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Any), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
         assert!(
             !pair(TypeConstraint::Any)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Share), &type_defs)
                 .unwrap()
+                .is_assignable()
         );
     }
 
