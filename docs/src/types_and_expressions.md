@@ -100,7 +100,7 @@ These include:
 - Every [**box**](./types/box.md), regardless of the type of its content
 - [**Forall**](./types/forall.md) and [**Exists**](./types/exists.md) whose body is shareable
 
-### Which linear types are droppable?
+### Which types are droppable?
 
 These include all the shareable types above, plus:
 
@@ -113,14 +113,14 @@ perform.
 
 See [Type Constraints](./types/constraints.md) and [Auto-Cleanup](./types/auto_cleanup.md) for more information.
 
-### Which types are strict linear?
+### Which types are strictly linear?
 
 Everything that is neither shareable nor droppable is strictly linear. Common examples are:
 
 - A [**function**](./types/function.md)
 - A [**choice**](./types/choice.md) without a cleanup branch
 - A [**continuation**](./types/continuation.md)
-- Any type that **contains** a linear component, even deeply
+- Any type that **contains** a strictly linear component, even deeply
 
 If a type has a linear piece **anywhere inside it,** it becomes linear — unless that part is
 wrapped in a [box](./types/box.md).

@@ -129,12 +129,12 @@ becomes
 
 ```par
 either {
-  .close* ?,
+  .cancel* ?,
 }
 ```
 
 The choice side promises that `.cancel` is safe to select automatically. The either side carries
-the same marker so that its consumer is forced to register the cleanup branch at runtime, to be potentially selected by auto-cleanup.
+the same marker so that its consumer is forced to register the cleanup branch at runtime (by marking it with a star inside a `.case`), to be potentially selected by auto-cleanup.
 
 ## Duality in action
 

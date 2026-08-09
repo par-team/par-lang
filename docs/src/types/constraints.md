@@ -185,7 +185,7 @@ The comparison operators use `@core/Data.Compare` under the hood. The `#{...}` t
 
 Types that satisfy `data` include:
 
-- all primitive types and`!`
+- all primitive types and `!`
 - pairs whose elements are data
 - eithers whose payloads are data
 - recursive types whose bodies are data
