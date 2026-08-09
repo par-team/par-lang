@@ -1,248 +1,17 @@
 # Error Handling
 
-Programs that interact with the real world must handle errors gracefully. Files don't exist, networks disconnect, users type unexpected input. Most errors occur at I/O boundaries where your program meets external systems beyond its control.
+Programs that interact with the real world must handle errors gracefully. Files don't exist,
+networks disconnect, and users type unexpected input. Most errors occur at I/O boundaries, where
+our programs meet systems beyond their control.
 
-Par takes a structured approach to error handling that builds on its linear type system. At its core, Par uses explicit Try types — but adds lightweight syntax sugar that makes working with errors feel natural while keeping the underlying semantics transparent.
+Par represents errors with explicit `Try` values. On top of them, `try`/`catch`/`throw` provide a
+lightweight syntax for propagating errors through a process. And when propagation abandons live
+resources, [auto-cleanup](../types/auto_cleanup.md) makes sure they are still closed, canceled, or
+rolled back.
 
-## Why Par Needs Unique Error Handling
+## Errors Are Values
 
-Par's linear type system together with its concurrent evaluation creates a unique situation for error handling. Traditional approaches don't work for Par:
-
-**Exceptions** propagate across call stacks, unwinding through multiple function calls automatically. But Par's concurrent execution model has no call stacks! Instead, it has processes that communicate via channels. Any error must be explicitly passed via a channel, making something like a `Try` type necessary for error handling.
-
-**Rust's `?` operator** works by dropping remaining owned values when propagating errors. This implicit cleanup doesn't translate to Par's linear types, where each value must be consumed according to its specific type and context.
-
-Par needs error handling that makes cleanup fully explicit while remaining convenient to use. The `try`/`catch`/`throw` syntax sugar introduced here achieves this balance — borrowing familiar keywords from exception handling while operating very differently. Unlike traditional exceptions, Par's error handling is purely local syntax sugar over `Try` types, with no hidden control flow or stack unwinding.
-
-## Working with Files: Error Handling Without Sugar
-
-Let's start with a concrete example using Par's file system operations through the built-in `@basic/Os` module. The `Os.Path` type provides methods for working with the filesystem — creating files, reading directories, and so on. Most of these operations can fail, so they return `Try` values.
-
-Here's what error handling looks like without any syntax sugar. We'll write a program that creates a log file and writes some entries to it:
-
-```par
-module Main
-
-import {
-  @basic/Console
-  @basic/Os
-}
-
-def Main: ! = chan exit {
-  let console = Console.Open
-
-  let path = Os.Path("logs.txt")
-  Os.CreateOrAppendToFile(path).case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok writer => {}
-  }
-  // ...
-```
-
-A few things to note about this pattern:
-
-The `chan exit` creates a channel called `exit` of type `?` — [the continuation type](../processes/duality.md), which is dual to our `Main` function's return type `!`. The `exit!` syntax is the _break_ command applied to this continuation, which ends the process.
-
-After the `.case` block, the `writer` variable is available in the surrounding scope. This is how process-scoped variables work in Par — variables bound in `.case` branches continue to exist after the case analysis.
-
-```par
-  writer.write("[INFO] First new log\n").case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok => {}
-  }
-```
-
-In [process syntax](../process_syntax.md), when we use `.ok =>`, the subject of the command (`writer`) gets updated to the payload of the .ok branch. Since `.write` returns the same `Os.Writer` type on success, `writer` remains usable.
-
-```par
-  writer.write("[INFO] Second new log\n").case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok => {}
-  }
-```
-
-And finish by closing the file:
-
-```par
-  writer.close.case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok! => {}
-  }
-  exit!
-}
-```
-
-Note the `.ok!` pattern here — after closing, the writer becomes a unit value `!`.
-
-Here's the complete program:
-
-```par
-module Main
-
-import {
-  @basic/Console
-  @basic/Os
-}
-
-def Main: ! = chan exit {
-  let console = Console.Open
-
-  let path = Os.Path("logs.txt")
-  Os.CreateOrAppendToFile(path).case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok writer => {}
-  }
-  
-  writer.write("[INFO] First new log\n").case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok => {}
-  }
-  writer.write("[INFO] Second new log\n").case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok => {}
-  }
-
-  writer.close.case {
-    .err e => {
-      console.print(e)
-      console.close
-      exit!
-    }
-    .ok! => {}
-  }
-
-  console.close
-  exit!
-}
-```
-
-This is extremely verbose! The same error handling code is repeated for every operation that might fail. Let's see how Par's error handling sugar can clean this up.
-
-## The Same Program with `try`/`catch`
-
-Here's the exact same functionality using Par's error handling syntax:
-
-```par
-module Main
-
-import {
-  @basic/Console
-  @basic/Os
-}
-
-def Main: ! = chan exit {
-  let console = Console.Open
-
-  catch e => {
-    console.print(e)
-    console.close
-    exit!
-  }
-
-  let path = Os.Path("logs.txt")
-  let try writer = Os.CreateOrAppendToFile(path)
-  
-  writer.write("[INFO] First new log\n").try
-  writer.write("[INFO] Second new log\n").try
-
-  writer.close.try
-  console.close
-  exit!
-}
-```
-
-Significantly shorter and more readable! The error handling is declared once and applies to all subsequent operations.
-
-## How `try`/`catch`/`throw` Work in Process Syntax
-
-Par's error handling sugar is built around small, local keywords that desugar to explicit `Try` handling. Let's understand how they work.
-
-### The `catch` Statement
-
-Before you can use `try` or `throw`, you must define a `catch` block in the same process. This restriction is crucial — the corresponding `try` and `throw` commands must be in the same sequential process as their `catch`, not in nested processes or expressions.
-
-```par
-catch <pattern> => {
-  <process>
-}
-```
-
-The `<pattern>` can be any pattern like those used in `let` statements or function parameters. Usually this is a simple variable name, but you can use more complex patterns when needed.
-
-For example, if the error type is unit:
-
-```par
-catch ! => { ... }
-```
-
-You can also include type annotations:
-
-```par
-catch e: Os.Error => { ... }
-```
-
-The `<process>` inside a `catch` block must end with a process-ending command:
-
-- _break:_ `continuation!`
-- _linking:_ `left <> right`
-- `.loop` to return to a .begin that's outside the catch block, useful for retrying operations
-- `throw` to jump to another `catch` block
-
-### The `throw` Command
-
-`throw` jumps directly to a `catch` block with an error value:
-
-```par
-catch e => {
-  console.print(e)
-  console.close
-  exit!
-}
-
-throw "Total meltdown"
-```
-
-This is equivalent to executing the catch block directly:
-
-```par
-console.print("Total meltdown")
-console.close
-exit!
-```
-
-`throw` is useful for creating custom error conditions in your logic.
-
-## The `try` Patterns and Commands
-
-The real power comes from `try`, which provides conditional error handling based on `Try` values:
+The standard `Try` type is an [either](../types/either.md):
 
 ```par
 type Try<e, a> = either {
@@ -251,107 +20,194 @@ type Try<e, a> = either {
 }
 ```
 
-`try` appears in two contexts: _patterns_ and _commands._
+A successful operation returns `.ok` with its result. A failed operation returns `.err` with an
+error value. There are no exceptions hidden underneath.
 
-### `.try` in Commands
+This matters in Par because concurrent processes do not form a call stack that an exception could
+unwind. Processes communicate through channels, so an error moving from one process to another
+must be sent explicitly as part of its protocol.
 
-The `.try` postfix transforms verbose `Try` case analysis into clean linear code. Remember our original verbose version:
+Within one sequential process, though, repeatedly matching on `Try` would be tedious. That's the
+part handled by `try`/`catch`/`throw`. These constructs are local syntax sugar: they make explicit
+`Try` propagation pleasant without introducing exception-style stack unwinding.
+
+## A First Look at `try`/`catch`
+
+Here is a complete program that copies one file to another:
 
 ```par
-writer.write("[INFO] First new log\n").case {
-  .err e => {
+module CopyFile
+
+import {
+  @core/Bytes
+  @basic/Console
+  @basic/Os
+}
+
+def Main: ! = chan exit {
+  let console = Console.Open
+
+  catch ! => { console.print("Failed to read input."); exit! }
+  console.prompt("Src path: ")[try src]
+  console.prompt("Dst path: ")[try dst]
+
+  catch e: Os.Error => {
+    console.print("An error occurred:")
     console.print(e)
-    console.close
     exit!
   }
-  .ok => {}
-}
-```
 
-With `.try`, this becomes:
+  let try reader = src->Os.Path->Os.OpenFile
+  let try writer = dst->Os.Path->Os.CreateOrReplaceFile
 
-```par
-writer.write("[INFO] First new log\n").try
-```
-
-The `.try` postfix desugars any command or expression returning a `Try`:
-
-```par
-variable.try
-```
-
-becomes:
-
-```par
-variable.case {
-  .err e => {
-    throw e
+  reader.begin.read.try.case {
+    .end! => {
+      writer.close.try
+      exit!
+    }
+    .chunk(bytes) => {
+      writer.write(bytes).try
+      reader.loop
+    }
   }
-  .ok => {}
 }
 ```
 
-This works for more complex command chains too. Consider this type for polling data with possible errors:
+The first `catch` handles the unit error returned by `console.prompt`. The second handles file-system
+errors. Every matching `try` either unwraps an `.ok` value and continues, or transfers an `.err`
+value to the nearest `catch`.
+
+Notice what the error handlers do **not** contain: a growing list of resources to close. If opening
+the destination fails, the already-open reader is cleaned up. If copying fails later, every handle
+that remains live on that error path is cleaned up. When `exit!` terminates either handler, the
+console is cleaned up too.
+
+Only one close remains explicit:
 
 ```par
-type Poll<e, a> = iterative choice {
-  .close => Try<e, !>,
-  .next => Try<e, (a) self>,
+writer.close.try
+```
+
+Closing a writer flushes its pending output and may itself fail. On the successful path, that error
+is part of the operation's result, so the program observes it with `try`. Auto-cleanup is for paths
+where we have already decided to abandon the resource and are willing to ignore the cleanup result.
+
+## Auto-Cleanup on Error Paths
+
+The file handles above are linear, but droppable. Their protocols mark `.close` as a cleanup branch:
+
+```par
+type Reader<e> = recursive choice {
+  .close* => Try<e, !>,
+  .read => Try<e, either {
+    .end!,
+    .chunk(Bytes) self,
+  }>,
+}
+
+type Writer<e> = iterative choice {
+  .close* => Try<e, !>,
+  .write(Bytes) => Try<e, self>,
 }
 ```
 
-You can poll an element and handle errors seamlessly:
+The `*` says that `.close` is the canonical safe way to dispose of the object. Whenever a `throw`,
+link, or break abandons such a value, Par selects that branch automatically and continues cleaning
+up its result.
+
+For an `Os.Writer`, that result is `Try<Os.Error, !>`. Both branches are ordinary data, so the result
+may be discarded. This also means an error produced by an automatic close is ignored. If the close
+error matters, call `.close` explicitly and handle its `Try`, as the copy program does on success.
+
+Strictly linear values do not receive invented cleanup behavior. If a live value has no usable
+cleanup branch, leaving it unused is a type error. We will see how labeled catches handle that case
+later in this chapter.
+
+## What the Sugar Means
+
+It helps to see the explicit code once. Without `try`, opening a file and continuing with its reader
+looks like this in process syntax:
 
 ```par
-// source : Poll<Os.Error, String>
-source.next.try[value]
+let result = Os.OpenFile(path)
+result.case {
+  .err e => {
+    console.print(e)
+    exit!
+  }
+  .ok reader => {}
+}
+
+// `reader` is available here
 ```
 
-After this command, `source` maintains its `Poll<Os.Error, String>` type and value contains the successfully polled `String`.
+The `.ok` branch falls through and makes `reader` available to the rest of the process. The `.err`
+branch ends the current path. `try` packages this recurring shape into three small constructs,
+which we will first cover in their [process syntax](../process_syntax.md) version.
 
-<!-- moved `default` to the end of this chapter -->
+### The `catch` Statement
 
-### The Concurrent Evaluation Restriction
-
-You might think this would work:
+A process `catch` defines what to do with a propagated error:
 
 ```par
-let writer = Os.CreateOrAppendToFile(path).try
+catch <pattern> => {
+  <process>
+}
 ```
 
-However, this causes a type error. The reason reveals something fundamental about Par's evaluation model.
-
-Par evaluates expressions concurrently with the processes that use them. When you write:
+The pattern can be a variable, a unit pattern, a destructuring pattern, or a pattern with a type
+annotation:
 
 ```par
-let writer = Os.CreateOrAppendToFile(path).try
+catch ! => { ... }
+catch e: Os.Error => { ... }
 ```
 
-The expression `Os.CreateOrAppendToFile(path)` runs concurrently with the process doing the `let`. If the expression were to fail on `.try`, the main process might already be executing other commands — there's no sound way to "rewind" that execution.
+The handler must end the current process path, i.e., it cannot fall through. It can:
 
-This is why `try` and `throw` can only be used in the same process as their corresponding `catch`, not in nested expressions or processes.
+- break with `continuation!`;
+- link two channels with `left <> right`;
+- `loop` to an enclosing `begin`, which is useful for retrying;
+- `throw` to an earlier catch.
+
+Before using `try` or `throw`, a matching `catch` must appear in the same sequential process. A catch
+does not reach into nested expressions or processes.
+
+### The `throw` Command
+
+`throw` transfers a value directly to a catch:
+
+```par
+catch e => {
+  console.print(e)
+  exit!
+}
+
+throw "Total meltdown"
+```
+
+This behaves as if the catch body ran with `e` bound to `"Total meltdown"`. It is useful for errors
+created by our own logic, rather than obtained from an existing `Try`.
 
 ### `try` in Patterns
 
-The solution is to use `try` in the pattern itself:
+Most fallible operations return a `Try` value. Put `try` in the pattern that matches on it:
 
 ```par
-let try writer = Os.CreateOrAppendToFile(path)
+let try reader = Os.OpenFile(path)
 ```
 
-This moves the error handling into the correct process. The desugaring is:
+This is shorthand for:
 
 ```par
-let writer = Os.CreateOrAppendToFile(path)
-writer.case {
-  .err e => {
-    throw e
-  }
-  .ok => {}
+let result = Os.OpenFile(path)
+result.case {
+  .err e => { throw e }
+  .ok reader => {}
 }
 ```
 
-Since `try` is part of the pattern, it works in nested patterns too:
+Because `try` is part of a pattern, it composes with other patterns:
 
 ```par
 let (try leftReader, try rightReader)! = (
@@ -360,58 +216,84 @@ let (try leftReader, try rightReader)! = (
 )!
 ```
 
-And it works in receive commands, too. The `Console` type demonstrates this well:
+It also works in receive commands. For example, `Console.prompt` returns a `Try` before continuing
+with the console:
 
 ```par
-type Console = iterative choice {
-  .close => !,
-  .print(String) => self,
-  .prompt(String) => (Try<!, String>) self,
-}
-```
-
-The `.prompt` method returns a `Try` while keeping the console alive for more operations:
-
-```par
-let console = Console.Open
-
 catch ! => {
   console.print("Failed to read input.")
-  console.close
   exit!
 }
 
 console.prompt("What's your name?")[try name]
-console.prompt("What's your address?")[try address]
 ```
 
-## Error Handling in Expression Syntax
+### `.try` in Commands
 
-Par also supports `try`/`catch` directly in expressions, with syntax adapted for expression contexts:
+When the subject of a process command becomes a `Try`, postfix `.try` unwraps its successful branch
+in place:
 
 ```par
-catch <pattern> => <err result> in <expression using try/throw>
+writer.write("[INFO] Started\n").try
 ```
 
-The same concurrent evaluation restrictions apply, with an additional constraint: `try`/`throw` can only be used before any part of the result is constructed.
-
-This is invalid because `result.try` appears in a nested expression, which runs as a separate concurrent process:
+It is shorthand for the familiar case analysis:
 
 ```par
-// result : Try<String, Int>
+writer.write("[INFO] Started\n").case {
+  .err e => { throw e }
+  .ok => {}
+}
+```
+
+On success, `writer` is updated to the value inside `.ok`, ready for its next command.
+
+### Why `try` Must Be Local
+
+This does not work in a process:
+
+```par
+let writer = Os.CreateOrReplaceFile(path).try  // Error
+```
+
+Par evaluates expressions concurrently. The `let` statement does not
+wait for the expression on the right of `=` to evaluate before resuming the process. It proceeds to the
+next statement immediately. That makes it impossible to throw from the nested expression: the process
+may already be doing something else, and interrupting it would be unsafe.
+
+Put `try` in the pattern instead:
+
+```par
+let try writer = Os.CreateOrReplaceFile(path)
+```
+
+Now the process waits for the `Try` to reveal `.ok` or `.err`, then proceeds or throws accordingly.
+
+## Error Handling in Expressions
+
+Expressions have their own local form of `catch`:
+
+```par
+catch <pattern> => <error result> in <expression using try or throw>
+```
+
+For example, a function can propagate an error while transforming its successful value:
+
+```par
 catch e => .err e in
-.ok {result.try + 1}
+let try rawData = source.fetch in
+.ok Encode(rawData)
 ```
 
-This fix attempts to work around the nested expression issue but still fails — the outer `.ok` constructs part of the result before `try` executes:
+As in process syntax, `try` cannot jump out of a concurrently evaluated nested expression. It must
+also run before any part of the result has been constructed. This is invalid:
 
 ```par
 catch e => .err e in
-.ok let try value = result in
-value + 1
+.ok {result.try + 1}  // Error: `try` is inside a nested expression
 ```
 
-Here's the correct version:
+Move the `try` to the sequential part first:
 
 ```par
 catch e => .err e in
@@ -419,130 +301,80 @@ let try value = result in
 .ok {value + 1}
 ```
 
-This ensures all error handling completes before constructing the result.
-
-### Useful Expression Patterns
-
-Expression-form `catch` enables several common patterns:
-
-#### Mapping the error (adding context):
+The expression form is also useful for mapping an error:
 
 ```par
-catch e => .err String.Builder.add("Failed to process file: ").add(e).build in
-let try content = file.readAll in 
+catch e => .err `Failed to process file: #{e}` in
+let try content = file.readAll in
 .ok ProcessContent(content)
 ```
 
-#### Mapping the success value:
+## Labels and Multiple Error Routes
+
+Like `begin`/`loop`, catches can be labeled:
 
 ```par
-catch e => .err e in
-let try rawData = source.fetch in 
-.ok Encode(rawData)
-```
-
-#### Unwrapping with a default value:
-
-```par
-catch ! => "Unknown" in 
-config.getUserName.try
-```
-
-## Labels and Layered Error Handling
-
-Like `begin`/`loop`, `catch` blocks can be labeled for precise control:
-
-```par
-catch@label e => { ... }
-```
-
-The corresponding `try` and `throw` commands reference the same label:
-
-```par
-let try@label value = result
-throw@label "Custom error"
-```
-
-Labels are selected by proximity and name, not by error type. The nearest `catch` with the matching label (or no label) is chosen. This allows different error types to be routed to different handlers:
-
-```par
-catch@fs e => { /* handle file system errors */ }
+catch@fs e => { /* handle file-system errors */ }
 catch@net e => { /* handle network errors */ }
 
 let try@fs writer = path.createFile
-let try@net conn = url.connect
+let try@net connection = url.connect
 ```
 
-### Throwing to Previous `catch` Blocks
+Labels are selected by name and proximity, not by error type. `try@fs` and `throw@fs` use the nearest
+preceding `catch@fs`; an unlabeled `try` or `throw` uses the nearest unlabeled catch.
 
-A powerful pattern is using nested `catch` blocks for resource cleanup while delegating to outer blocks for shared error handling.
+Usually one catch is enough. Labels become useful when a process has genuinely different error
+routes — or when strict linear resources need explicit cleanup.
 
-Here's a simple example showing the basic pattern:
+### When Auto-Cleanup Is Not Available
+
+Not every linear object admits a safe automatic disposal operation. A protocol may deliberately
+leave its close branch unmarked because closing requires information only the caller has, or because
+its result must never be ignored:
+
+```par
+type StrictResource = choice {
+  .close => !,  // no `*`: this resource is strictly linear
+}
+```
+
+If an error path crosses a live `StrictResource`, Par rejects it unless that path consumes the
+resource. Labeled catches can form a small cleanup chain for this case:
 
 ```par
 catch e => {
-  Debug.Log("Main error handler")
-  Debug.Log(e)
+  console.print(e)
   exit!
 }
 
-let try resource = AcquireResource
-catch e => {
-  resource.cleanup
-  throw e  // delegate to the main handler above
+let try first = OpenFirst
+catch@first e => {
+  first.close
+  throw e
 }
 
-// use resource, but error might occur elsewhere
-let try otherData = SomeOtherOperation  // this might fail
-ProcessTogether(resource, otherData)
-```
-
-The inner `catch` handles cleanup of the specific resource, then `throw`s to the outer `catch` for shared error reporting logic. The key point is that the error occurs in `SomeOtherOperation`, not in the resource itself, so the resource is still valid and needs proper cleanup.
-
-Here's this pattern in a more complex, real-world example — copying a file with proper resource management:
-
-```par
-def Main: ! = chan exit {
-  let console = Console.Open
-
-  catch ! => { console.print("Failed to read input.").close; exit! }
-  console.prompt("Src path: ")[try src]
-  console.prompt("Dst path: ")[try dst]
-
-  catch e: Os.Error => {
-    console.print("An error occurred:")
-    console.print(e)
-    console.close
-    exit!
-  }
-
-  let try reader = Os.OpenFile(Os.Path(src))
-  catch@w e => { reader.close; throw e }
-
-  let try@w writer = Os.CreateOrReplaceFile(Os.Path(dst))
-  catch@r e => { writer.close; throw e }
-
-  reader.begin.read.try@r.case {
-    .end! => {
-      writer.close.try
-      console.close
-      exit!
-    }
-    .chunk(bytes) => {
-      writer.write(bytes).try@w
-      reader.loop
-    }
-  }
+let try@first second = OpenSecond
+catch@second e => {
+  second.close
+  throw@first e
 }
+
+Prepare.try@second
+
+second.close
+first.close
+exit!
 ```
 
-Here, the `catch@r` and `catch@w` blocks provide resource-specific cleanup (closing file handles) but then throw to the main error handler for shared logic like printing the error and exiting.
+If `OpenSecond` fails, `catch@first` closes `first` and delegates to the main catch. If `Prepare`
+fails, `catch@second` closes `second`, then throws through `catch@first`, which closes `first`. The
+successful path closes both resources explicitly.
 
-This layered approach allows you to build sophisticated error handling hierarchies while keeping each level focused and clear.
+## Propagating Errors from Functions
 
-## Propagating Errors in Functions
-
-The examples so far have shown terminal error handling — printing errors and exiting. But often you want to propagate errors up to the caller. Here's a utility function that reads an entire file's contents:
+A catch does not have to print an error or exit. It can construct a new `Try` result, propagating the
+error to the caller:
 
 ```par
 module Main
@@ -560,53 +392,50 @@ def ReadAll = [path]
   Bytes.ReadAll(reader)
 ```
 
-This function opens a file with `Os.OpenFile(path)`, then uses `Bytes.ReadAll` to collect the chunked `Bytes.Reader` into a single `Bytes` value. The `catch` block propagates any errors as an `.err` result, while success returns the contents as `.ok`.
+The catch turns an error from `Os.OpenFile` into this function's `.err` result. On success, the reader
+is passed to `Bytes.ReadAll`, which produces the final `Try`.
 
-## Providing defaults with `default`
+## Providing Defaults with `default`
 
-Sometimes you don’t want to branch on a missing optional value — you want to replace it with a fallback and keep going. The `default` sugar does exactly that for `Option` values.
+Sometimes we don't want to propagate a missing optional value. We want to replace it with a fallback
+and continue. The `default` sugar does that for `Option` values.
 
-This is separate from `try`/`catch`: `try` unwraps `Try` values and propagates `.err`, while `default` unwraps `Option` values and replaces `.none!`. If you have a `Try` and want to ignore the error, convert it first with `Try.ToOption`.
+This is separate from `try`/`catch`: `try` unwraps `Try` and propagates `.err`, while `default` unwraps
+`Option` and replaces `.none!`. If we have a `Try` whose error type satisfies `drop`, and intentionally
+want to ignore the error, we can first convert it with `Try.ToOption`.
 
-- Postfix form (expressions/commands):
+The postfix form works in expressions and commands:
 
-  ```par
-  let r1: Option<Int> = .some 7
-  let r2: Option<Int> = .none!
+```par
+let r1: Option<Int> = .some 7
+let r2: Option<Int> = .none!
 
-  let x = r1.default(0)   // x = 7
-  let y = r2.default(0)   // y = 0
+let x = r1.default(0)  // 7
+let y = r2.default(0)  // 0
+```
 
-  let result: Try<String, Int> = .err "not a number"
-  let option = Try.ToOption(result)
-  let z = option.default(0)  // z = 0
-  ```
+There is also a pattern form, including in receives:
 
-  This desugars to a `.case` on the subject: on `.some` it continues with the unwrapped value, on `.none` it evaluates the fallback expression and uses that value instead. Because it is a local rewrite, it can be used directly in `let` bindings and other expression contexts.
+```par
+let default(0) n = Nat.FromString("oops")
+```
 
-- Pattern form (including in receives):
+Here is a practical example. It counts words with a map, starting missing entries at `0`:
 
-  ```par
-  let default(0) n = Nat.FromString("oops")
-  ```
-
-  The pattern binds on `.some`, and binds the fallback expression on `.none`.
-
-  Here’s a practical example that shows why the pattern form is particularly useful with receive commands. It counts word occurrences using a map; when a key is missing, it starts from `0`:
-
-  ```par
-  dec Counts : [List<String>] List<(String) Nat>
-  def Counts = [words] do {
-    let counts = Map.New(type String, type Nat)
-    words.begin.case {
-      .end! => {}
-      .item(word) => {
-        counts.entry(word)[default(0) count]
-        counts.put(count + 1)
-        words.loop
-      }
+```par
+dec Counts : [List<String>] List<(String) Nat>
+def Counts = [words] do {
+  let counts = Map.New(type String, type Nat)
+  words.begin.case {
+    .end! => {}
+    .item(word) => {
+      counts.entry(word)[default(0) count]
+      counts.put(count + 1)
+      words.loop
     }
-  } in counts.list
-  ```
+  }
+} in counts.list
+```
 
-  In the `.item` branch, `counts.entry(word)` returns an `Option<Nat>` via a receive; `default(0)` seamlessly handles the missing case and binds `count` to `0`.
+`counts.entry(word)` returns an `Option<Nat>` through a receive. On `.some`, the pattern binds its
+value; on `.none!`, it binds the fallback `0` instead.
