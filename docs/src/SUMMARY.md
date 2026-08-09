@@ -20,6 +20,7 @@
   - [Iterative](./types/iterative.md)
   - [Box](./types/box.md)
   - [Type Constraints](./types/constraints.md)
+  - [Auto-Cleanup](./types/auto_cleanup.md)
   - [Exists](./types/exists.md)
   - [Continuation](./types/continuation.md)
   - [The Big Table](./big_table.md)

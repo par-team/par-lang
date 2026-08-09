@@ -73,8 +73,7 @@ This keeps the whole input list visible at once.
 Explicit type binders can also carry constraints, such as `[type a: data]`. Those are covered in
 [Type Constraints](./constraints.md).
 
-Just like functions, foralls are [**linear**](../types_and_expressions.md#linearity). Variables containing them can't be dropped, nor
-copied, only destructed by calling.
+Unlike functions, foralls are not always strictly linear. The values of forall types satisfy the same type constraints as their bodies do.
 
 ## Construction
 

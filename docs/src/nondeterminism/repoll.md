@@ -18,7 +18,7 @@ Let's call such a stream-like protocol `Source<a>`. A first idea might be:
 
 ```par
 type Source<a> = recursive choice {
-  .close => !,
+  .close* => !,
   .next => either {
     .end!,
     .item(a) self,
@@ -34,7 +34,7 @@ A second idea is to let the source produce items first, and only then ask the co
 type Source<a> = recursive either {
   .end!,
   .item(a) choice {
-    .close => !,
+    .close* => !,
     .next => self,
   }
 }
@@ -48,7 +48,7 @@ The solution is to separate "an item is available" from "the item is transferred
 type Source<a> = recursive either {
   .end!,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -56,7 +56,7 @@ type Source<a> = recursive either {
 
 Here, the source can make progress on its own (it can produce `.item` or `.end!`), which works great with `poll`. But when it produces `.item`, it doesn't immediately hand out the value — it waits for the consumer to decide:
 - `.get` to receive the value and continue.
-- `.discard` to cancel (and the source ends with `!`).
+- `.discard` to cancel (and the source ends with `!`). The star marks this as the cleanup path.
 
 > 💡 This is **cooperative cancellation**: the consumer can only cancel at points where the producer is willing to accept cancellation (here: right after offering `.item`).
 
@@ -100,7 +100,7 @@ We'll reuse the same fan idea from the [fan pattern](./fan_pattern.md), but now 
 type Source<a> = recursive either {
   .end!,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -109,7 +109,7 @@ type SourceFan<a> = recursive either {
   .end!,
   .spawn(self) self,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -140,7 +140,7 @@ def MergeSources = [<a> sources] poll(SourceFan(sources)) {
     .spawn(l) r => submit(l, r),
 
     .item s => .item case {
-      .discard => ...   // switch into cancel mode
+      .discard* => ...  // switch into cancel mode
       .get => ...       // produce one item and keep going
     }
   }
@@ -170,20 +170,15 @@ If the consumer chooses `.discard`, we must cancel:
 1. The current source `s` (which is in our hands right now).
 2. Every other source still sitting in the pool.
 
-We discard the current source immediately:
+The current `s` is itself a droppable choice, so we can leave it to auto-cleanup.
+Then we reuse the pool with `repoll()` and change the handler to "discard everything":
 
 ```par
-let ! = s.discard in ...
-```
-
-Then we **switch gears** using `repoll()` (with no extra clients), reusing the same pool but changing the handler to "discard everything":
-
-```par
-.discard => let ! = s.discard in repoll() {
+.discard* => repoll() {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),
-    .item s => let ! = s.discard in submit(),
+    .item _ => submit(),  // auto-cleanup calls the `.discard` method
   }
   else => !,
 }
@@ -207,11 +202,11 @@ def MergeSources = [<a> sources] poll(SourceFan(sources)) {
     .spawn(l) r => submit(l, r),
 
     .item s => .item case {
-      .discard => let ! = s.discard in repoll() {
+      .discard* => repoll() {
         fan => fan.case {
           .end! => submit(),
           .spawn(l) r => submit(l, r),
-          .item s => let ! = s.discard in submit(),
+          .item _ => submit(),  // auto-cleanup calls the `.discard` method
         }
         else => !,
       }

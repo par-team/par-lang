@@ -25,7 +25,7 @@ The prototypical iterative type — and a good example to study — is an infini
 
 ```par
 type Sequence<a> = iterative choice {
-    .close => !,
+    .close* => !,
     .next => (a) self,
 }
 ```
@@ -35,27 +35,32 @@ type Sequence<a> = iterative choice {
 > done with an `@`: `iterative@label`, `self@label`. Any lower-case identifier can be used for the
 > label.
 
-Iterative types are **always linear,** regardless of what's in their bodies. As such, they can't be
-dropped, nor copied.
+An iterative type inherits its [type constraints](./constraints.md) from its body. Often, iterative protocols are
+linear because they contain a [choice](./choice.md), but they don't all behave alike:
 
-Notice that we included a `.close` branch on the inner [choice](./choice.md). Since `Sequence<a>` is
-a linear type, there would be no way to get rid of it if it only contained the `.next` branch.
+- Without a cleanup branch, an iterative choice is strictly linear.
+- With a [cleanup branch](./auto_cleanup.md) such as `.close*` whose result is droppable, it may be dropped.
+- If its body is shareable—for example, `iterative box choice`—the whole iterative type is shareable.
+
+Notice that we did include a `.close*` branch in our example. The branch gives us an explicit way
+to stop the sequence, while the star also lets Par choose that operation automatically when a
+sequence is left unused. We cover [auto-cleanup](./auto_cleanup.md) later, in full.
 
 Just like [recursive types](./recursive.md), iterative types can be equated with their _expansions_:
 
 1. The original definition:
    ```par
    type Sequence<a> = iterative choice {
-     .close => !,
+     .close* => !,
      .next => (a) self,
    }
    ```
 2. The first expansion:
    ```par
    type Sequence<a> = choice {
-     .close => !,
+     .close* => !,
      .next => (a) iterative choice {
-       .close => !,
+       .close* => !,
        .next => (a) self,
      },
    }
@@ -63,11 +68,11 @@ Just like [recursive types](./recursive.md), iterative types can be equated with
 3. The second expansion:
    ```par
    type Sequence<a> = choice {
-     .close => !,
+     .close* => !,
      .next => (a) choice {
-       .close => !,
+       .close* => !,
        .next => (a) iterative choice {
-         .close => !,
+         .close* => !,
          .next => (a) self,
        },
      },
@@ -82,7 +87,7 @@ Just like [recursive types](./recursive.md), iterative types can be equated with
 >
 > ```par
 > type ValidSequence<a> = iterative (a) choice {
->   .close => !,
+>   .close* => !,
 >   .next => self,  // Okay. This `self` is guarded by a `choice`.
 > }
 > 
@@ -115,7 +120,7 @@ import @core/Int
 
 dec SevenForever : Sequence<Int>
 def SevenForever = begin case {
-  .close => !,
+  .close* => !,
   .next  => (7) loop,
 }
 ```
@@ -129,16 +134,16 @@ The corecursive meaning of `begin`/`loop` can again be understood by seeing its 
 1. The original code:
    ```par
    def SevenForever = begin case {
-     .close => !,
+     .close* => !,
      .next  => (7) loop,
    }
    ```
 2. The first expansion:
    ```par
    def SevenForever = case {
-     .close => !,
+     .close* => !,
      .next  => (7) begin case {
-       .close => !,
+       .close* => !,
        .next  => (7) loop,
      },
    }
@@ -146,11 +151,11 @@ The corecursive meaning of `begin`/`loop` can again be understood by seeing its 
 3. The second expansion:
    ```par
    def SevenForever = case {
-     .close => !,
+     .close* => !,
      .next  => (7) case {
-       .close => !,
+       .close* => !,
        .next  => (7) begin case {
-         .close => !,
+         .close* => !,
          .next  => (7) loop,
        },
      },
@@ -171,7 +176,7 @@ import @core/Nat
 def Fibonacci: Sequence<Nat> =
   let (a, b)! = (0, 1)!
   in begin case {
-    .close => !,
+    .close* => !,
     .next =>
       let (a, b)! = (b, a + b)!
       in (a) loop
@@ -183,8 +188,8 @@ require defining a `class` or a `struct` describing the internal state, and then
 methods. In Par, iterative objects can be constructed using anonymous expressions, with no need
 of specifying their internal state by a standalone type: **the internal state is just local variables.**
 
-In the `Fibonacci`'s case, the internal state is non-linear. That's why we're able to return a bare unit
-in the `.close` branch: `a` and `b` get dropped automatically.
+In `Fibonacci`'s case, the internal state is shareable. That's why we're able to return a bare unit
+in the `.close*` branch: `a` and `b` can be left unused.
 
 Let's take a look at a case where the internal state is linear! Suppose we need a function that takes
 an arbitrary sequence of integers, and increments its items by `1`, producing a new sequence.
@@ -192,7 +197,7 @@ an arbitrary sequence of integers, and increments its items by `1`, producing a 
 ```par
 dec Increment : [Sequence<Int>] Sequence<Int>
 def Increment = [seq] begin case {
-  .close => let ! = seq.close in !,
+  .close* => let ! = seq.close in !,
   .next =>
     let (x) seq = seq.next
     in let x = x + 1
@@ -202,8 +207,7 @@ def Increment = [seq] begin case {
 def FibonacciPlusOne = Increment(Fibonacci)
 ```
 
-In this case, we need to explicitly close the input `seq` in the `.close` branch. It's linear, so
-we can't just drop it.
+Here the input `seq` is linear, but droppable thanks to [auto-cleanup](./auto_cleanup.md), which we cover later. We write `let ! = seq.close` here for clarity, but we could also drop it implicitly by leaving it unused.
 
 ### The escape-hatch from totality: `unfounded`
 
@@ -222,9 +226,10 @@ For example, here's a function to take the first element from a sequence and clo
 ```par
 def Head = [type a, seq: Sequence<a>]
   let (x) seq = seq.next
-  in let ! = seq.close
   in x
 ```
+
+The remaining sequence is [cleaned up](./auto_cleanup.md) on the way out.
 
 Using [recursion](./recursive.md), we can destruct an iterative type many times. Here's a function to
 take the first N elements of a sequence and return them in a list:

@@ -30,9 +30,9 @@ So:
 Once there are more modules, the same idea extends to paths such as `par run util/Parse.Program`.
 We'll come back to that in the next section.
 
-> Because of Par's linear type system, local variables may be required to be used _exactly once._ That is
-> if they have a linear type. Global definitions can be used any number of times regardless of their
-> type.
+> Because of Par's linear type system, local variables may be required to be used _exactly once._ That is, if they have a strictly linear type.
+> Droppable linear variables may instead be cleaned up when left unused, while shareable variables
+> may be used freely. Global definitions can be used any number of times regardless of their type.
 
 Par has a simple naming rule:
 - **Global names start with an upper-case letter.** That is global types, functions, and so on.

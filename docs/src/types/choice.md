@@ -13,8 +13,9 @@ their own thing.
 
 A _choice type_ is defined by a finite number of branches, each with a different name and a result.
 
-Values of a choice type are objects that can (and must) be destructed using one of the available
-branches, to obtain its result.
+Values of a choice type are objects that are destructed using one of the available branches, to
+obtain its result. That branch is normally chosen explicitly; a [marked cleanup branch](./auto_cleanup.md) may also be
+chosen by Par when the value is left unused.
 
 ```par
 type ChooseStringOrNumber = choice {
@@ -42,14 +43,20 @@ of the arrow, inside round parentheses:
 
 ```par
 type CancellableFunction<a, b> = choice {
-  .cancel => !,
+  .cancel* => !,
   //.apply => [a] b,
   .apply(a) => b,
 }
 ```
 
-Like [functions](./function.md), **choice types are [linear](../types_and_expressions.md#linearity).** A value of a choice type may not be
-dropped, or copied. It must be destructed exactly once, using one of its branches.
+Like [functions](./function.md), **choice types are [linear](../types_and_expressions.md#linearity).** A choice may never be
+copied. It must be destructed exactly once, using one of its branches.
+
+Normally, the destruction must be done explicitly, but
+there is one useful exception. A choice may mark one branch with `*`, as `.cancel*` does above.
+This declares the branch to be its cleanup operation. If the branch result can also be dropped,
+the choice may be left unused and Par will select that branch automatically. We will cover the full
+mechanism in [Auto-Cleanup](./auto_cleanup.md).
 
 > Choice types are frequently used together with [_iterative_](./iterative.md) types to define objects
 > that can be acted upon repeatedly. For example, the built-in `Console` type from `@basic/Console`
@@ -57,7 +64,7 @@ dropped, or copied. It must be destructed exactly once, using one of its branche
 > 
 > ```par
 > type Console = iterative choice {
->   .close => !,
+>   .close* => !,
 >   .print(String) => self,
 > }
 > ```
@@ -92,7 +99,7 @@ type, except with types replaced by their values.
 
 ```par
 def FormatInt: CancellableFunction<Int, String> = case {
-  .cancel => !,
+  .cancel* => !,
   .apply(n) => `#{n}`,
 }
 ```

@@ -8,7 +8,7 @@ You may remember the `Sequence<a>` type from earlier. Here's the definition agai
 
 ```par
 type Sequence<a> = iterative choice {
-  .close => !,
+  .close* => !,
   .next => (a) self,
 }
 ```
@@ -24,7 +24,7 @@ dec Fibonacci : Sequence<Nat>
 def Fibonacci =
   let (a) b = (0) 1
   in begin case {
-    .close => !
+    .close* => !
     .next =>
       let (a) b = (b) {a + b}
       in (a) loop
@@ -78,7 +78,7 @@ The `Console` type itself is defined like this:
 
 ```par
 type Console = iterative choice {
-  .close => !,
+  .close* => !,
   .print(String) => self,
 }
 ```
@@ -108,9 +108,6 @@ def Program: ! = do {
       remaining.loop
     }
   }
-
-  fib.close
-  console.close
 } in !
 ```
 
@@ -125,4 +122,6 @@ The `fib.next[n]` line is where _receive_ command truly shines. It receives the 
 of the `.next` branch — a number — and updates `fib` to the rest of the sequence. Note, that
 it's a combination of two commands: a _selection_ and a _receive_.
 
-Once done, we close both the sequence and the console. We must, they are linear.
+Once done, both `fib` and `console` are still linear, but their `.close*` branches make them
+droppable. Reaching the final `!` cleans them up automatically. We could write `fib.close` and
+`console.close` explicitly, but it's not necessary here.
