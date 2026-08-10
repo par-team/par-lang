@@ -1,5 +1,5 @@
 pub(crate) mod core;
-pub(crate) use core::LoopId;
+pub(crate) use core::{LoopId, Size};
 pub use core::{Operation, PrimitiveType, Type};
 pub(crate) use core::{TypePath, TypePathSegment};
 

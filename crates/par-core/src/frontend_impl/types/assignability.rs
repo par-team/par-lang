@@ -664,10 +664,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         path1: &TypePath,
         path2: &TypePath,
     ) -> Option<SubtypeResult<S>> {
-        if let Type::Iterative { asc: asc1, .. } = type1 {
-            if !asc1.is_empty() {
-                return Some(if let Self::Iterative { asc: asc2, .. } = type2 {
-                    if asc1.is_subset(asc2) {
+        if let Type::Iterative { size: size1, .. } = type1 {
+            if !size1.is_empty() {
+                return Some(if let Self::Iterative { size: size2, .. } = type2 {
+                    if size1.is_subset(size2) {
                         Compatible
                     } else {
                         incompatible(path1, path2, SubtypeMismatchKind::CannotCastDownIterative)
@@ -678,10 +678,10 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             }
         }
 
-        if let Type::Recursive { asc: asc2, .. } = type2 {
-            if !asc2.is_empty() {
-                return Some(if let Self::Recursive { asc: asc1, .. } = type1 {
-                    if asc2.is_subset(asc1) {
+        if let Type::Recursive { size: size2, .. } = type2 {
+            if !size2.is_empty() {
+                return Some(if let Self::Recursive { size: size1, .. } = type1 {
+                    if size2.is_subset(size1) {
                         Compatible
                     } else {
                         incompatible(path1, path2, SubtypeMismatchKind::CannotCastUpRecursive)

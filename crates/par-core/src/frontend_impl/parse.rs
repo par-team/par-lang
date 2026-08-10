@@ -1158,7 +1158,7 @@ fn typ_recursive(input: &mut Input) -> Result<Type<Unresolved>> {
     commit_after(t(TokenKind::Recursive), (label, typ))
         .map(|(pre, (label, typ))| Type::Recursive {
             span: pre.span.join(typ.span()),
-            asc: Default::default(),
+            size: Default::default(),
             label,
             body: Box::new(typ),
             display_hint: Default::default(),
@@ -1173,7 +1173,7 @@ fn typ_iterative(input: &mut Input) -> Result<Type<Unresolved>> {
     )
     .map(|(pre, (label, typ))| Type::Iterative {
         span: pre.span.join(typ.span()),
-        asc: Default::default(),
+        size: Default::default(),
         label,
         body: Box::new(typ),
         display_hint: Default::default(),

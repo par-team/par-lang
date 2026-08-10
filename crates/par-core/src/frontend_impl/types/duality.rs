@@ -44,7 +44,7 @@ impl<S> Type<S> {
 
             Self::Recursive {
                 span,
-                asc,
+                size,
                 label,
                 body: t,
                 display_hint,
@@ -52,7 +52,7 @@ impl<S> Type<S> {
                 let body = Box::new(t.dual(Span::None).dualize_self(&label));
                 Self::Iterative {
                     span: span0.join(span),
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint: Ignored(display_hint.0.map(|display_hint| display_hint.dual())),
@@ -60,7 +60,7 @@ impl<S> Type<S> {
             }
             Self::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body: t,
                 display_hint,
@@ -68,7 +68,7 @@ impl<S> Type<S> {
                 let body = Box::new(t.dual(Span::None).dualize_self(&label));
                 Self::Recursive {
                     span: span0.join(span),
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint: Ignored(display_hint.0.map(|display_hint| display_hint.dual())),

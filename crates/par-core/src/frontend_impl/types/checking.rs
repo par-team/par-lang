@@ -4,7 +4,7 @@ use super::super::process::{
     VariableUsage,
 };
 use super::context::{BlockPathContext, BlockScope, PollPointScope, PollScope};
-use super::core::{LoopId, Operation, Type, get_primitive_type};
+use super::core::{LoopId, Operation, Size, Type, get_primitive_type};
 use super::error::TypeError;
 use super::lattice::union_types;
 use super::{Context, TypeDefs};
@@ -409,7 +409,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             base = self.clone();
 
             let Type::Recursive {
-                asc: point_asc,
+                size: point_size,
                 label: point_label,
                 body: point_body,
                 display_hint,
@@ -419,7 +419,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 panic!("poll point client type must be recursive");
             };
             name_typ = Type::expand_recursive(
-                &point_asc,
+                &point_size,
                 &point_label,
                 &point_body,
                 display_hint.0.as_ref(),
@@ -490,7 +490,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let Type::Recursive {
                 span: typ_span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
@@ -505,18 +505,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let pool_type = client_type.clone();
 
-            let mut asc = asc.clone();
+            let mut size = size.clone();
             let loop_id = LoopId::new();
-            asc.insert(loop_id);
+            size.insert(Size::LT(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),
-                asc: asc.clone(),
+                size: size.clone(),
                 label: label.clone(),
                 body: body.clone(),
                 display_hint: display_hint.clone(),
             };
 
-            name_typ = Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref())
+            name_typ = Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref())
                 .unwrap_or_else(|e| {
                     emit(e);
                     Type::Fail(span.clone())
@@ -925,22 +925,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     Ok(inner.clone().dual(Span::None))
                 }
                 Type::Iterative {
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint,
                     ..
                 } if expand_iterative => {
-                    Type::expand_iterative(span, asc, label, body, display_hint.0.as_ref())
+                    Type::expand_iterative(span, size, label, body, display_hint.0.as_ref())
                 }
                 Type::Recursive {
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint,
                     ..
                 } if expand_recursive => {
-                    Type::expand_recursive(asc, label, body, display_hint.0.as_ref())
+                    Type::expand_recursive(size, label, body, display_hint.0.as_ref())
                 }
                 _ => break,
             }
@@ -1476,7 +1476,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         }
         let Type::Recursive {
             span: typ_span,
-            asc: typ_asc,
+            size: typ_size,
             label: typ_label,
             body: typ_body,
             display_hint,
@@ -1503,18 +1503,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             );
         };
 
-        let mut typ_asc = typ_asc.clone();
+        let mut typ_size = typ_size.clone();
 
         if !unfounded {
             let loop_id = LoopId::new();
-            typ_asc.insert(loop_id);
+            typ_size.insert(Size::LT(loop_id));
         }
         self.loop_points.insert(
             label.clone(),
             (
                 Type::Recursive {
                     span: typ_span.clone(),
-                    asc: typ_asc.clone(),
+                    size: typ_size.clone(),
                     label: typ_label.clone(),
                     body: typ_body.clone(),
                     display_hint: display_hint.clone(),
@@ -1530,7 +1530,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         );
 
         let expanded =
-            Type::expand_recursive(&typ_asc, typ_label, typ_body, display_hint.0.as_ref())
+            Type::expand_recursive(&typ_size, typ_label, typ_body, display_hint.0.as_ref())
                 .unwrap_or_else(|e| {
                     emit(e);
                     Type::Fail(span.clone())
@@ -1582,15 +1582,17 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             emit(e);
         }
 
-        if let (Type::Recursive { asc: asc1, .. }, Type::Recursive { asc: asc2, .. }) =
+        if let (Type::Recursive { size: size1, .. }, Type::Recursive { size: size2, .. }) =
             (typ, &driver_type)
         {
-            for loop_id in asc2 {
-                if !asc1.contains(loop_id) {
-                    emit(TypeError::DoesNotDescendSubjectOfBegin(
-                        span.clone(),
-                        loop_id.clone(),
-                    ));
+            for sz in size2 {
+                if !size1.contains(sz) {
+                    if let Size::LT(loop_id) = sz {
+                        emit(TypeError::DoesNotDescendSubjectOfBegin(
+                            span.clone(),
+                            loop_id.clone(),
+                        ));
+                    }
                 }
             }
         }
@@ -2243,7 +2245,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             base = self.clone();
 
             let Type::Recursive {
-                asc: point_asc,
+                size: point_size,
                 label: point_label,
                 body: point_body,
                 display_hint,
@@ -2253,7 +2255,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 panic!("poll point client type must be recursive");
             };
             name_typ = Type::expand_recursive(
-                &point_asc,
+                &point_size,
                 &point_label,
                 &point_body,
                 display_hint.0.as_ref(),
@@ -2328,7 +2330,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let Type::Recursive {
                 span: typ_span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
@@ -2346,18 +2348,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let pool_type = client_type.clone();
 
-            let mut asc = asc.clone();
+            let mut size = size.clone();
             let loop_id = LoopId::new();
-            asc.insert(loop_id);
+            size.insert(Size::LT(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),
-                asc: asc.clone(),
+                size: size.clone(),
                 label: label.clone(),
                 body: body.clone(),
                 display_hint: display_hint.clone(),
             };
 
-            name_typ = Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref())
+            name_typ = Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref())
                 .unwrap_or_else(|e| {
                     emit(e);
                     Type::Fail(span.clone())
@@ -2991,13 +2993,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 Type::Box(_, inner) => target_inner_type = *inner,
                 Type::Recursive {
                     span: _,
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint,
                 } => {
                     target_inner_type =
-                        Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref())
+                        Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref())
                             .unwrap_or_else(|e| {
                                 emit(e);
                                 Type::Fail(span.clone())
@@ -3005,14 +3007,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 }
                 Type::Iterative {
                     span: iter_span,
-                    asc,
+                    size,
                     label,
                     body,
                     display_hint,
                 } => {
                     target_inner_type = Type::expand_iterative(
                         &iter_span,
-                        &asc,
+                        &size,
                         &label,
                         &body,
                         display_hint.0.as_ref(),

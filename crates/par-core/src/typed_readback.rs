@@ -225,22 +225,22 @@ fn expand_type(typ: Type<Universal>, type_defs: &TypeDefs<Universal>) -> Type<Un
             }
             Type::Recursive {
                 span: _,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
-            } => Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref()).unwrap(),
+            } => Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref()).unwrap(),
             Type::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
             } => {
-                if asc.is_empty() {
+                if size.is_empty() {
                     Type::expand_iterative(
                         &Span::None,
-                        &asc,
+                        &size,
                         &label,
                         &body,
                         display_hint.0.as_ref(),
@@ -249,7 +249,7 @@ fn expand_type(typ: Type<Universal>, type_defs: &TypeDefs<Universal>) -> Type<Un
                 } else {
                     break Type::Iterative {
                         span,
-                        asc,
+                        size,
                         label,
                         body,
                         display_hint,

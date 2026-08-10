@@ -211,7 +211,7 @@ impl CheckedWorkspace {
                 });
             }
             Type::Recursive {
-                asc, label, body, ..
+                size, label, body, ..
             } => {
                 if context == DotCompletionContext::Normal {
                     for (keyword, detail) in [
@@ -235,13 +235,13 @@ impl CheckedWorkspace {
 
                     // Offer `loop` when a typed ascendant exists (well-founded `begin`) or when
                     // source text before the cursor contains a matching labeled loop point
-                    // (`begin@label`/`unfounded@label`), which can be valid even with empty `asc`.
+                    // (`begin@label`/`unfounded@label`), which can be valid even with empty `size`.
                     let has_unlabeled_loop_point = active_loop_labels.contains("");
                     let has_any_labeled_loop_point =
                         active_loop_labels.iter().any(|label| !label.is_empty());
                     let bare_loop_insert_text = match label.as_ref() {
                         Some(label)
-                            if !asc.is_empty()
+                            if !size.is_empty()
                                 || active_loop_labels.contains(label.string.as_str()) =>
                         {
                             Some(format!("loop@{label}"))

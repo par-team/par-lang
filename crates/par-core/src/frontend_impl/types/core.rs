@@ -227,6 +227,12 @@ impl<S: Clone> Hole<S> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Size {
+    LE(LoopId),
+    LT(LoopId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type<S> {
     Primitive(Span, PrimitiveType),
     DualPrimitive(Span, PrimitiveType),
@@ -244,18 +250,18 @@ pub enum Type<S> {
     Continue(Span),
     Recursive {
         span: Span,
-        // The ascendents of the type (denoted by unique IDs generated for each loop):
+        // The sizes of the type (denoted by unique IDs generated for each loop):
         // If you `begin` on a `recursive`, and it expands, so its `self`s get replaced by new
-        // `recursive`s, these new `recursive`s will have as their *ascendent* the original `recursive`.
+        // `recursive`s, these new `recursive`s will have as their *size* the original `recursive`.
         // This is for totality checking.
-        asc: HashSet<LoopId>,
+        size: HashSet<Size>,
         label: Option<LocalName>,
         body: Box<Self>,
         display_hint: Ignored<Option<NamedTypeDisplay<S>>>,
     },
     Iterative {
         span: Span,
-        asc: HashSet<LoopId>,
+        size: HashSet<Size>,
         label: Option<LocalName>,
         body: Box<Self>,
         display_hint: Ignored<Option<NamedTypeDisplay<S>>>,
@@ -548,7 +554,7 @@ impl<S: Clone> Type<S> {
     pub fn recursive(label: Option<&'static str>, body: Self) -> Self {
         Self::Recursive {
             span: Span::None,
-            asc: HashSet::new(),
+            size: HashSet::new(),
             label: label.map(|label| LocalName {
                 span: Span::None,
                 string: ArcStr::from(label),
@@ -561,7 +567,7 @@ impl<S: Clone> Type<S> {
     pub fn iterative(label: Option<&'static str>, body: Self) -> Self {
         Self::Iterative {
             span: Span::None,
-            asc: HashSet::new(),
+            size: HashSet::new(),
             label: label.map(|label| LocalName {
                 span: Span::None,
                 string: ArcStr::from(label),
@@ -702,13 +708,13 @@ impl<S: Clone> Type<S> {
             }
             Self::Recursive {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
             } => Type::Recursive {
                 span,
-                asc,
+                size,
                 label,
                 body: Box::new(body.map_global_names(f)?),
                 display_hint: Ignored(match display_hint.0 {
@@ -726,13 +732,13 @@ impl<S: Clone> Type<S> {
             },
             Self::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint,
             } => Type::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body: Box::new(body.map_global_names(f)?),
                 display_hint: Ignored(match display_hint.0 {
@@ -807,26 +813,26 @@ impl<S> Type<S> {
         match self {
             Self::Recursive {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 ..
             } => Self::Recursive {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint: Ignored(Some(display_hint)),
             },
             Self::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 ..
             } => Self::Iterative {
                 span,
-                asc,
+                size,
                 label,
                 body,
                 display_hint: Ignored(Some(display_hint)),
@@ -844,24 +850,24 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             defs: &TypeDefs<S>,
         ) -> Result<(), TypeError<S>> {
             match (typ, polarity) {
-                (Type::Recursive { asc, body, .. }, Polarity::Positive | Polarity::Neither)
-                | (Type::Iterative { asc, body, .. }, Polarity::Negative | Polarity::Neither) => {
-                    asc.clear();
+                (Type::Recursive { size, body, .. }, Polarity::Positive | Polarity::Neither)
+                | (Type::Iterative { size, body, .. }, Polarity::Negative | Polarity::Neither) => {
+                    size.clear();
                     inner(body, polarity, defs)?;
                 }
                 (
                     Type::Iterative {
-                        span, asc, body, ..
+                        span, size, body, ..
                     },
                     Polarity::Positive | Polarity::Both,
                 )
                 | (
                     Type::Recursive {
-                        span, asc, body, ..
+                        span, size, body, ..
                     },
                     Polarity::Negative | Polarity::Both,
                 ) => {
-                    if !asc.is_empty() {
+                    if !size.is_empty() {
                         return Err(TypeError::CannotUnrollAscendantIterative(
                             span.clone(),
                             None,
