@@ -1,4 +1,6 @@
-use super::super::language::{GlobalName, LocalName, TypeParameter, Unresolved};
+use super::super::language::{
+    GlobalName, ImplicitParameter, LocalName, TypeParameter, Unresolved,
+};
 use crate::frontend_impl::types::visit::Polarity;
 use crate::frontend_impl::types::{TypeDefs, TypeError, visit};
 use crate::location::{Span, Spanning};
@@ -257,8 +259,8 @@ pub enum Type<S> {
     DualName(Span, GlobalName<S>, Vec<Self>),
     Box(Span, Box<Self>),
     DualBox(Span, Box<Self>),
-    Pair(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
-    Function(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
+    Pair(Span, Box<Self>, Box<Self>, Vec<ImplicitParameter>),
+    Function(Span, Box<Self>, Box<Self>, Vec<ImplicitParameter>),
     Either(Span, BTreeMap<LocalName, Self>),
     Choice(Span, BTreeMap<LocalName, Self>),
     Break(Span),
@@ -463,10 +465,10 @@ impl<S: Clone> Type<S> {
             Box::new(u),
             vars.into_iter()
                 .map(|name| {
-                    TypeParameter::any(LocalName {
+                    ImplicitParameter::Type(TypeParameter::any(LocalName {
                         span: Span::None,
                         string: ArcStr::from(name),
-                    })
+                    }))
                 })
                 .collect(),
         )
@@ -483,10 +485,10 @@ impl<S: Clone> Type<S> {
             Box::new(u),
             vars.into_iter()
                 .map(|name| {
-                    TypeParameter::any(LocalName {
+                    ImplicitParameter::Type(TypeParameter::any(LocalName {
                         span: Span::None,
                         string: ArcStr::from(name),
-                    })
+                    }))
                 })
                 .collect(),
         )
@@ -504,7 +506,24 @@ impl<S: Clone> Type<S> {
             f(defs)
         } else {
             let mut defs = defs.clone();
-            defs.extend_vars(params.iter().cloned());
+            defs.extend_implicit_vars(params.iter().cloned().map(ImplicitParameter::Type));
+            f(&defs)
+        }
+    }
+
+    pub(crate) fn with_implicit_parameters<R>(
+        defs: &TypeDefs<S>,
+        params: &[ImplicitParameter],
+        f: impl FnOnce(&TypeDefs<S>) -> Result<R, TypeError<S>>,
+    ) -> Result<R, TypeError<S>>
+    where
+        S: Clone + Eq + std::hash::Hash,
+    {
+        if params.is_empty() {
+            f(defs)
+        } else {
+            let mut defs = defs.clone();
+            defs.extend_implicit_vars(params.iter().cloned());
             f(&defs)
         }
     }

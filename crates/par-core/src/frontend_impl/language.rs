@@ -115,6 +115,66 @@ impl Spanning for TypeParameter {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SizeParameter {
+    pub name: LocalName,
+}
+
+impl SizeParameter {
+    pub fn span(&self) -> Span {
+        self.name.span()
+    }
+}
+
+impl Display for SizeParameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "size {}", self.name)
+    }
+}
+
+impl Spanning for SizeParameter {
+    fn span(&self) -> Span {
+        self.name.span()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImplicitParameter {
+    Type(TypeParameter),
+    Size(SizeParameter),
+}
+
+impl ImplicitParameter {
+    pub fn name(&self) -> &LocalName {
+        match self {
+            Self::Type(param) => &param.name,
+            Self::Size(param) => &param.name,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Type(param) => param.span(),
+            Self::Size(param) => param.span(),
+        }
+    }
+}
+
+impl Display for ImplicitParameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Type(param) => write!(f, "{param}"),
+            Self::Size(param) => write!(f, "{param}"),
+        }
+    }
+}
+
+impl Spanning for ImplicitParameter {
+    fn span(&self) -> Span {
+        self.span()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BuiltinOperatorModule {
     Data,
@@ -3676,7 +3736,7 @@ impl<S> Pattern<S> {
                         span.clone(),
                         Box::new(first),
                         Box::new(rest),
-                        vars.clone(),
+                        vars.iter().cloned().map(ImplicitParameter::Type).collect(),
                     ))
                 }
                 PatternStep::ReceiveType(span, parameter) => {

@@ -481,7 +481,7 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        current_path.push(TypePathSegment::TypeParameter(var.name.clone()));
+                        current_path.push(TypePathSegment::TypeParameter(var.name().clone()));
                         let is_param_target = options
                             .highlight_path
                             .map_or(false, |target| target == current_path);
@@ -529,7 +529,7 @@ fn write_pair_like<S: Clone, N: GlobalNameWriter<S>>(
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        current_path.push(TypePathSegment::TypeParameter(var.name.clone()));
+                        current_path.push(TypePathSegment::TypeParameter(var.name().clone()));
                         let is_param_target = options
                             .highlight_path
                             .map_or(false, |target| target == current_path);

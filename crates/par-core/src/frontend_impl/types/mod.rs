@@ -1,6 +1,7 @@
 pub(crate) mod core;
 pub(crate) use core::{LoopId, Size};
 pub use core::{Operation, PrimitiveType, Type};
+pub(crate) use crate::frontend_impl::language::ImplicitParameter;
 pub(crate) use core::{TypePath, TypePathSegment};
 
 pub(crate) mod visibility;

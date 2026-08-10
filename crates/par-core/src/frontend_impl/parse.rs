@@ -5,9 +5,9 @@ use super::{
         CommandBranchTerminator, CommandBranches, CommandStep, CommandTarget, CommandTerminator,
         ComparisonOperator, ComparisonStep, Condition, Construct, ConstructBranch,
         ConstructBranchStep, ConstructBranchTerminator, ConstructBranches, ConstructStep,
-        ConstructTerminator, Expression, GlobalName, Pattern, PatternStep, PatternTerminal,
-        Process, ProcessCommand, ProcessStep, ProcessTerminator, TemplatePart, TypeConstraint,
-        TypeParameter, Unresolved,
+        ConstructTerminator, Expression, GlobalName, ImplicitParameter, Pattern, PatternStep,
+        PatternTerminal, Process, ProcessCommand, ProcessStep, ProcessTerminator, SizeParameter,
+        TemplatePart, TypeConstraint, TypeParameter, Unresolved,
     },
     lexer::{
         Comment, CommentKind, Input, Token, TokenKind, lex, lex_with_comments,
@@ -177,6 +177,7 @@ fn lowercase_identifier(input: &mut Input) -> Result<(Span, String)> {
         literal(TokenKind::Neg),
         literal(TokenKind::Not),
         literal(TokenKind::Or),
+        literal(TokenKind::Size),
     ))
     .context(StrContext::Expected(StrContextValue::CharLiteral('_')))
     .context(StrContext::Expected(StrContextValue::Description(
@@ -1025,7 +1026,7 @@ fn typ_receive(input: &mut Input) -> Result<Type<Unresolved>> {
 
 enum TypePrefixItem {
     Explicit(TypeParameter),
-    Value(Vec<TypeParameter>, Type<Unresolved>),
+    Value(Vec<ImplicitParameter>, Type<Unresolved>),
 }
 
 enum PatternPrefixItem {
@@ -1042,7 +1043,7 @@ fn fold_type_prefix<T>(
     items: Vec<TypePrefixItem>,
     rest: T,
     mut explicit: impl FnMut(TypeParameter, T) -> T,
-    mut value: impl FnMut(Vec<TypeParameter>, Type<Unresolved>, T) -> T,
+    mut value: impl FnMut(Vec<ImplicitParameter>, Type<Unresolved>, T) -> T,
 ) -> T {
     items.into_iter().rfold(rest, |rest, item| match item {
         TypePrefixItem::Explicit(name) => explicit(name, rest),
@@ -1088,6 +1089,29 @@ fn explicit_type_parameter(input: &mut Input) -> Result<TypeParameter> {
     commit_prec(t(TokenKind::Type), type_parameter).parse_next(input)
 }
 
+fn size_parameter(input: &mut Input) -> Result<SizeParameter> {
+    commit_prec(t(TokenKind::Size), local_name)
+        .map(|name| SizeParameter { name })
+        .parse_next(input)
+}
+
+fn implicit_parameter(input: &mut Input) -> Result<ImplicitParameter> {
+    alt((
+        size_parameter.map(ImplicitParameter::Size),
+        type_parameter.map(ImplicitParameter::Type),
+    ))
+    .parse_next(input)
+}
+
+fn implicit_parameters(input: &mut Input) -> Result<Vec<ImplicitParameter>> {
+    commit_delim(
+        t(TokenKind::Lt),
+        list1(implicit_parameter),
+        t(TokenKind::Gt),
+    )
+    .parse_next(input)
+}
+
 fn implicit_type_parameters(input: &mut Input) -> Result<Vec<TypeParameter>> {
     commit_delim(t(TokenKind::Lt), list1(type_parameter), t(TokenKind::Gt)).parse_next(input)
 }
@@ -1095,7 +1119,7 @@ fn implicit_type_parameters(input: &mut Input) -> Result<Vec<TypeParameter>> {
 fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
     alt((
         explicit_type_parameter.map(TypePrefixItem::Explicit),
-        (opt(implicit_type_parameters), typ)
+        (opt(implicit_parameters), typ)
             .map(|(vars, typ)| TypePrefixItem::Value(vars.unwrap_or_default(), typ)),
     ))
     .parse_next(input)

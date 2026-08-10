@@ -54,7 +54,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 if !satisfies_at_least(minimum) {
                     return Ok(false);
                 }
-                Self::with_type_parameters(defs, vars, |defs| {
+                Self::with_implicit_parameters(defs, vars, |defs| {
                     Ok(left.satisfies_constraint(constraint, defs)?
                         && right.satisfies_constraint(constraint, defs)?)
                 })

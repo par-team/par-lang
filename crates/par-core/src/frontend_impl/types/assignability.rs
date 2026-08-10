@@ -3,7 +3,7 @@ use crate::frontend_impl::language::TypeConstraint;
 use crate::frontend_impl::language::TypeParameter;
 use crate::frontend_impl::types::assignability::SubtypeResult::{Compatible, Cycle, Incompatible};
 use crate::frontend_impl::types::{
-    PrimitiveType, Size, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
+    ImplicitParameter, PrimitiveType, Size, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
 };
 use crate::location::Span;
 use indexmap::IndexSet;
@@ -154,6 +154,11 @@ pub(crate) enum SubtypeMismatchKind {
         param_name: LocalName,
         provided: TypeConstraint,
         expected: TypeConstraint,
+    },
+    ImplicitGenericKindMismatch {
+        param_name: LocalName,
+        provided_kind: &'static str,
+        expected_kind: &'static str,
     },
     TypeVariableMismatch,
     HoleConstrainingIsDisabled,
@@ -875,35 +880,69 @@ fn sizes_satisfied(required: &im::HashSet<Size>, provided: &im::HashSet<Size>) -
                 let mut t2: Type<S> = *t2.clone();
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
-                    // Covariant, like `Exists`: pair vars are existential binders.
-                    if !var2.constraint.is_broader_or_equal_than(var1.constraint) {
-                        path1.push(TypePathSegment::ImplicitGenerics);
-                        path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
-                        path2.push(TypePathSegment::ImplicitGenerics);
-                        path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
-                        let res = incompatible(
-                            path1,
-                            path2,
-                            SubtypeMismatchKind::TypeParameterConstraintMismatch {
-                                param_name: var1.name.clone(),
-                                provided: var1.constraint,
-                                expected: var2.constraint,
-                            },
-                        );
-                        path1.pop();
-                        path1.pop();
-                        path2.pop();
-                        path2.pop();
-                        return Ok(res);
+                    match (var1, var2) {
+                        (ImplicitParameter::Type(var1), ImplicitParameter::Type(var2)) => {
+                            // Covariant, like `Exists`: pair vars are existential binders.
+                            if !var2.constraint.is_broader_or_equal_than(var1.constraint) {
+                                path1.push(TypePathSegment::ImplicitGenerics);
+                                path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
+                                path2.push(TypePathSegment::ImplicitGenerics);
+                                path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
+                                let res = incompatible(
+                                    path1,
+                                    path2,
+                                    SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                                        param_name: var1.name.clone(),
+                                        provided: var1.constraint,
+                                        expected: var2.constraint,
+                                    },
+                                );
+                                path1.pop();
+                                path1.pop();
+                                path2.pop();
+                                path2.pop();
+                                return Ok(res);
+                            }
+                            t2 = t2.substitute(BTreeMap::from([(
+                                &var2.name,
+                                &Type::Var(Span::None, var1.name.clone()),
+                            )]))?;
+                            u2 = u2.substitute(BTreeMap::from([(
+                                &var2.name,
+                                &Type::Var(Span::None, var1.name.clone()),
+                            )]))?;
+                        }
+                        (ImplicitParameter::Size(_), ImplicitParameter::Size(_)) => {}
+                        _ => {
+                            let (provided_kind, expected_kind) = match (var1, var2) {
+                                (ImplicitParameter::Type(_), ImplicitParameter::Size(_)) => {
+                                    ("type", "size")
+                                }
+                                (ImplicitParameter::Size(_), ImplicitParameter::Type(_)) => {
+                                    ("size", "type")
+                                }
+                                _ => ("type", "type"),
+                            };
+                            path1.push(TypePathSegment::ImplicitGenerics);
+                            path1.push(TypePathSegment::TypeParameter(var1.name().clone()));
+                            path2.push(TypePathSegment::ImplicitGenerics);
+                            path2.push(TypePathSegment::TypeParameter(var2.name().clone()));
+                            let res = incompatible(
+                                path1,
+                                path2,
+                                SubtypeMismatchKind::ImplicitGenericKindMismatch {
+                                    param_name: var1.name().clone(),
+                                    provided_kind,
+                                    expected_kind,
+                                },
+                            );
+                            path1.pop();
+                            path1.pop();
+                            path2.pop();
+                            path2.pop();
+                            return Ok(res);
+                        }
                     }
-                    t2 = t2.substitute(BTreeMap::from([(
-                        &var2.name,
-                        &Type::Var(Span::None, var1.name.clone()),
-                    )]))?;
-                    u2 = u2.substitute(BTreeMap::from([(
-                        &var2.name,
-                        &Type::Var(Span::None, var1.name.clone()),
-                    )]))?;
                 }
                 path1.push(TypePathSegment::PairLeft);
                 path2.push(TypePathSegment::PairLeft);
@@ -940,34 +979,68 @@ fn sizes_satisfied(required: &im::HashSet<Size>, provided: &im::HashSet<Size>) -
                 let mut t2: Type<S> = t2;
                 let mut u2: Type<S> = *u2.clone();
                 for (var1, var2) in vars1.iter().zip(vars2.iter()) {
-                    if !var1.constraint.is_broader_or_equal_than(var2.constraint) {
-                        path1.push(TypePathSegment::ImplicitGenerics);
-                        path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
-                        path2.push(TypePathSegment::ImplicitGenerics);
-                        path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
-                        let res = incompatible(
-                            path1,
-                            path2,
-                            SubtypeMismatchKind::TypeParameterConstraintMismatch {
-                                param_name: var1.name.clone(),
-                                provided: var1.constraint,
-                                expected: var2.constraint,
-                            },
-                        );
-                        path1.pop();
-                        path1.pop();
-                        path2.pop();
-                        path2.pop();
-                        return Ok(res);
+                    match (var1, var2) {
+                        (ImplicitParameter::Type(var1), ImplicitParameter::Type(var2)) => {
+                            if !var1.constraint.is_broader_or_equal_than(var2.constraint) {
+                                path1.push(TypePathSegment::ImplicitGenerics);
+                                path1.push(TypePathSegment::TypeParameter(var1.name.clone()));
+                                path2.push(TypePathSegment::ImplicitGenerics);
+                                path2.push(TypePathSegment::TypeParameter(var2.name.clone()));
+                                let res = incompatible(
+                                    path1,
+                                    path2,
+                                    SubtypeMismatchKind::TypeParameterConstraintMismatch {
+                                        param_name: var1.name.clone(),
+                                        provided: var1.constraint,
+                                        expected: var2.constraint,
+                                    },
+                                );
+                                path1.pop();
+                                path1.pop();
+                                path2.pop();
+                                path2.pop();
+                                return Ok(res);
+                            }
+                            t2 = t2.substitute(BTreeMap::from([(
+                                &var2.name,
+                                &Type::Var(Span::None, var1.name.clone()),
+                            )]))?;
+                            u2 = u2.substitute(BTreeMap::from([(
+                                &var2.name,
+                                &Type::Var(Span::None, var1.name.clone()),
+                            )]))?;
+                        }
+                        (ImplicitParameter::Size(_), ImplicitParameter::Size(_)) => {}
+                        _ => {
+                            let (provided_kind, expected_kind) = match (var1, var2) {
+                                (ImplicitParameter::Type(_), ImplicitParameter::Size(_)) => {
+                                    ("type", "size")
+                                }
+                                (ImplicitParameter::Size(_), ImplicitParameter::Type(_)) => {
+                                    ("size", "type")
+                                }
+                                _ => ("type", "type"),
+                            };
+                            path1.push(TypePathSegment::ImplicitGenerics);
+                            path1.push(TypePathSegment::TypeParameter(var1.name().clone()));
+                            path2.push(TypePathSegment::ImplicitGenerics);
+                            path2.push(TypePathSegment::TypeParameter(var2.name().clone()));
+                            let res = incompatible(
+                                path1,
+                                path2,
+                                SubtypeMismatchKind::ImplicitGenericKindMismatch {
+                                    param_name: var1.name().clone(),
+                                    provided_kind,
+                                    expected_kind,
+                                },
+                            );
+                            path1.pop();
+                            path1.pop();
+                            path2.pop();
+                            path2.pop();
+                            return Ok(res);
+                        }
                     }
-                    t2 = t2.substitute(BTreeMap::from([(
-                        &var2.name,
-                        &Type::Var(Span::None, var1.name.clone()),
-                    )]))?;
-                    u2 = u2.substitute(BTreeMap::from([(
-                        &var2.name,
-                        &Type::Var(Span::None, var1.name.clone()),
-                    )]))?;
                 }
                 path1.push(TypePathSegment::FunctionParam);
                 path2.push(TypePathSegment::FunctionParam);

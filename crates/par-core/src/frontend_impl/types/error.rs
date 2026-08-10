@@ -357,6 +357,18 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                             from_type_str,
                         )
                     }
+                    SubtypeMismatchKind::ImplicitGenericKindMismatch {
+                        param_name,
+                        provided_kind,
+                        expected_kind,
+                    } => {
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nExpected a {expected_kind} parameter for `{param_name}`, but a {provided_kind} parameter was provided.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
                     SubtypeMismatchKind::ConstructorMismatch(diff) => {
                         miette::miette!(
                             labels = labels,

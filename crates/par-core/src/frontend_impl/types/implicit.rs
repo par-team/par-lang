@@ -1,5 +1,5 @@
 use crate::frontend::TypeError::CannotAssignFromTo;
-use crate::frontend_impl::language::{LocalName, TypeConstraint, TypeParameter};
+use crate::frontend_impl::language::{ImplicitParameter, LocalName, TypeConstraint};
 use crate::frontend_impl::types::assignability::Assignability;
 use crate::frontend_impl::types::core::Hole;
 use crate::frontend_impl::types::lattice::{intersect_types, union_types};
@@ -63,39 +63,43 @@ fn solve_constraints<S: Clone + Eq + std::hash::Hash>(
 
 pub(crate) fn substitute_holes<S: Clone + Eq + std::hash::Hash>(
     pattern: &Type<S>,
-    names: &[TypeParameter],
+    names: &[ImplicitParameter],
 ) -> Result<(Type<S>, HashMap<LocalName, Hole<S>>), TypeError<S>> {
     let mut holed_pattern = pattern.clone();
     let mut holes_map: HashMap<LocalName, Hole<S>> = HashMap::new();
     for name in names.iter() {
-        let (hole_typ, hole) = Type::hole(name.name.clone());
-        holes_map.insert(name.name.clone(), hole);
-        holed_pattern = holed_pattern
-            .clone()
-            .substitute(BTreeMap::from([(&name.name, &hole_typ)]))?;
+        if let ImplicitParameter::Type(name) = name {
+            let (hole_typ, hole) = Type::hole(name.name.clone());
+            holes_map.insert(name.name.clone(), hole);
+            holed_pattern = holed_pattern
+                .clone()
+                .substitute(BTreeMap::from([(&name.name, &hole_typ)]))?;
+        }
     }
     Ok((holed_pattern, holes_map))
 }
 
 pub(crate) fn resolve_holes<S: Clone + Eq + std::hash::Hash>(
     span: &Span,
-    names: &[TypeParameter],
+    names: &[ImplicitParameter],
     type_defs: &TypeDefs<S>,
     holes_map: HashMap<LocalName, Hole<S>>,
 ) -> Result<BTreeMap<LocalName, Type<S>>, TypeError<S>> {
     let mut res = BTreeMap::new();
     for name in names {
-        let hole = holes_map.get(&name.name).unwrap();
-        let solved_type = solve_constraints(hole, name.constraint, type_defs, span)?;
-        if !solved_type.satisfies_constraint(name.constraint, type_defs)? {
-            return Err(TypeError::TypeDoesNotSatisfyConstraint(
-                span.clone(),
-                name.name.clone(),
-                solved_type,
-                name.constraint,
-            ));
+        if let ImplicitParameter::Type(name) = name {
+            let hole = holes_map.get(&name.name).unwrap();
+            let solved_type = solve_constraints(hole, name.constraint, type_defs, span)?;
+            if !solved_type.satisfies_constraint(name.constraint, type_defs)? {
+                return Err(TypeError::TypeDoesNotSatisfyConstraint(
+                    span.clone(),
+                    name.name.clone(),
+                    solved_type,
+                    name.constraint,
+                ));
+            }
+            res.insert(name.name.clone(), solved_type);
         }
-        res.insert(name.name.clone(), solved_type);
     }
     Ok(res)
 }

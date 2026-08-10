@@ -1,4 +1,6 @@
-use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint, TypeParameter};
+use crate::frontend_impl::language::{
+    GlobalName, ImplicitParameter, LocalName, TypeConstraint, TypeParameter,
+};
 use crate::frontend_impl::types::core::NamedTypeDisplay;
 use crate::frontend_impl::types::{Type, TypeError, visit};
 use crate::location::Span;
@@ -9,6 +11,7 @@ use std::sync::Arc;
 pub struct TypeDefs<S> {
     pub globals: Arc<IndexMap<GlobalName<S>, (Span, Vec<TypeParameter>, Type<S>)>>,
     pub vars: IndexMap<LocalName, TypeConstraint>,
+    pub size_vars: IndexSet<LocalName>,
 }
 
 impl<S: Clone + Eq + std::hash::Hash> Default for TypeDefs<S> {
@@ -16,6 +19,7 @@ impl<S: Clone + Eq + std::hash::Hash> Default for TypeDefs<S> {
         Self {
             globals: Default::default(),
             vars: Default::default(),
+            size_vars: Default::default(),
         }
     }
 }
@@ -51,6 +55,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
         let type_defs = Self {
             globals: Arc::new(globals_map),
             vars: Default::default(),
+            size_vars: Default::default(),
         };
 
         let mut deps_map: IndexMap<GlobalName<S>, Vec<GlobalName<S>>> = Default::default();
@@ -66,7 +71,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
 
         for (_, (_, params, typ)) in type_defs.globals.iter() {
             let mut type_defs = type_defs.clone();
-            type_defs.extend_vars(params.iter().cloned());
+            type_defs.extend_implicit_vars(params.iter().cloned().map(ImplicitParameter::Type));
             if let Err(e) = type_defs.validate_type(typ) {
                 errors.insert(e);
             }
@@ -151,10 +156,23 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
         self.vars.insert(param.name.clone(), param.constraint);
     }
 
-    pub fn extend_vars(&mut self, params: impl IntoIterator<Item = TypeParameter>) {
-        for param in params {
-            self.insert_var(param);
+    pub fn insert_implicit_var(&mut self, param: ImplicitParameter) {
+        match param {
+            ImplicitParameter::Type(param) => self.insert_var(param),
+            ImplicitParameter::Size(param) => {
+                self.size_vars.insert(param.name);
+            }
         }
+    }
+
+    pub fn extend_implicit_vars(&mut self, params: impl IntoIterator<Item = ImplicitParameter>) {
+        for param in params {
+            self.insert_implicit_var(param);
+        }
+    }
+
+    pub fn contains_size_var(&self, name: &LocalName) -> bool {
+        self.size_vars.contains(name)
     }
 
     pub fn contains_var(&self, name: &LocalName) -> bool {
@@ -224,7 +242,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
                     })?;
                 }
                 Type::Function(span, arg, res, vars) if !vars.is_empty() => {
-                    ctx.defs.extend_vars(vars.iter().cloned());
+                    ctx.defs.extend_implicit_vars(vars.iter().cloned());
                     visit::continue_deref_polarized(typ, positive, &ctx.defs, |_typ, positive| {
                         inner(
                             &Type::Function(span.clone(), arg.clone(), res.clone(), vec![]),
@@ -234,7 +252,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
                     })?;
                 }
                 Type::Pair(span, arg, res, vars) if !vars.is_empty() => {
-                    ctx.defs.extend_vars(vars.iter().cloned());
+                    ctx.defs.extend_implicit_vars(vars.iter().cloned());
                     visit::continue_deref_polarized(typ, positive, &ctx.defs, |_typ, positive| {
                         inner(
                             &Type::Pair(span.clone(), arg.clone(), res.clone(), vec![]),

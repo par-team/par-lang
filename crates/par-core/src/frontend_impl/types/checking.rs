@@ -1,4 +1,4 @@
-use super::super::language::{LocalName, TypeConstraint, TypeParameter};
+use super::super::language::{ImplicitParameter, LocalName, TypeConstraint, TypeParameter};
 use super::super::process::{
     Captures, Command, Expression, PollKind, Process, Step, TerminalCommand, Terminator,
     VariableUsage,
@@ -127,13 +127,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     fn resolve_type_parameters(
         &self,
         parameters: &[TypeParameter],
-        expected: &[TypeParameter],
+        expected: &[ImplicitParameter],
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Vec<TypeParameter> {
         parameters
             .iter()
             .zip(expected)
-            .map(|(parameter, expected)| self.resolve_type_parameter(parameter, expected, emit))
+            .map(|(parameter, expected)| match expected {
+                ImplicitParameter::Type(expected) => {
+                    self.resolve_type_parameter(parameter, expected, emit)
+                }
+                ImplicitParameter::Size(_) => parameter.clone(),
+            })
             .collect()
     }
 
@@ -990,7 +995,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                             ));
                         }
                         let fail = Type::Fail(span.clone());
-                        (fail.clone(), fail, &[] as &[TypeParameter])
+                        (fail.clone(), fail, &[] as &[ImplicitParameter])
                     }
                 };
                 let (argument, then_type) = if vars.is_empty() {
@@ -1009,7 +1014,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         .unwrap_or_else(|error| {
                             emit(error);
                             vars.iter()
-                                .map(|var| (var.name.clone(), Type::Fail(span.clone())))
+                                .map(|var| (var.name().clone(), Type::Fail(span.clone())))
                                 .collect()
                         });
                     let argument =
@@ -1047,14 +1052,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                             ));
                         }
                         let fail = Type::Fail(span.clone());
-                        (fail.clone(), fail, type_parameters.clone())
+                        (
+                            fail.clone(),
+                            fail,
+                            type_parameters
+                                .iter()
+                                .cloned()
+                                .map(ImplicitParameter::Type)
+                                .collect(),
+                        )
                     }
                 };
                 let type_parameters =
                     self.resolve_type_parameters(type_parameters, &expected_parameters, emit);
                 let substitutions: BTreeMap<_, _> = expected_parameters
                     .iter()
-                    .map(|parameter| &parameter.name)
+                    .map(|parameter| parameter.name())
                     .zip(
                         type_parameters
                             .iter()
@@ -1073,7 +1086,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         emit(error);
                         Type::Fail(span.clone())
                     });
-                self.type_defs.extend_vars(type_parameters.iter().cloned());
+                self.type_defs
+                    .extend_implicit_vars(type_parameters.iter().cloned().map(ImplicitParameter::Type));
                 if let Some(annotation) = annotation {
                     if let Err(error) = self.type_defs.validate_type(annotation) {
                         emit(error);
@@ -1726,7 +1740,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         });
                     }
                     Command::Receive(parameter, annotation, (), type_parameters) => {
-                        self.type_defs.extend_vars(type_parameters.iter().cloned());
+                        self.type_defs
+                            .extend_implicit_vars(type_parameters.iter().cloned().map(ImplicitParameter::Type));
                         let (parameter_type, failed) = match annotation {
                             Some(typ) => (typ.clone(), false),
                             None => {
@@ -1912,7 +1927,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                             span.clone(),
                             Box::new(parameter_type.clone()),
                             Box::new(inferred_type),
-                            type_parameters.clone(),
+                            type_parameters
+                                .iter()
+                                .cloned()
+                                .map(ImplicitParameter::Type)
+                                .collect(),
                         )
                     };
                     typed_steps[index] = Some(Step::Do {
@@ -3312,7 +3331,7 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
             Type::Box(_, body) | Type::DualBox(_, body) => inner(body, bound, out),
             Type::Pair(_, left, right, vars) | Type::Function(_, left, right, vars) => {
                 for var in vars {
-                    bound.push(var.name.clone());
+                    bound.push(var.name().clone());
                 }
                 inner(left, bound, out);
                 inner(right, bound, out);
