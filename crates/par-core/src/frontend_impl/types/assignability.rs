@@ -3,7 +3,7 @@ use crate::frontend_impl::language::TypeConstraint;
 use crate::frontend_impl::language::TypeParameter;
 use crate::frontend_impl::types::assignability::SubtypeResult::{Compatible, Cycle, Incompatible};
 use crate::frontend_impl::types::{
-    PrimitiveType, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
+    PrimitiveType, Size, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
 };
 use crate::location::Span;
 use indexmap::IndexSet;
@@ -658,6 +658,16 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         }))
     }
 
+fn sizes_satisfied(required: &im::HashSet<Size>, provided: &im::HashSet<Size>) -> bool {
+    required.iter().all(|req| match req {
+        Size::LE(anchor) => {
+            provided.contains(&Size::LE(anchor.clone()))
+                || provided.contains(&Size::LT(anchor.clone()))
+        }
+        Size::LT(anchor) => provided.contains(&Size::LT(anchor.clone())),
+    })
+}
+
     fn is_subtype_fixpoint_guard(
         type1: &Type<S>,
         type2: &Type<S>,
@@ -667,7 +677,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if let Type::Iterative { size: size1, .. } = type1 {
             if !size1.is_empty() {
                 return Some(if let Self::Iterative { size: size2, .. } = type2 {
-                    if size1.is_subset(size2) {
+                    if Self::sizes_satisfied(size1, size2) {
                         Compatible
                     } else {
                         incompatible(path1, path2, SubtypeMismatchKind::CannotCastDownIterative)
@@ -681,7 +691,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if let Type::Recursive { size: size2, .. } = type2 {
             if !size2.is_empty() {
                 return Some(if let Self::Recursive { size: size1, .. } = type1 {
-                    if size2.is_subset(size1) {
+                    if Self::sizes_satisfied(size2, size1) {
                         Compatible
                     } else {
                         incompatible(path1, path2, SubtypeMismatchKind::CannotCastUpRecursive)

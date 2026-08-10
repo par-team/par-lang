@@ -4,7 +4,7 @@ use super::super::process::{
     VariableUsage,
 };
 use super::context::{BlockPathContext, BlockScope, PollPointScope, PollScope};
-use super::core::{LoopId, Operation, Size, Type, get_primitive_type};
+use super::core::{LoopId, Operation, Size, SizeAnchor, Type, get_primitive_type};
 use super::error::TypeError;
 use super::lattice::union_types;
 use super::{Context, TypeDefs};
@@ -507,8 +507,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let mut point_size = size.clone();
             let mut expand_size = size.clone();
-            let loop_id = LoopId::new();
-            point_size.insert(Size::LT(loop_id));
+            let loop_id = SizeAnchor::LoopId(LoopId::new());
+            point_size.insert(Size::LT(loop_id.clone()));
             expand_size.insert(Size::LE(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),
@@ -1511,8 +1511,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut expand_size = typ_size.clone();
 
         if !unfounded {
-            let loop_id = LoopId::new();
-            loop_point_size.insert(Size::LT(loop_id));
+            let loop_id = SizeAnchor::LoopId(LoopId::new());
+            loop_point_size.insert(Size::LT(loop_id.clone()));
             expand_size.insert(Size::LE(loop_id));
         }
         self.loop_points.insert(
@@ -1594,11 +1594,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         {
             for sz in size2 {
                 if !size1.contains(sz) {
-                    if let Size::LT(loop_id) = sz {
-                        emit(TypeError::DoesNotDescendSubjectOfBegin(
-                            span.clone(),
-                            loop_id.clone(),
-                        ));
+                    if let Size::LT(anchor) = sz {
+                        if let SizeAnchor::LoopId(loop_id) = anchor {
+                            emit(TypeError::DoesNotDescendSubjectOfBegin(
+                                span.clone(),
+                                loop_id.clone(),
+                            ));
+                        }
                     }
                 }
             }
@@ -2357,8 +2359,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let mut point_size = size.clone();
             let mut expand_size = size.clone();
-            let loop_id = LoopId::new();
-            point_size.insert(Size::LT(loop_id));
+            let loop_id = SizeAnchor::LoopId(LoopId::new());
+            point_size.insert(Size::LT(loop_id.clone()));
             expand_size.insert(Size::LE(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),

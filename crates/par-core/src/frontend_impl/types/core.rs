@@ -226,11 +226,18 @@ impl<S: Clone> Hole<S> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Size {
-    LE(LoopId),
-    LT(LoopId),
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SizeAnchor {
+    LoopId(LoopId),
+    Var(LocalName),
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Size {
+    LE(SizeAnchor),
+    LT(SizeAnchor),
+}
+
 impl Size {
     pub fn dec(&self) -> Self {
         match self {
