@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LoopId(u64);
 
 static NEXT_LOOP_ID: AtomicU64 = AtomicU64::new(0);
@@ -226,10 +226,18 @@ impl<S: Clone> Hole<S> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Size {
     LE(LoopId),
     LT(LoopId),
+}
+impl Size {
+    pub fn dec(&self) -> Self {
+        match self {
+            Self::LE(l) => Self::LT(l.clone()),
+            Self::LT(l) => Self::LT(l.clone()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

@@ -505,22 +505,26 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let pool_type = client_type.clone();
 
-            let mut size = size.clone();
+            let mut point_size = size.clone();
+            let mut expand_size = size.clone();
             let loop_id = LoopId::new();
-            size.insert(Size::LT(loop_id));
+            point_size.insert(Size::LT(loop_id));
+            expand_size.insert(Size::LE(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),
-                size: size.clone(),
+                size: point_size,
                 label: label.clone(),
                 body: body.clone(),
                 display_hint: display_hint.clone(),
             };
 
-            name_typ = Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref())
-                .unwrap_or_else(|e| {
-                    emit(e);
-                    Type::Fail(span.clone())
-                });
+            name_typ = Type::Recursive {
+                span: typ_span.clone(),
+                size: expand_size,
+                label: label.clone(),
+                body: body.clone(),
+                display_hint: display_hint.clone(),
+            };
 
             then_ctx = base.clone();
             let prev_poll = then_ctx.poll.take();
@@ -1503,18 +1507,20 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             );
         };
 
-        let mut typ_size = typ_size.clone();
+        let mut loop_point_size = typ_size.clone();
+        let mut expand_size = typ_size.clone();
 
         if !unfounded {
             let loop_id = LoopId::new();
-            typ_size.insert(Size::LT(loop_id));
+            loop_point_size.insert(Size::LT(loop_id));
+            expand_size.insert(Size::LE(loop_id));
         }
         self.loop_points.insert(
             label.clone(),
             (
                 Type::Recursive {
                     span: typ_span.clone(),
-                    size: typ_size.clone(),
+                    size: loop_point_size,
                     label: typ_label.clone(),
                     body: typ_body.clone(),
                     display_hint: display_hint.clone(),
@@ -1529,13 +1535,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             ),
         );
 
-        let expanded =
-            Type::expand_recursive(&typ_size, typ_label, typ_body, display_hint.0.as_ref())
-                .unwrap_or_else(|e| {
-                    emit(e);
-                    Type::Fail(span.clone())
-                });
-        if let Err(e) = self.put(span, object.clone(), expanded) {
+        let object_type = Type::Recursive {
+            span: typ_span.clone(),
+            size: expand_size,
+            label: typ_label.clone(),
+            body: typ_body.clone(),
+            display_hint: display_hint.clone(),
+        };
+        if let Err(e) = self.put(span, object.clone(), object_type) {
             emit(e);
         }
         let (process, _inferred_type) = self.analyze_process(process, mode, emit);
@@ -2348,22 +2355,26 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
             let pool_type = client_type.clone();
 
-            let mut size = size.clone();
+            let mut point_size = size.clone();
+            let mut expand_size = size.clone();
             let loop_id = LoopId::new();
-            size.insert(Size::LT(loop_id));
+            point_size.insert(Size::LT(loop_id));
+            expand_size.insert(Size::LE(loop_id));
             let point_client_type = Type::Recursive {
                 span: typ_span.clone(),
-                size: size.clone(),
+                size: point_size,
                 label: label.clone(),
                 body: body.clone(),
                 display_hint: display_hint.clone(),
             };
 
-            name_typ = Type::expand_recursive(&size, &label, &body, display_hint.0.as_ref())
-                .unwrap_or_else(|e| {
-                    emit(e);
-                    Type::Fail(span.clone())
-                });
+            name_typ = Type::Recursive {
+                span: typ_span.clone(),
+                size: expand_size,
+                label: label.clone(),
+                body: body.clone(),
+                display_hint: display_hint.clone(),
+            };
 
             then_ctx = base.clone();
             let prev_poll = then_ctx.poll.take();

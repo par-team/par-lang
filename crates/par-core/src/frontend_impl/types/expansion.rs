@@ -35,7 +35,7 @@ impl<S: Clone> Type<S> {
                 Type::Self_(span, label) if label == target_label => {
                     *typ = Type::Recursive {
                         span: span.clone(),
-                        size: size.clone(),
+                        size: size.iter().map(|s| s.dec()).collect(),
                         label: label.clone(),
                         body: Box::new(body.clone()),
                         display_hint: Ignored(display_hint.cloned()),
@@ -44,7 +44,7 @@ impl<S: Clone> Type<S> {
                 Type::DualSelf(span, label) if label == target_label => {
                     *typ = Type::Recursive {
                         span: span.clone(),
-                        size: size.clone(),
+                        size: size.iter().map(|s| s.dec()).collect(),
                         label: label.clone(),
                         body: Box::new(body.clone()),
                         display_hint: Ignored(display_hint.cloned()),
@@ -73,7 +73,7 @@ impl<S: Clone> Type<S> {
         body: &Self,
         display_hint: Option<&NamedTypeDisplay<S>>,
     ) -> Result<Self, TypeError<S>> {
-        if !size.is_empty() {
+        if size.iter().any(|s| matches!(s, Size::LT(_))) {
             return Err(TypeError::CannotUnrollAscendantIterative(
                 span.clone(),
                 label.clone(),
@@ -103,7 +103,7 @@ impl<S: Clone> Type<S> {
                 Type::Self_(span, label) if label == target_label => {
                     *typ = Type::Iterative {
                         span: span.clone(),
-                        size: size.clone(),
+                        size: size.iter().map(|s| s.dec()).collect(),
                         label: label.clone(),
                         body: Box::new(body.clone()),
                         display_hint: Ignored(display_hint.cloned()),
@@ -112,7 +112,7 @@ impl<S: Clone> Type<S> {
                 Type::DualSelf(span, label) if label == target_label => {
                     *typ = Type::Iterative {
                         span: span.clone(),
-                        size: size.clone(),
+                        size: size.iter().map(|s| s.dec()).collect(),
                         label: label.clone(),
                         body: Box::new(body.clone()),
                         display_hint: Ignored(display_hint.cloned()),
