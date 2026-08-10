@@ -5,8 +5,8 @@ networks disconnect, and users type unexpected input. Most errors occur at I/O b
 our programs meet systems beyond their control.
 
 Par represents errors with explicit `Try` values. On top of them, `try`/`catch`/`throw` provide a
-lightweight syntax for propagating errors through a process. And when propagation abandons live
-resources, [auto-cleanup](../types/auto_cleanup.md) makes sure they are still closed, canceled, or
+lightweight syntax for propagating errors through a process. And when propagation abandons
+resources in scope, [auto-cleanup](../types/auto_cleanup.md) makes sure they are still closed, canceled, or
 rolled back.
 
 ## Errors Are Values
@@ -79,7 +79,7 @@ value to the nearest `catch`.
 
 Notice what the error handlers do **not** contain: a growing list of resources to close. If opening
 the destination fails, the already-open reader is cleaned up. If copying fails later, every handle
-that remains live on that error path is cleaned up. When `exit!` terminates either handler, the
+that remains in scope on that error path is cleaned up. When `exit!` terminates either handler, the
 console is cleaned up too.
 
 Only one close remains explicit:
@@ -119,10 +119,6 @@ For an `Os.Writer`, that result is `Try<Os.Error, !>`. Both branches are ordinar
 may be discarded. This also means an error produced by an automatic close is ignored. If the close
 error matters, call `.close` explicitly and handle its `Try`, as the copy program does on success.
 
-Strictly linear values do not receive invented cleanup behavior. If a live value has no usable
-cleanup branch, leaving it unused is a type error. We will see how labeled catches handle that case
-later in this chapter.
-
 ## What the Sugar Means
 
 It helps to see the explicit code once. Without `try`, opening a file and continuing with its reader
@@ -155,15 +151,14 @@ catch <pattern> => {
 }
 ```
 
-The pattern can be a variable, a unit pattern, a destructuring pattern, or a pattern with a type
-annotation:
+The `<pattern>` part binds an error value using the same pattern syntax as the left side of `let`, and makes it available in the `catch` body:
 
 ```par
 catch ! => { ... }
 catch e: Os.Error => { ... }
 ```
 
-The handler must end the current process path, i.e., it cannot fall through. It can:
+The body must end the current process path, i.e., it cannot fall through. It can:
 
 - break with `continuation!`;
 - link two channels with `left <> right`;
@@ -339,7 +334,7 @@ type StrictResource = choice {
 }
 ```
 
-If an error path crosses a live `StrictResource`, Par rejects it unless that path consumes the
+If an error path has a `StrictResource` in scope, Par rejects it unless that path consumes the
 resource. Labeled catches can form a small cleanup chain for this case:
 
 ```par
