@@ -134,7 +134,7 @@ export {
   dec Close : [<e> Parser<e>] Try<e, !>
 
   // Streams a parser's remaining input one byte at a time.
-  dec Chunks : [<e> Parser<e>] Stream<e, Bytes>
+  dec Chunks : [<e> Parser<e>] Stream<e, Byte>
 
   // Splits a parser's remaining input on a byte separator.
   dec SplitBy : [<e> Parser<e>, Bytes] Stream<e, Bytes>
