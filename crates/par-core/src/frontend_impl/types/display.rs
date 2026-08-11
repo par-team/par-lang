@@ -319,15 +319,15 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
         Type::Recursive { size, label, body, .. } => {
             let mut sizes: Vec<_> = size.iter().collect();
             sizes.sort_by_key(|s| match s {
-                Size::LE(SizeAnchor::Var(a)) => (0, a.string.as_str()),
-                Size::LT(SizeAnchor::Var(a)) => (1, a.string.as_str()),
+                Size::LE(SizeAnchor::Var(a) | SizeAnchor::Hole(a, _)) => (0, a.string.as_str()),
+                Size::LT(SizeAnchor::Var(a) | SizeAnchor::Hole(a, _)) => (1, a.string.as_str()),
                 Size::LE(SizeAnchor::LoopId(_)) => (2, ""),
                 Size::LT(SizeAnchor::LoopId(_)) => (3, ""),
             });
             for s in sizes {
                 match s {
-                    Size::LE(SizeAnchor::Var(anchor)) => write!(f, "sized({anchor}) ")?,
-                    Size::LT(SizeAnchor::Var(anchor)) => write!(f, "sized(<{anchor}) ")?,
+                    Size::LE(SizeAnchor::Var(anchor) | SizeAnchor::Hole(anchor, _)) => write!(f, "sized({anchor}) ")?,
+                    Size::LT(SizeAnchor::Var(anchor) | SizeAnchor::Hole(anchor, _)) => write!(f, "sized(<{anchor}) ")?,
                     _ => {}
                 }
             }
@@ -346,15 +346,15 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
         Type::Iterative { size, label, body, .. } => {
             let mut sizes: Vec<_> = size.iter().collect();
             sizes.sort_by_key(|s| match s {
-                Size::LE(SizeAnchor::Var(a)) => (0, a.string.as_str()),
-                Size::LT(SizeAnchor::Var(a)) => (1, a.string.as_str()),
+                Size::LE(SizeAnchor::Var(a) | SizeAnchor::Hole(a, _)) => (0, a.string.as_str()),
+                Size::LT(SizeAnchor::Var(a) | SizeAnchor::Hole(a, _)) => (1, a.string.as_str()),
                 Size::LE(SizeAnchor::LoopId(_)) => (2, ""),
                 Size::LT(SizeAnchor::LoopId(_)) => (3, ""),
             });
             for s in sizes {
                 match s {
-                    Size::LE(SizeAnchor::Var(anchor)) => write!(f, "sized({anchor}) ")?,
-                    Size::LT(SizeAnchor::Var(anchor)) => write!(f, "sized(<{anchor}) ")?,
+                    Size::LE(SizeAnchor::Var(anchor) | SizeAnchor::Hole(anchor, _)) => write!(f, "sized({anchor}) ")?,
+                    Size::LT(SizeAnchor::Var(anchor) | SizeAnchor::Hole(anchor, _)) => write!(f, "sized(<{anchor}) ")?,
                     _ => {}
                 }
             }

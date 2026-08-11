@@ -61,45 +61,85 @@ fn solve_constraints<S: Clone + Eq + std::hash::Hash>(
     Ok(lower)
 }
 
+use crate::frontend_impl::types::core::{Size, SizeAnchor, SizeHole};
+
 pub(crate) fn substitute_holes<S: Clone + Eq + std::hash::Hash>(
     pattern: &Type<S>,
     names: &[ImplicitParameter],
-) -> Result<(Type<S>, HashMap<LocalName, Hole<S>>), TypeError<S>> {
+) -> Result<
+    (
+        Type<S>,
+        HashMap<LocalName, Hole<S>>,
+        HashMap<LocalName, SizeHole>,
+    ),
+    TypeError<S>,
+> {
     let mut holed_pattern = pattern.clone();
-    let mut holes_map: HashMap<LocalName, Hole<S>> = HashMap::new();
+    let mut type_holes: HashMap<LocalName, Hole<S>> = HashMap::new();
+    let mut size_holes: HashMap<LocalName, SizeHole> = HashMap::new();
+    let mut type_subst = BTreeMap::new();
+    let mut size_subst = BTreeMap::new();
+
     for name in names.iter() {
-        if let ImplicitParameter::Type(name) = name {
-            let (hole_typ, hole) = Type::hole(name.name.clone());
-            holes_map.insert(name.name.clone(), hole);
-            holed_pattern = holed_pattern
-                .clone()
-                .substitute(BTreeMap::from([(&name.name, &hole_typ)]))?;
+        match name {
+            ImplicitParameter::Type(t) => {
+                let (hole_typ, hole) = Type::hole(t.name.clone());
+                type_holes.insert(t.name.clone(), hole);
+                type_subst.insert(&t.name, hole_typ);
+            }
+            ImplicitParameter::Size(s) => {
+                let size_hole = SizeHole::new();
+                size_holes.insert(s.name.clone(), size_hole.clone());
+                let replacement = vec![Size::LE(SizeAnchor::Hole(s.name.clone(), size_hole))];
+                size_subst.insert(&s.name, replacement);
+            }
         }
     }
-    Ok((holed_pattern, holes_map))
+
+    let size_sub_refs: BTreeMap<_, _> =
+        size_subst.iter().map(|(k, v)| (*k, v.as_slice())).collect();
+    holed_pattern = holed_pattern
+        .substitute_size(&size_sub_refs)
+        .substitute(type_subst.iter().map(|(k, v)| (*k, v)).collect())?;
+
+    Ok((holed_pattern, type_holes, size_holes))
 }
 
 pub(crate) fn resolve_holes<S: Clone + Eq + std::hash::Hash>(
     span: &Span,
     names: &[ImplicitParameter],
     type_defs: &TypeDefs<S>,
-    holes_map: HashMap<LocalName, Hole<S>>,
-) -> Result<BTreeMap<LocalName, Type<S>>, TypeError<S>> {
-    let mut res = BTreeMap::new();
+    type_holes: HashMap<LocalName, Hole<S>>,
+    size_holes: HashMap<LocalName, SizeHole>,
+) -> Result<(BTreeMap<LocalName, Type<S>>, BTreeMap<LocalName, Vec<Size>>), TypeError<S>> {
+    let mut res_types = BTreeMap::new();
+    let mut res_sizes = BTreeMap::new();
     for name in names {
-        if let ImplicitParameter::Type(name) = name {
-            let hole = holes_map.get(&name.name).unwrap();
-            let solved_type = solve_constraints(hole, name.constraint, type_defs, span)?;
-            if !solved_type.satisfies_constraint(name.constraint, type_defs)? {
-                return Err(TypeError::TypeDoesNotSatisfyConstraint(
-                    span.clone(),
-                    name.name.clone(),
-                    solved_type,
-                    name.constraint,
-                ));
+        match name {
+            ImplicitParameter::Type(name) => {
+                let hole = type_holes.get(&name.name).unwrap();
+                let solved_type = solve_constraints(hole, name.constraint, type_defs, span)?;
+                if !solved_type.satisfies_constraint(name.constraint, type_defs)? {
+                    return Err(TypeError::TypeDoesNotSatisfyConstraint(
+                        span.clone(),
+                        name.name.clone(),
+                        solved_type,
+                        name.constraint,
+                    ));
+                }
+                res_types.insert(name.name.clone(), solved_type);
             }
-            res.insert(name.name.clone(), solved_type);
+            ImplicitParameter::Size(name) => {
+                let hole = size_holes.get(&name.name).unwrap();
+                let bounds = hole.get_bounds();
+                let solved_sizes = if bounds.is_empty() {
+                    vec![Size::LE(SizeAnchor::Var(name.name.clone()))]
+                } else {
+                    bounds
+                };
+                res_sizes.insert(name.name.clone(), solved_sizes);
+            }
         }
     }
-    Ok(res)
+    Ok((res_types, res_sizes))
 }

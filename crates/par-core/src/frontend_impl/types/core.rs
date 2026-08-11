@@ -228,10 +228,54 @@ impl<S: Clone> Hole<S> {
     }
 }
 
+#[derive(Clone)]
+pub struct SizeHole(Arc<Mutex<Vec<Size>>>);
+
+impl SizeHole {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(Vec::new())))
+    }
+
+    pub fn add_bound(&self, size: Size) {
+        let mut bounds = self.0.lock().unwrap();
+        if !bounds.contains(&size) {
+            bounds.push(size);
+        }
+    }
+
+    pub fn get_bounds(&self) -> Vec<Size> {
+        let bounds = self.0.lock().unwrap();
+        bounds.clone()
+    }
+}
+
+impl Debug for SizeHole {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let bounds = self.0.lock().unwrap();
+        f.debug_struct("SizeHole")
+            .field("bounds", &*bounds)
+            .finish()
+    }
+}
+
+impl PartialEq for SizeHole {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl Eq for SizeHole {}
+
+impl Hash for SizeHole {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        0.hash(state);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SizeAnchor {
     LoopId(LoopId),
     Var(LocalName),
+    Hole(LocalName, SizeHole),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -241,6 +285,12 @@ pub enum Size {
 }
 
 impl Size {
+    pub fn to_lt(&self) -> Self {
+        match self {
+            Size::LE(anchor) | Size::LT(anchor) => Size::LT(anchor.clone()),
+        }
+    }
+
     pub fn dec(&self) -> Self {
         match self {
             Self::LE(l) => Self::LT(l.clone()),

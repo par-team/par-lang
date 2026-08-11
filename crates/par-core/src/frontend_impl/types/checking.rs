@@ -1013,23 +1013,46 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         then_type,
                     )
                 } else {
-                    let (argument_type, holes) = substitute_holes(&argument_type, vars)
-                        .unwrap_or_else(|error| {
+                    let (holed_argument_type, type_holes, size_holes) =
+                        substitute_holes(&argument_type, vars).unwrap_or_else(|error| {
                             emit(error);
-                            (Type::Fail(span.clone()), HashMap::new())
+                            (Type::Fail(span.clone()), HashMap::new(), HashMap::new())
                         });
-                    let argument = self.check_expression(None, argument, &argument_type, emit);
-                    let inferred = resolve_holes(span, vars, &self.type_defs, holes)
-                        .unwrap_or_else(|error| {
-                            emit(error);
-                            vars.iter()
-                                .map(|var| (var.name().clone(), Type::Fail(span.clone())))
-                                .collect()
-                        });
-                    let argument =
-                        argument.map_types(&mut |typ| typ.substitute_inferred_holes(&inferred));
+                    let argument = self.check_expression(None, argument, &holed_argument_type, emit);
+                    let (inferred_types, inferred_sizes) = resolve_holes(
+                        span,
+                        vars,
+                        &self.type_defs,
+                        type_holes,
+                        size_holes,
+                    )
+                    .unwrap_or_else(|error| {
+                        emit(error);
+                        let fail_types = vars
+                            .iter()
+                            .filter_map(|var| match var {
+                                ImplicitParameter::Type(t) => {
+                                    Some((t.name.clone(), Type::Fail(span.clone())))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        (fail_types, BTreeMap::new())
+                    });
+                    let argument = argument
+                        .map_types(&mut |typ| typ.substitute_inferred_holes(&inferred_types));
+                    let size_sub_refs: BTreeMap<_, _> = inferred_sizes
+                        .iter()
+                        .map(|(k, v)| (k, v.as_slice()))
+                        .collect();
                     let then_type = then_type
-                        .substitute(inferred.iter().map(|(name, typ)| (name, typ)).collect())
+                        .substitute_size(&size_sub_refs)
+                        .substitute(
+                            inferred_types
+                                .iter()
+                                .map(|(name, typ)| (name, typ))
+                                .collect(),
+                        )
                         .unwrap_or_else(|error| {
                             emit(error);
                             Type::Fail(span.clone())
@@ -1072,20 +1095,40 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     self.resolve_type_parameters(type_parameters, &expected_parameters, emit);
                 let substitutions: BTreeMap<_, _> = expected_parameters
                     .iter()
-                    .map(|parameter| parameter.name())
-                    .zip(
-                        type_parameters
-                            .iter()
-                            .map(|parameter| Type::Var(Span::None, parameter.name().clone())),
-                    )
+                    .zip(&type_parameters)
+                    .filter_map(|(expected, param)| match (expected, param) {
+                        (ImplicitParameter::Type(exp), ImplicitParameter::Type(param)) => {
+                            Some((&exp.name, Type::Var(Span::None, param.name.clone())))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let size_substitutions: BTreeMap<_, _> = expected_parameters
+                    .iter()
+                    .zip(&type_parameters)
+                    .filter_map(|(expected, param)| match (expected, param) {
+                        (ImplicitParameter::Size(exp), ImplicitParameter::Size(param)) => {
+                            Some((
+                                &exp.name,
+                                vec![Size::LE(SizeAnchor::Var(param.name.clone()))],
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let size_sub_refs: BTreeMap<_, _> = size_substitutions
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_slice()))
                     .collect();
                 let param_type = param_type
+                    .substitute_size(&size_sub_refs)
                     .substitute(substitutions.iter().map(|(k, v)| (*k, v)).collect())
                     .unwrap_or_else(|error| {
                         emit(error);
                         Type::Fail(span.clone())
                     });
                 let then_type = then_type
+                    .substitute_size(&size_sub_refs)
                     .substitute(substitutions.iter().map(|(k, v)| (*k, v)).collect())
                     .unwrap_or_else(|error| {
                         emit(error);

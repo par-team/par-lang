@@ -1,5 +1,5 @@
 use super::super::language::LocalName;
-use super::core::Type;
+use super::core::{Size, SizeAnchor, Type};
 use super::error::TypeError;
 use crate::frontend_impl::types::visit;
 use crate::location::Span;
@@ -121,6 +121,80 @@ impl<S: Clone> Type<S> {
 
         let mut typ = self;
         inner(&mut typ, map);
+        typ
+    }
+
+    pub fn substitute_size(self, map: &BTreeMap<&LocalName, &[Size]>) -> Self {
+        fn substitute_size_item(size: Size, map: &BTreeMap<&LocalName, &[Size]>) -> Vec<Size> {
+            match size {
+                Size::LE(SizeAnchor::Var(ref var)) => {
+                    if let Some(replacement) = map.get(var) {
+                        replacement.to_vec()
+                    } else {
+                        vec![size]
+                    }
+                }
+                Size::LT(SizeAnchor::Var(ref var)) => {
+                    if let Some(replacement) = map.get(var) {
+                        replacement.iter().map(|s| s.to_lt()).collect()
+                    } else {
+                        vec![size]
+                    }
+                }
+                _ => vec![size],
+            }
+        }
+        fn inner<S: Clone>(typ: &mut Type<S>, map: &BTreeMap<&LocalName, &[Size]>) {
+            match typ {
+                Type::SizedName(_, sizes, _, args) | Type::SizedDualName(_, sizes, _, args) => {
+                    let mut new_sizes = Vec::new();
+                    for s in sizes.drain(..) {
+                        new_sizes.extend(substitute_size_item(s, map));
+                    }
+                    *sizes = new_sizes;
+                    for arg in args {
+                        inner(arg, map);
+                    }
+                }
+                Type::Recursive {
+                    size,
+                    body,
+                    display_hint,
+                    ..
+                }
+                | Type::Iterative {
+                    size,
+                    body,
+                    display_hint,
+                    ..
+                } => {
+                    let mut new_size = im::HashSet::new();
+                    for s in size.iter() {
+                        for new_s in substitute_size_item(s.clone(), map) {
+                            new_size.insert(new_s);
+                        }
+                    }
+                    *size = new_size;
+                    inner(body, map);
+                    if let Some(display_hint) = display_hint.0.as_mut() {
+                        for arg in &mut display_hint.args {
+                            inner(arg, map);
+                        }
+                    }
+                }
+                _ => {
+                    visit::continue_mut(typ, |child| {
+                        inner(child, map);
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                }
+            }
+        }
+        let mut typ = self;
+        if !map.is_empty() {
+            inner(&mut typ, map);
+        }
         typ
     }
 }

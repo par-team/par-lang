@@ -3,7 +3,7 @@ use crate::frontend_impl::language::TypeConstraint;
 use crate::frontend_impl::language::TypeParameter;
 use crate::frontend_impl::types::assignability::SubtypeResult::{Compatible, Cycle, Incompatible};
 use crate::frontend_impl::types::{
-    ImplicitParameter, PrimitiveType, Size, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
+    ImplicitParameter, PrimitiveType, Size, SizeAnchor, Type, TypeDefs, TypeError, TypePath, TypePathSegment,
 };
 use crate::location::Span;
 use indexmap::IndexSet;
@@ -672,10 +672,26 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
 fn sizes_satisfied(required: &im::HashSet<Size>, provided: &im::HashSet<Size>) -> bool {
     required.iter().all(|req| match req {
         Size::LE(anchor) => {
-            provided.contains(&Size::LE(anchor.clone()))
-                || provided.contains(&Size::LT(anchor.clone()))
+            if let SizeAnchor::Hole(_, hole) = anchor {
+                for prov in provided {
+                    hole.add_bound(prov.clone());
+                }
+                true
+            } else {
+                provided.contains(&Size::LE(anchor.clone()))
+                    || provided.contains(&Size::LT(anchor.clone()))
+            }
         }
-        Size::LT(anchor) => provided.contains(&Size::LT(anchor.clone())),
+        Size::LT(anchor) => {
+            if let SizeAnchor::Hole(_, hole) = anchor {
+                for prov in provided {
+                    hole.add_bound(prov.clone());
+                }
+                true
+            } else {
+                provided.contains(&Size::LT(anchor.clone()))
+            }
+        }
     })
 }
 
