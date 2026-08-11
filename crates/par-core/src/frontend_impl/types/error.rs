@@ -63,6 +63,7 @@ pub enum TypeError<S> {
     PollBranchMustSubmit(Span),
     CannotUseLinearVariableInBox(Span, LocalName),
     NonExhaustiveIf(Span),
+    CannotApplySized(Span, Type<S>),
     Todo(Span),
 }
 
@@ -272,6 +273,15 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     labels = labels,
                     "Cannot re-assign `{}` before handling it.",
                     name,
+                )
+            }
+            Self::CannotApplySized(span, typ) => {
+                let labels = labels_from_span(code, span);
+                let typ_str = render_type(typ, 1);
+                miette::miette!(
+                    labels = labels,
+                    "Cannot apply size constraint `sized(...)` to composite type:\n\n  {}\n\n`sized` constraints can only be applied to recursive or iterative types.",
+                    typ_str,
                 )
             }
             Self::TypeMustBeKnownAtThisPoint(span, name) => {
@@ -727,6 +737,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::PollBranchMustSubmit(span)
             | Self::CannotUseLinearVariableInBox(span, _)
             | Self::NonExhaustiveIf(span)
+            | Self::CannotApplySized(span, _)
             | Self::Todo(span)
             | Self::CannotUnrollAscendantIterative(span, _) => (span.clone(), None),
 

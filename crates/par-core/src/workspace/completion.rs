@@ -316,7 +316,10 @@ impl CheckedWorkspace {
                     candidates,
                 );
             }
-            Type::Name(..) | Type::DualName(..) => {
+            Type::Name(..)
+            | Type::DualName(..)
+            | Type::SizedName(..)
+            | Type::SizedDualName(..) => {
                 if let Ok(expanded) = typ.expand_definition(&self.checked.type_defs) {
                     self.push_type_completion_candidates(
                         &expanded,

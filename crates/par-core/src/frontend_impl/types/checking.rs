@@ -60,7 +60,7 @@ enum InferenceFrame<S> {
         parameter: LocalName,
         annotation: Option<Type<S>>,
         parameter_type: Type<S>,
-        type_parameters: Vec<TypeParameter>,
+        type_parameters: Vec<ImplicitParameter>,
         failed: bool,
     },
     Signal {
@@ -126,18 +126,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
     fn resolve_type_parameters(
         &self,
-        parameters: &[TypeParameter],
+        parameters: &[ImplicitParameter],
         expected: &[ImplicitParameter],
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Vec<TypeParameter> {
+    ) -> Vec<ImplicitParameter> {
         parameters
             .iter()
             .zip(expected)
-            .map(|(parameter, expected)| match expected {
-                ImplicitParameter::Type(expected) => {
-                    self.resolve_type_parameter(parameter, expected, emit)
+            .map(|(parameter, expected)| match (parameter, expected) {
+                (ImplicitParameter::Type(parameter), ImplicitParameter::Type(expected)) => {
+                    ImplicitParameter::Type(self.resolve_type_parameter(parameter, expected, emit))
                 }
-                ImplicitParameter::Size(_) => parameter.clone(),
+                (param, _) => param.clone(),
             })
             .collect()
     }
@@ -767,7 +767,10 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     fn type_has_holes(&self, typ: &Type<S>) -> bool {
         match typ {
             Type::Hole(..) | Type::DualHole(..) => true,
-            Type::Name(_, _, args) | Type::DualName(_, _, args) => {
+            Type::Name(_, _, args)
+            | Type::DualName(_, _, args)
+            | Type::SizedName(_, _, _, args)
+            | Type::SizedDualName(_, _, _, args) => {
                 args.iter().any(|arg| self.type_has_holes(arg))
             }
             Type::Box(_, inner) | Type::DualBox(_, inner) => self.type_has_holes(inner),
@@ -925,6 +928,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let next = match &typ {
                 Type::Name(_, name, args) => self.type_defs.get(span, name, args),
                 Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
+                Type::SizedName(_, sizes, name, args) => {
+                    self.type_defs.get_sized(span, sizes, name, args)
+                }
+                Type::SizedDualName(_, sizes, name, args) => {
+                    self.type_defs.get_sized_dual(span, sizes, name, args)
+                }
                 Type::Box(_, inner) => Ok((**inner).clone()),
                 Type::DualBox(_, inner)
                     if inner
@@ -1055,11 +1064,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         (
                             fail.clone(),
                             fail,
-                            type_parameters
-                                .iter()
-                                .cloned()
-                                .map(ImplicitParameter::Type)
-                                .collect(),
+                            type_parameters.clone(),
                         )
                     }
                 };
@@ -1071,7 +1076,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     .zip(
                         type_parameters
                             .iter()
-                            .map(|parameter| Type::Var(Span::None, parameter.name.clone())),
+                            .map(|parameter| Type::Var(Span::None, parameter.name().clone())),
                     )
                     .collect();
                 let param_type = param_type
@@ -1087,7 +1092,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         Type::Fail(span.clone())
                     });
                 self.type_defs
-                    .extend_implicit_vars(type_parameters.iter().cloned().map(ImplicitParameter::Type));
+                    .extend_implicit_vars(type_parameters.iter().cloned());
                 if let Some(annotation) = annotation {
                     if let Err(error) = self.type_defs.validate_type(annotation) {
                         emit(error);
@@ -1741,7 +1746,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     }
                     Command::Receive(parameter, annotation, (), type_parameters) => {
                         self.type_defs
-                            .extend_implicit_vars(type_parameters.iter().cloned().map(ImplicitParameter::Type));
+                            .extend_implicit_vars(type_parameters.iter().cloned());
                         let (parameter_type, failed) = match annotation {
                             Some(typ) => (typ.clone(), false),
                             None => {
@@ -1927,11 +1932,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                             span.clone(),
                             Box::new(parameter_type.clone()),
                             Box::new(inferred_type),
-                            type_parameters
-                                .iter()
-                                .cloned()
-                                .map(ImplicitParameter::Type)
-                                .collect(),
+                            type_parameters.clone(),
                         )
                     };
                     typed_steps[index] = Some(Step::Do {
@@ -3323,7 +3324,10 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
                     out.insert(name.clone());
                 }
             }
-            Type::Name(_, _, args) | Type::DualName(_, _, args) => {
+            Type::Name(_, _, args)
+            | Type::DualName(_, _, args)
+            | Type::SizedName(_, _, _, args)
+            | Type::SizedDualName(_, _, _, args) => {
                 for arg in args {
                     inner(arg, bound, out);
                 }

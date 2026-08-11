@@ -347,7 +347,7 @@ pub struct Pattern<S> {
 
 #[derive(Clone, Debug)]
 pub enum PatternStep<S> {
-    Receive(Span, Box<Pattern<S>>, Vec<TypeParameter>),
+    Receive(Span, Box<Pattern<S>>, Vec<ImplicitParameter>),
     ReceiveType(Span, TypeParameter),
     Try(Span, Option<LocalName>),
     Default(Span, Box<Expression<S>>),
@@ -511,7 +511,7 @@ pub struct Construct<S> {
 #[derive(Clone, Debug)]
 pub enum ConstructStep<S> {
     Send(Span, Box<Expression<S>>),
-    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Receive(Span, Pattern<S>, Vec<ImplicitParameter>),
     Signal(Span, LocalName),
     SendType(Span, Type<S>),
     ReceiveType(Span, TypeParameter),
@@ -547,7 +547,7 @@ pub struct ConstructBranch<S> {
 
 #[derive(Clone, Debug)]
 pub enum ConstructBranchStep<S> {
-    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Receive(Span, Pattern<S>, Vec<ImplicitParameter>),
     ReceiveType(Span, TypeParameter),
 }
 
@@ -596,7 +596,7 @@ pub struct ApplyBranch<S> {
 
 #[derive(Clone, Debug)]
 pub enum ApplyBranchStep<S> {
-    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Receive(Span, Pattern<S>, Vec<ImplicitParameter>),
     ReceiveType(Span, TypeParameter),
     Try(Span, Option<LocalName>),
     Default(Span, Box<Expression<S>>),
@@ -693,7 +693,7 @@ pub struct Command<S> {
 #[derive(Clone, Debug)]
 pub enum CommandStep<S> {
     Send(Span, Expression<S>),
-    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Receive(Span, Pattern<S>, Vec<ImplicitParameter>),
     Signal(Span, LocalName),
     Continue(Span),
     SendType(Span, Type<S>),
@@ -730,7 +730,7 @@ pub struct CommandBranch<S> {
 
 #[derive(Clone, Debug)]
 pub enum CommandBranchStep<S> {
-    Receive(Span, Pattern<S>, Vec<TypeParameter>),
+    Receive(Span, Pattern<S>, Vec<ImplicitParameter>),
     ReceiveType(Span, TypeParameter),
     Try(Span, Option<LocalName>),
     Default(Span, Box<Expression<S>>),
@@ -987,7 +987,7 @@ enum CommandLoweringFrame {
     Receive {
         span: Span,
         pattern: Pattern<Unresolved>,
-        vars: Vec<TypeParameter>,
+        vars: Vec<ImplicitParameter>,
         original_object_name: Option<LocalName>,
     },
     Try {
@@ -1755,7 +1755,7 @@ impl Context {
         span: &Span,
         subject: &LocalName,
         process: Arc<process::Process<(), Unresolved>>,
-        vars: Vec<TypeParameter>,
+        vars: Vec<ImplicitParameter>,
     ) -> Result<Arc<process::Process<(), Unresolved>>, CompileError> {
         if let Some((_, name, annotation)) = pattern.as_name() {
             return Ok(process::Process::do_step(
@@ -3736,7 +3736,7 @@ impl<S> Pattern<S> {
                         span.clone(),
                         Box::new(first),
                         Box::new(rest),
-                        vars.iter().cloned().map(ImplicitParameter::Type).collect(),
+                        vars.clone(),
                     ))
                 }
                 PatternStep::ReceiveType(span, parameter) => {

@@ -2,7 +2,7 @@ use crate::frontend_impl::language::{
     GlobalName, ImplicitParameter, LocalName, TypeConstraint, TypeParameter,
 };
 use crate::frontend_impl::types::core::NamedTypeDisplay;
-use crate::frontend_impl::types::{Type, TypeError, visit};
+use crate::frontend_impl::types::{Size, Type, TypeError, visit};
 use crate::location::Span;
 use indexmap::{IndexMap, IndexSet};
 use std::sync::Arc;
@@ -150,6 +150,34 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
             }
             None => Err(TypeError::TypeNameNotDefined(span.clone(), name.clone())),
         }
+    }
+
+    pub fn get_sized(
+        &self,
+        span: &Span,
+        sizes: &[Size],
+        name: &GlobalName<S>,
+        args: &[Type<S>],
+    ) -> Result<Type<S>, TypeError<S>> {
+        let mut typ = self.get(span, name, args)?;
+        for s in sizes {
+            typ = typ.sized_with_constraint(Span::None, s.clone())?;
+        }
+        Ok(typ)
+    }
+
+    pub fn get_sized_dual(
+        &self,
+        span: &Span,
+        sizes: &[Size],
+        name: &GlobalName<S>,
+        args: &[Type<S>],
+    ) -> Result<Type<S>, TypeError<S>> {
+        let mut typ = self.get_dual(span, name, args)?;
+        for s in sizes {
+            typ = typ.sized_with_constraint(Span::None, s.clone())?;
+        }
+        Ok(typ)
     }
 
     pub fn insert_var(&mut self, param: TypeParameter) {

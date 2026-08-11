@@ -95,6 +95,18 @@ fn union_types_structural<S: Clone + Eq + std::hash::Hash>(
         (t1, Type::DualName(span2, name2, args2)) => {
             union_types(typedefs, span, t1, &typedefs.get_dual(span2, name2, args2)?)
         }
+        (Type::SizedName(span1, sizes1, name1, args1), t2) => {
+            union_types(typedefs, span, &typedefs.get_sized(span1, sizes1, name1, args1)?, t2)
+        }
+        (t1, Type::SizedName(span2, sizes2, name2, args2)) => {
+            union_types(typedefs, span, t1, &typedefs.get_sized(span2, sizes2, name2, args2)?)
+        }
+        (Type::SizedDualName(span1, sizes1, name1, args1), t2) => {
+            union_types(typedefs, span, &typedefs.get_sized_dual(span1, sizes1, name1, args1)?, t2)
+        }
+        (t1, Type::SizedDualName(span2, sizes2, name2, args2)) => {
+            union_types(typedefs, span, t1, &typedefs.get_sized_dual(span2, sizes2, name2, args2)?)
+        }
         (t1, t2) => union_types_atoms(typedefs, span, t1, t2),
     }
 }
@@ -269,6 +281,18 @@ fn intersect_types_structural<S: Clone + Eq + std::hash::Hash>(
         }
         (t1, Type::DualName(span2, name2, args2)) => {
             intersect_types(typedefs, span, t1, &typedefs.get_dual(span2, name2, args2)?)
+        }
+        (Type::SizedName(span1, sizes1, name1, args1), t2) => {
+            intersect_types(typedefs, span, &typedefs.get_sized(span1, sizes1, name1, args1)?, t2)
+        }
+        (t1, Type::SizedName(span2, sizes2, name2, args2)) => {
+            intersect_types(typedefs, span, t1, &typedefs.get_sized(span2, sizes2, name2, args2)?)
+        }
+        (Type::SizedDualName(span1, sizes1, name1, args1), t2) => {
+            intersect_types(typedefs, span, &typedefs.get_sized_dual(span1, sizes1, name1, args1)?, t2)
+        }
+        (t1, Type::SizedDualName(span2, sizes2, name2, args2)) => {
+            intersect_types(typedefs, span, t1, &typedefs.get_sized_dual(span2, sizes2, name2, args2)?)
         }
         (t1, t2) => intersect_types_atoms(typedefs, span, t1, t2),
     }

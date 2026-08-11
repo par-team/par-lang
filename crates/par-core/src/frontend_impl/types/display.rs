@@ -1,7 +1,9 @@
 use crate::frontend_impl::language::{GlobalName, LocalName};
 use crate::frontend_impl::process::HoverInfo;
 use crate::frontend_impl::program::Docs;
-use crate::frontend_impl::types::core::{NamedTypeDisplay, TypePath, TypePathSegment};
+use crate::frontend_impl::types::core::{
+    NamedTypeDisplay, Size, SizeAnchor, TypePath, TypePathSegment,
+};
 use crate::frontend_impl::types::{PrimitiveType, Type, TypeDefs};
 use crate::location::{Span, Spanning};
 use std::collections::BTreeMap;
@@ -120,7 +122,7 @@ impl<S: Clone> Type<S> {
         match self {
             Self::Primitive(_, _) | Self::DualPrimitive(_, _) => {}
             Self::Var(_, _) | Self::DualVar(_, _) => {}
-            Self::Name(span, name, args) => {
+            Self::Name(span, name, args) | Self::SizedName(span, _, name, args) => {
                 let (def_span, typ) = type_defs
                     .get_with_span(span, name, args)
                     .unwrap_or_else(|_| (&Span::None, self.clone()));
@@ -138,7 +140,7 @@ impl<S: Clone> Type<S> {
                     arg.types_at_spans(type_defs, docs, consume);
                 }
             }
-            Self::DualName(span, name, args) => {
+            Self::DualName(span, name, args) | Self::SizedDualName(span, _, name, args) => {
                 let (def_span, typ) =
                     type_defs
                         .get_with_span(span, name, args)
@@ -259,6 +261,29 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
             write_type_args(f, names, args, options, current_path)
         }
         Type::DualName(_, name, args) => {
+            write!(f, "dual ")?;
+            names.write_global_name(f, name)?;
+            write_type_args(f, names, args, options, current_path)
+        }
+        Type::SizedName(_, sizes, name, args) => {
+            for size in sizes {
+                match size {
+                    Size::LE(SizeAnchor::Var(anchor)) => write!(f, "sized({anchor}) ")?,
+                    Size::LT(SizeAnchor::Var(anchor)) => write!(f, "sized(<{anchor}) ")?,
+                    _ => {}
+                }
+            }
+            names.write_global_name(f, name)?;
+            write_type_args(f, names, args, options, current_path)
+        }
+        Type::SizedDualName(_, sizes, name, args) => {
+            for size in sizes {
+                match size {
+                    Size::LE(SizeAnchor::Var(anchor)) => write!(f, "sized({anchor}) ")?,
+                    Size::LT(SizeAnchor::Var(anchor)) => write!(f, "sized(<{anchor}) ")?,
+                    _ => {}
+                }
+            }
             write!(f, "dual ")?;
             names.write_global_name(f, name)?;
             write_type_args(f, names, args, options, current_path)

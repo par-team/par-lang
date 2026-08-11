@@ -21,7 +21,7 @@ use crate::frontend_impl::{
         Declaration, Definition, DocComment, ImportDecl, ImportPath, Module, ModuleDecl,
         SourceFile, TypeDef,
     },
-    types::Type,
+    types::{Size, SizeAnchor, Type},
 };
 use crate::location::{FileName, Point, Span, Spanning};
 use arcstr::ArcStr;
@@ -937,6 +937,7 @@ fn typ(input: &mut Input) -> Result<Type<Unresolved>> {
         typ_name,
         typ_box,
         typ_chan,
+        typ_sized,
         typ_either,
         typ_choice,
         typ_break,
@@ -990,6 +991,30 @@ fn typ_chan(input: &mut Input) -> Result<Type<Unresolved>> {
     .parse_next(input)
 }
 
+fn typ_sized(input: &mut Input) -> Result<Type<Unresolved>> {
+    commit_after(
+        (
+            t(TokenKind::Sized),
+            t(TokenKind::LParen),
+            opt(t(TokenKind::Lt)),
+            local_name,
+            t(TokenKind::RParen),
+        ),
+        typ.context(StrContext::Label("sized type")),
+    )
+    .map(|((pre, _, is_lt, anchor, _), typ)| {
+        let typ_span = typ.span();
+        let size_constraint = if is_lt.is_some() {
+            Size::LT(SizeAnchor::Var(anchor))
+        } else {
+            Size::LE(SizeAnchor::Var(anchor))
+        };
+        typ.sized_with_constraint(pre.span(), size_constraint)
+            .unwrap_or_else(|_| Type::Fail(pre.span.join(typ_span)))
+    })
+    .parse_next(input)
+}
+
 fn typ_send(input: &mut Input) -> Result<Type<Unresolved>> {
     commit_after(
         t(TokenKind::LParen),
@@ -1031,7 +1056,7 @@ enum TypePrefixItem {
 
 enum PatternPrefixItem {
     Explicit(TypeParameter),
-    Value(Vec<TypeParameter>, Pattern<Unresolved>),
+    Value(Vec<ImplicitParameter>, Pattern<Unresolved>),
 }
 
 enum SendPrefixItem {
@@ -1112,10 +1137,6 @@ fn implicit_parameters(input: &mut Input) -> Result<Vec<ImplicitParameter>> {
     .parse_next(input)
 }
 
-fn implicit_type_parameters(input: &mut Input) -> Result<Vec<TypeParameter>> {
-    commit_delim(t(TokenKind::Lt), list1(type_parameter), t(TokenKind::Gt)).parse_next(input)
-}
-
 fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
     alt((
         explicit_type_parameter.map(TypePrefixItem::Explicit),
@@ -1128,7 +1149,7 @@ fn type_prefix_item(input: &mut Input) -> Result<TypePrefixItem> {
 fn pattern_prefix_item(input: &mut Input) -> Result<PatternPrefixItem> {
     alt((
         explicit_type_parameter.map(PatternPrefixItem::Explicit),
-        (opt(implicit_type_parameters), pattern)
+        (opt(implicit_parameters), pattern)
             .map(|(vars, pattern)| PatternPrefixItem::Value(vars.unwrap_or_default(), pattern)),
     ))
     .parse_next(input)

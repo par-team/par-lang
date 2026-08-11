@@ -257,6 +257,8 @@ pub enum Type<S> {
     DualVar(Span, LocalName),
     Name(Span, GlobalName<S>, Vec<Self>),
     DualName(Span, GlobalName<S>, Vec<Self>),
+    SizedName(Span, Vec<Size>, GlobalName<S>, Vec<Self>),
+    SizedDualName(Span, Vec<Size>, GlobalName<S>, Vec<Self>),
     Box(Span, Box<Self>),
     DualBox(Span, Box<Self>),
     Pair(Span, Box<Self>, Box<Self>, Vec<ImplicitParameter>),
@@ -353,7 +355,10 @@ impl<S: Clone> Type<S> {
             | Self::Hole(..)
             | Self::DualHole(..)
             | Self::Fail(..) => 1,
-            Self::Name(_, _, args) | Self::DualName(_, _, args) => {
+            Self::Name(_, _, args)
+            | Self::DualName(_, _, args)
+            | Self::SizedName(_, _, _, args)
+            | Self::SizedDualName(_, _, _, args) => {
                 current_depth_from_children(args.iter().map(|arg| arg.current_depth()))
             }
             Self::Box(_, inner)
@@ -385,7 +390,10 @@ impl<S: Clone> Type<S> {
             | Self::Hole(..)
             | Self::DualHole(..)
             | Self::Fail(..) => 1,
-            Self::Name(_, _, args) | Self::DualName(_, _, args) => {
+            Self::Name(_, _, args)
+            | Self::DualName(_, _, args)
+            | Self::SizedName(_, _, _, args)
+            | Self::SizedDualName(_, _, _, args) => {
                 flattened_depth_from_side_children(args.iter().map(|arg| arg.flattened_depth()))
             }
             Self::Box(_, inner)
@@ -492,6 +500,74 @@ impl<S: Clone> Type<S> {
                 })
                 .collect(),
         )
+    }
+    pub fn sized_with_constraint(
+        self,
+        span0: Span,
+        size_constraint: Size,
+    ) -> Result<Self, TypeError<S>> {
+        match self {
+            Self::Name(span, name, args) => Ok(Self::SizedName(
+                span0.join(span),
+                vec![size_constraint],
+                name,
+                args,
+            )),
+            Self::DualName(span, name, args) => Ok(Self::SizedDualName(
+                span0.join(span),
+                vec![size_constraint],
+                name,
+                args,
+            )),
+            Self::SizedName(span, mut sizes, name, args) => {
+                sizes.push(size_constraint);
+                Ok(Self::SizedName(span0.join(span), sizes, name, args))
+            }
+            Self::SizedDualName(span, mut sizes, name, args) => {
+                sizes.push(size_constraint);
+                Ok(Self::SizedDualName(span0.join(span), sizes, name, args))
+            }
+            Self::Recursive {
+                span,
+                mut size,
+                label,
+                body,
+                display_hint,
+            } => {
+                size.insert(size_constraint);
+                Ok(Self::Recursive {
+                    span,
+                    size,
+                    label,
+                    body,
+                    display_hint,
+                })
+            }
+            Self::Iterative {
+                span,
+                mut size,
+                label,
+                body,
+                display_hint,
+            } => {
+                size.insert(size_constraint);
+                Ok(Self::Iterative {
+                    span,
+                    size,
+                    label,
+                    body,
+                    display_hint,
+                })
+            }
+            other => {
+                let err_span = if matches!(span0, Span::None) { other.span() } else { span0 };
+                Err(TypeError::CannotApplySized(err_span, other))
+            }
+        }
+    }
+
+    pub fn sized(self, span0: Span, anchor: LocalName) -> Result<Self, TypeError<S>> {
+        self.sized_with_constraint(span0, Size::LE(SizeAnchor::Var(anchor)))
     }
 
     pub(crate) fn with_type_parameters<R>(
@@ -652,6 +728,12 @@ impl<S: Clone> Type<S> {
             Self::Var(_, _) | Self::DualVar(_, _) => 1,
             Self::Name(span, name, args) => defs.get(span, name, args)?.size(defs)?,
             Self::DualName(span, name, args) => defs.get_dual(span, name, args)?.size(defs)?,
+            Self::SizedName(span, sizes, name, args) => {
+                defs.get_sized(span, sizes, name, args)?.size(defs)?
+            }
+            Self::SizedDualName(span, sizes, name, args) => {
+                defs.get_sized_dual(span, sizes, name, args)?.size(defs)?
+            }
             Self::Box(_, inner) | Self::DualBox(_, inner) => 1 + inner.size(defs)?,
             Self::Pair(_, left, right, _) => 1 + left.size(defs)? + right.size(defs)?,
             Self::Function(_, input, output, _) => 1 + input.size(defs)? + output.size(defs)?,
@@ -707,6 +789,22 @@ impl<S: Clone> Type<S> {
                     .map(|arg| arg.map_global_names(f))
                     .collect::<Result<Vec<_>, _>>()?;
                 Type::DualName(span, mapped_name, mapped_args)
+            }
+            Self::SizedName(span, sizes, name, args) => {
+                let mapped_name = f(name)?;
+                let mapped_args = args
+                    .into_iter()
+                    .map(|arg| arg.map_global_names(f))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Type::SizedName(span, sizes, mapped_name, mapped_args)
+            }
+            Self::SizedDualName(span, sizes, name, args) => {
+                let mapped_name = f(name)?;
+                let mapped_args = args
+                    .into_iter()
+                    .map(|arg| arg.map_global_names(f))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Type::SizedDualName(span, sizes, mapped_name, mapped_args)
             }
             Self::Box(span, inner) => {
                 let mapped_inner = Box::new(inner.map_global_names(f)?);
@@ -812,6 +910,8 @@ impl<S> Spanning for Type<S> {
             | Self::DualVar(span, _)
             | Self::Name(span, _, _)
             | Self::DualName(span, _, _)
+            | Self::SizedName(span, _, _, _)
+            | Self::SizedDualName(span, _, _, _)
             | Self::Box(span, _)
             | Self::DualBox(span, _)
             | Self::Pair(span, _, _, _)

@@ -58,6 +58,12 @@ pub fn type_supports_readback(type_defs: &TypeDefs<Universal>, typ: &Type<Univer
         Type::DualName(span, name, args) => type_defs
             .get_dual(span, name, args)
             .is_ok_and(|typ| type_supports_readback(type_defs, &typ)),
+        Type::SizedName(span, sizes, name, args) => type_defs
+            .get_sized(span, sizes, name, args)
+            .is_ok_and(|typ| type_supports_readback(type_defs, &typ)),
+        Type::SizedDualName(span, sizes, name, args) => type_defs
+            .get_sized_dual(span, sizes, name, args)
+            .is_ok_and(|typ| type_supports_readback(type_defs, &typ)),
 
         Type::Pair(_, left, right, vars) | Type::Function(_, left, right, vars) => {
             vars.is_empty()

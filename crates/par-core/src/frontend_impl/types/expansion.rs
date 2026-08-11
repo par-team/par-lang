@@ -13,6 +13,12 @@ impl<S: Clone> Type<S> {
         match self {
             Self::Name(span, name, args) => type_defs.get(span, name, args),
             Self::DualName(span, name, args) => type_defs.get_dual(span, name, args),
+            Self::SizedName(span, sizes, name, args) => {
+                type_defs.get_sized(span, sizes, name, args)
+            }
+            Self::SizedDualName(span, sizes, name, args) => {
+                type_defs.get_sized_dual(span, sizes, name, args)
+            }
             _ => Ok(self.clone()),
         }
     }

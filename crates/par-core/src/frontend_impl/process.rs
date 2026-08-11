@@ -1,6 +1,6 @@
 pub use super::captures::{Captures, VariableUsage};
 use super::{
-    language::{GlobalName, LocalName, TypeParameter},
+    language::{GlobalName, ImplicitParameter, LocalName, TypeParameter},
     types::{GlobalNameWriter, Type},
 };
 use crate::{
@@ -91,7 +91,7 @@ pub enum Command<Typ, S> {
     /// command chains of the form `subject; next`.
     Noop,
     Send(Arc<Expression<Typ, S>>),
-    Receive(LocalName, Option<Type<S>>, Typ, Vec<TypeParameter>),
+    Receive(LocalName, Option<Type<S>>, Typ, Vec<ImplicitParameter>),
     Signal(LocalName),
     Continue,
     SendType(Type<S>),

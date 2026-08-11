@@ -8,12 +8,12 @@ where
     F: FnMut(&Type<S>) -> Result<(), E>,
 {
     match typ {
-        Type::Name(_, _, args) => {
+        Type::Name(_, _, args) | Type::SizedName(_, _, _, args) => {
             for arg in args {
                 visit(arg)?;
             }
         }
-        Type::DualName(_, _, args) => {
+        Type::DualName(_, _, args) | Type::SizedDualName(_, _, _, args) => {
             for arg in args {
                 visit(arg)?;
             }
@@ -56,12 +56,12 @@ where
     F: FnMut(&mut Type<S>) -> Result<(), E>,
 {
     match typ {
-        Type::Name(_, _, args) => {
+        Type::Name(_, _, args) | Type::SizedName(_, _, _, args) => {
             for arg in args {
                 visit(arg)?;
             }
         }
-        Type::DualName(_, _, args) => {
+        Type::DualName(_, _, args) | Type::SizedDualName(_, _, _, args) => {
             for arg in args {
                 visit(arg)?;
             }
@@ -116,6 +116,14 @@ where
             let typ = defs.get_dual(span, name, args)?;
             visit(&typ)?;
         }
+        Type::SizedName(span, sizes, name, args) => {
+            let typ = defs.get_sized(span, sizes, name, args)?;
+            visit(&typ)?;
+        }
+        Type::SizedDualName(span, sizes, name, args) => {
+            let typ = defs.get_sized_dual(span, sizes, name, args)?;
+            visit(&typ)?;
+        }
         _ => {
             continue_(typ, visit)?;
         }
@@ -133,7 +141,7 @@ where
     F: FnMut(&Type<S>, bool) -> Result<(), TypeError<S>>,
 {
     match typ {
-        Type::DualName(..) => {
+        Type::DualName(..) | Type::SizedDualName(..) => {
             continue_deref(typ, defs, |child| visit(child, is_positive))?;
         }
         Type::DualBox(_, inner) => {
@@ -275,12 +283,12 @@ where
     F: FnMut(&mut Type<S>, Polarity) -> Result<(), TypeError<S>>,
 {
     match typ {
-        Type::Name(span, name, args) => {
+        Type::Name(span, name, args) | Type::SizedName(span, _, name, args) => {
             for (arg, polarity) in args.iter_mut().zip(get_args_polarity(span, name, defs)?) {
                 visit(arg, polarity.xor(polarity))?;
             }
         }
-        Type::DualName(span, name, args) => {
+        Type::DualName(span, name, args) | Type::SizedDualName(span, _, name, args) => {
             for (arg, polarity) in args.iter_mut().zip(get_args_polarity(span, name, defs)?) {
                 visit(arg, polarity.xor(polarity).dual())?;
             }

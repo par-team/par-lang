@@ -15,6 +15,12 @@ impl<S> Type<S> {
 
             Self::Name(span, name, args) => Self::DualName(span0.join(span), name, args),
             Self::DualName(span, name, args) => Self::Name(span0.join(span), name, args),
+            Self::SizedName(span, sizes, name, args) => {
+                Self::SizedDualName(span0.join(span), sizes, name, args)
+            }
+            Self::SizedDualName(span, sizes, name, args) => {
+                Self::SizedName(span0.join(span), sizes, name, args)
+            }
 
             Self::Box(span, body) => Self::DualBox(span0.join(span), body),
             Self::DualBox(span, body) => Self::Box(span0.join(span), body),

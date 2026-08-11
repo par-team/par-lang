@@ -33,7 +33,13 @@ impl<'a, S: Clone + Eq + std::hash::Hash> SubtypeContext<'a, S> {
                 self.normalize(self.type_defs.get(&span, &name, &args)?)?
             }
             Type::DualName(span, name, args) => {
-                self.normalize(self.type_defs.get(&span, &name, &args)?.dual(Span::None))?
+                self.normalize(self.type_defs.get_dual(&span, &name, &args)?)?
+            }
+            Type::SizedName(span, sizes, name, args) => {
+                self.normalize(self.type_defs.get_sized(&span, &sizes, &name, &args)?)?
+            }
+            Type::SizedDualName(span, sizes, name, args) => {
+                self.normalize(self.type_defs.get_sized_dual(&span, &sizes, &name, &args)?)?
             }
             t => t,
         })
@@ -119,7 +125,7 @@ impl<S> Type<S> {
         match self {
             Type::Primitive(_, p) | Type::DualPrimitive(_, p) => TypeConstructor::Primitive(*p),
             Type::Var(_, _) | Type::DualVar(_, _) => TypeConstructor::Var,
-            Type::Name(_, _, _) | Type::DualName(_, _, _) => TypeConstructor::Name,
+            Type::Name(_, _, _) | Type::DualName(_, _, _) | Type::SizedName(..) | Type::SizedDualName(..) => TypeConstructor::Name,
             Type::Box(_, _) | Type::DualBox(_, _) => TypeConstructor::Box,
             Type::Pair(_, _, _, _) => TypeConstructor::Pair,
             Type::Function(_, _, _, _) => TypeConstructor::Function,
@@ -333,7 +339,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         segments: &[TypePathSegment],
         type_defs: &TypeDefs<S>,
     ) -> Self {
-        while matches!(typ, Type::Name(..) | Type::DualName(..)) || typ.display_hint().is_some() {
+        while matches!(typ, Type::Name(..) | Type::DualName(..) | Type::SizedName(..) | Type::SizedDualName(..)) || typ.display_hint().is_some() {
             if let Ok(expanded) = typ.expand_definition(type_defs) {
                 if expanded == typ {
                     break;

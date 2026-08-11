@@ -446,7 +446,10 @@ fn visit_type_global_names(
     consume: &mut impl FnMut(&Span, &GlobalName<Universal>),
 ) {
     match typ {
-        Type::Name(span, name, args) | Type::DualName(span, name, args) => {
+        Type::Name(span, name, args)
+        | Type::DualName(span, name, args)
+        | Type::SizedName(span, _, name, args)
+        | Type::SizedDualName(span, _, name, args) => {
             consume(span, name);
             for arg in args {
                 visit_type_global_names(arg, consume);

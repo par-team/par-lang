@@ -43,6 +43,12 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::Name(_, name, args) => defs
                 .get(&self.span(), name, args)
                 .and_then(|typ| typ.satisfies_constraint(constraint, defs)),
+            Type::SizedName(_, sizes, name, args) => defs
+                .get_sized(&self.span(), sizes, name, args)
+                .and_then(|typ| typ.satisfies_constraint(constraint, defs)),
+            Type::SizedDualName(_, sizes, name, args) => defs
+                .get_sized_dual(&self.span(), sizes, name, args)
+                .and_then(|typ| typ.satisfies_constraint(constraint, defs)),
             Type::Box(_, typ) => Ok(satisfies_at_least(TypeConstraint::Box)
                 || typ.satisfies_constraint(constraint, defs)?),
             Type::Pair(_, left, right, vars) => {
