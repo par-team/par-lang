@@ -98,4 +98,101 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             | Type::DualHole(..) => Ok(false),
         }
     }
+
+    pub fn validate_sized(&self, defs: &TypeDefs<S>) -> Result<(), TypeError<S>>
+    where
+        S: Clone + Eq + std::hash::Hash,
+    {
+        match self {
+            Type::SizedName(span, _, name, args) => {
+                for arg in args {
+                    arg.validate_sized(defs)?;
+                }
+                let mut expanded = defs.get(span, name, args)?;
+                while matches!(
+                    expanded,
+                    Type::Name(..)
+                        | Type::DualName(..)
+                        | Type::SizedName(..)
+                        | Type::SizedDualName(..)
+                ) {
+                    if let Ok(next) = expanded.clone().expand_definition(defs) {
+                        if next == expanded {
+                            break;
+                        }
+                        expanded = next;
+                    } else {
+                        break;
+                    }
+                }
+                if !expanded.is_fixpoint() {
+                    return Err(TypeError::CannotApplySized(span.clone(), expanded));
+                }
+                expanded.validate_sized(defs)?;
+            }
+            Type::SizedDualName(span, _, name, args) => {
+                for arg in args {
+                    arg.validate_sized(defs)?;
+                }
+                let mut expanded = defs.get_dual(span, name, args)?;
+                while matches!(
+                    expanded,
+                    Type::Name(..)
+                        | Type::DualName(..)
+                        | Type::SizedName(..)
+                        | Type::SizedDualName(..)
+                ) {
+                    if let Ok(next) = expanded.clone().expand_definition(defs) {
+                        if next == expanded {
+                            break;
+                        }
+                        expanded = next;
+                    } else {
+                        break;
+                    }
+                }
+                if !expanded.is_fixpoint() {
+                    return Err(TypeError::CannotApplySized(span.clone(), expanded));
+                }
+                expanded.validate_sized(defs)?;
+            }
+            Type::Name(_, _, args) | Type::DualName(_, _, args) => {
+                for arg in args {
+                    arg.validate_sized(defs)?;
+                }
+            }
+            Type::Box(_, body) | Type::DualBox(_, body) => {
+                body.validate_sized(defs)?;
+            }
+            Type::Pair(_, left, right, vars) | Type::Function(_, left, right, vars) => {
+                Self::with_implicit_parameters(defs, vars, |defs| {
+                    left.validate_sized(defs)?;
+                    right.validate_sized(defs)?;
+                    Ok(())
+                })?;
+            }
+            Type::Either(_, branches) | Type::Choice(_, branches) => {
+                for branch in branches.values() {
+                    branch.validate_sized(defs)?;
+                }
+            }
+            Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
+                body.validate_sized(defs)?;
+            }
+            Type::Exists(_, param, body) | Type::Forall(_, param, body) => {
+                Self::with_type_parameter(defs, param, |defs| body.validate_sized(defs))?;
+            }
+            Type::Hole(..) | Type::DualHole(..) => {}
+            Type::Primitive(..)
+            | Type::DualPrimitive(..)
+            | Type::Var(..)
+            | Type::DualVar(..)
+            | Type::Break(..)
+            | Type::Continue(..)
+            | Type::Self_(..)
+            | Type::DualSelf(..)
+            | Type::Fail(..) => {}
+        }
+        Ok(())
+    }
 }

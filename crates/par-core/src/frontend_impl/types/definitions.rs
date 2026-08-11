@@ -237,6 +237,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
     }
 
     pub fn validate_type(&self, typ: &Type<S>) -> Result<(), TypeError<S>> {
+        typ.validate_sized(self)?;
         #[derive(Clone)]
         struct Ctx<S> {
             defs: TypeDefs<S>,
