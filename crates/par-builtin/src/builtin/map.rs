@@ -51,7 +51,7 @@ async fn provide_map(mut handle: Handle, mut map: BTreeMap<Data, Handle>) {
                 keys.break_();
                 continue;
             }
-            "list" => {
+            "list" | "#close" => {
                 for (key, value) in map.into_iter() {
                     handle.signal(literal!("item"));
                     let mut pair = handle.send();

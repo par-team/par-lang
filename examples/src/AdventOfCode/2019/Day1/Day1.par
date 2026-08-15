@@ -89,7 +89,7 @@ def Main = chan exit {
 
   let lines = StringLines(input)
   ListMapTry(type String, type !, type Nat, lines, box [line]
-    Nat.FromString(line)->Option.ToResult(!)
+    Nat.FromString(line)->Option.ToTry(!)
   ).case {
     .err! => {
       console.print("invalid input")

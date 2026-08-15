@@ -15,6 +15,8 @@ use std::{
     sync::Arc,
 };
 
+pub const CLEANUP_BRANCH: &str = "#close";
+
 #[derive(Clone, Debug)]
 pub enum PollKind {
     Poll,
@@ -90,6 +92,8 @@ pub enum Command<Typ, S> {
     /// protocol effect, but preserves linearity diagnostics and hover information for source
     /// command chains of the form `subject; next`.
     Noop,
+    /// Compiler-inserted structural disposal for a value satisfying the `drop` constraint.
+    Close,
     Send(Arc<Expression<Typ, S>>),
     Receive(LocalName, Option<Type<S>>, Typ, Vec<TypeParameter>),
     Signal(LocalName),
@@ -99,10 +103,25 @@ pub enum Command<Typ, S> {
 }
 
 #[derive(Clone, Debug)]
+pub struct CaseBranch {
+    pub name: LocalName,
+    pub cleanup: bool,
+}
+
+impl From<LocalName> for CaseBranch {
+    fn from(name: LocalName) -> Self {
+        Self {
+            name,
+            cleanup: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum TerminalCommand<Typ, S> {
     Link(Arc<Expression<Typ, S>>),
     Case(
-        Arc<[LocalName]>,
+        Arc<[CaseBranch]>,
         Box<[Arc<Process<Typ, S>>]>,
         Option<Arc<Process<Typ, S>>>,
     ),
@@ -305,6 +324,7 @@ impl<S: Clone> Process<(), S> {
                     typ: *typ,
                     command: match command {
                         Command::Noop => Command::Noop,
+                        Command::Close => Command::Close,
                         Command::Send(argument) => Command::Send(argument.optimize()),
                         Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
                             parameter.clone(),
@@ -548,7 +568,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
 impl<Typ, S> Command<Typ, S> {
     pub fn free_variables(&self) -> IndexSet<LocalName> {
         match self {
-            Command::Noop => IndexSet::new(),
+            Command::Noop | Command::Close => IndexSet::new(),
             Command::Send(argument) => argument.free_variables(),
             Command::Receive(..)
             | Command::Signal(_)
@@ -590,7 +610,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Command<Type<S>, S> {
         consume: &mut impl FnMut(Span, HoverInfo<S>),
     ) {
         match self {
-            Self::Noop => {}
+            Self::Noop | Self::Close => {}
             Self::Send(argument) => {
                 argument.types_at_spans(program, docs, consume);
             }
@@ -1089,6 +1109,7 @@ impl<S: Clone> Command<Type<S>, S> {
     pub fn map_types(&self, f: &mut impl FnMut(Type<S>) -> Type<S>) -> Self {
         match self {
             Command::Noop => Command::Noop,
+            Command::Close => Command::Close,
             Command::Send(argument) => Command::Send(argument.map_types(f)),
             Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
                 parameter.clone(),
@@ -1311,6 +1332,7 @@ impl<S: Clone> Command<(), S> {
     ) -> Result<Command<(), T>, E> {
         match self {
             Command::Noop => Ok(Command::Noop),
+            Command::Close => Ok(Command::Close),
             Command::Send(argument) => Ok(Command::Send(map_arc_expression(argument, f)?)),
             Command::Receive(parameter, annotation, (), vars) => Ok(Command::Receive(
                 parameter,
@@ -1633,7 +1655,11 @@ impl<Typ, S: Clone + std::fmt::Display> Process<Typ, S> {
                         write!(f, ".case {{")?;
                         for (choice, process) in choices.iter().zip(branches.iter()) {
                             indentation(f, indent + 1)?;
-                            write!(f, ".{} => {{", choice)?;
+                            write!(f, ".{}", choice.name)?;
+                            if choice.cleanup {
+                                write!(f, "*")?;
+                            }
+                            write!(f, " => {{")?;
                             process.pretty(f, indent + 2)?;
                             indentation(f, indent + 1)?;
                             write!(f, "}}")?;
@@ -1699,6 +1725,7 @@ impl<Typ, S: Clone + std::fmt::Display> Command<Typ, S> {
     fn pretty(&self, f: &mut impl Write, indent: usize) -> fmt::Result {
         match self {
             Command::Noop => Ok(()),
+            Command::Close => write!(f, ".#close"),
             Command::Send(argument) => {
                 write!(f, "(")?;
                 argument.pretty(f, indent)?;

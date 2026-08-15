@@ -184,12 +184,12 @@ impl<S: Clone> Type<S> {
             }
             Self::Either(_, branches) => {
                 for (_, t) in branches.iter() {
-                    t.types_at_spans(type_defs, docs, consume);
+                    t.typ.types_at_spans(type_defs, docs, consume);
                 }
             }
             Self::Choice(_, branches) => {
                 for (_, t) in branches.iter() {
-                    t.types_at_spans(type_defs, docs, consume);
+                    t.typ.types_at_spans(type_defs, docs, consume);
                 }
             }
             Self::Break(_) => {}
@@ -593,7 +593,7 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     f: &mut impl Write,
     names: &N,
     prefix: &str,
-    branches: &BTreeMap<LocalName, Type<S>>,
+    branches: &BTreeMap<LocalName, super::TypeBranch<S>>,
     choice: bool,
     options: TypeRenderOptions<'_>,
     current_path: &mut TypePath,
@@ -605,9 +605,10 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
     write!(f, "{prefix} {{")?;
 
     for (branch, branch_type) in branches {
+        let cleanup = branch_type.cleanup;
+        let branch_type = &branch_type.typ;
         let options = options.next_indent();
         options.write_indentation(f)?;
-
         let label_seg = if choice {
             TypePathSegment::ChoiceBranchLabel(branch.clone())
         } else {
@@ -621,9 +622,15 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
         current_path.pop();
 
         if is_label_target {
-            write!(f, "\x1b[4m.{branch}\x1b[24m")?;
+            write!(f, "\x1b[4m.{branch}")?;
         } else {
             write!(f, ".{branch}")?;
+        }
+        if cleanup {
+            write!(f, "*")?;
+        }
+        if is_label_target {
+            write!(f, "\x1b[24m")?;
         }
 
         let seg = if choice {
@@ -632,7 +639,6 @@ fn write_braced_branches<S: Clone, N: GlobalNameWriter<S>>(
             TypePathSegment::EitherBranch(branch.clone())
         };
         current_path.push(seg);
-
         if choice {
             if matches!(branch_type, Type::Function(..)) || matches!(branch_type, Type::Forall(..))
             {

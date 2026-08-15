@@ -21,7 +21,7 @@ export {
   type Map<k, v> = iterative choice {
     .size => (Nat) self,
     .keys => (List<k>) self,
-    .list => List<(k) v>,
+    .list* => List<(k) v>,
     .entry(k) => (Option<v>) choice {
       .put(v) => self,
       .delete => self,
@@ -33,7 +33,7 @@ export {
 
   // Builds a `Map` from `(key) value` pairs.
   // If a key appears more than once, the last pair wins.
-  dec FromList : [type v, <k: data> List<(k) box v>] Map<k, v>
+  dec FromList : [type v: drop, <k: data> List<(k) v>] Map<k, v>
 }
 
 def New = external

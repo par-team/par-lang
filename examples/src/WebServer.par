@@ -16,14 +16,10 @@ def Main: ! = chan exit {
   let console = Console.Open
   catch e => {
     console.print(e)
-    console.close
     exit!
   }
 
-  catch@prompt ! => {
-    console.close
-    exit!
-  }
+  catch@prompt ! => { exit! }
   console.prompt("Directory to serve: ")[try@prompt root]
 
   let url = "127.0.0.1:8080"
@@ -32,13 +28,11 @@ def Main: ! = chan exit {
   Http.Listen(url).begin.case {
     .shutdown try! => {
       console.print("Shutting down...")
-      console.close
       exit!
     }
 
     .incoming(request, respond) next => {
       let (method, url, headers) body = request
-      body.close
       ServePath(Os.Path(root), `${root}${url.path}`, respond)
       next.loop
     }

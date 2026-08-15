@@ -9,19 +9,21 @@ But not all values need that kind of discipline. Sometimes, you want to:
 
 That’s where **box types** come in.
 
-## Non-linear types — even without `box`
+## Shareable types — even without `box`
 
-Even without box types, some types in Par are already non-linear. These are the **data types:**
+Even without box types, some types in Par are already **shareable.** These include the data types:
 - [Unit](./unit.md)
 - [Either](./either.md)
 - [Pair](./pair.md)
 - [Recursive](./recursive.md)
 - All the [primitives](../structure/primitive_types.md): `Int`, `Nat`, `Float`, `String`, `Char`, `Byte`, `Bytes`.
 
-Any combination of these is always non-linear — they can be copied and discarded freely.
+Any combination of these is shareable when all of its parts are shareable — it can be copied and
+discarded freely.
 
 But types that contain [**functions,**](./function.md) [**choices,**](./choice.md) and other non-data types
-are linear — no matter how deeply nested.
+are linear — no matter how deeply nested. Some linear choices can be dropped through
+[auto-cleanup](./auto_cleanup.md), which significantly improves ergonomics, see that chapter later.
 
 Now, consider this: what if you want to **apply a function to each element in a list?**
 
@@ -70,7 +72,7 @@ Copying, closing, and chaining all become manual work.
 
 Instead of encoding reusability into the type manually, Par lets you `box` a value.
 
-A `box T` is a non-linear version of **any** type `T`. You can:
+A `box T` is a shareable version of **any** type `T`. You can:
 
 - **Copy** a `box T`.
 - **Drop** a `box T`.
@@ -84,7 +86,7 @@ box <expression>
 
 This constructs a value of type `box T`, where `T` is the type of the expression.
 
-The only rule is: **You can only capture non-linear variables in a `box` expression.**
+The only rule is: **You can only capture shareable variables in a `box` expression.**
 
 That includes:
 - Data types (`Int`, `String`, `List<Int>`, etc.)
@@ -116,7 +118,7 @@ def NumberStrings = Map(Int.Range(1, 100), box [n] `#{n}`)
 ```
 
 No wrappers, no manual protocols. The boxed function can be used freely, because the `box` type makes
-it non-linear. This is exactly what `box` was made for.
+it shareable. This is exactly what `box` was made for.
 
 ## Subtyping
 
@@ -125,26 +127,25 @@ Boxed types fit naturally into Par's subtyping.
 **A `box T` can be used anywhere a `T` is expected.**
 
 ```par
-def BoxInt: box Int = 42       // OK: Int is non-linear
+def BoxInt: box Int = 42       // OK: Int is shareable
 def UseInt: Int = BoxInt       // OK: box Int can be used as Int
 ```
 
-And **if `T` is already non-linear, then `T` can be used anywhere a `box T` is expected.**
+And **if `T` is already shareable, then `T` can be used anywhere a `box T` is expected.**
 
 ```par
 def Boxes: List<box Int> = *(1, 2, 3)
 def Ints: List<Int> = Boxes
 ```
 
-**For non-linear types, `T` and `box T` are effectively interchangeable.**
+**For already shareable types, `T` and `box T` are effectively interchangeable.**
 
 ## Another example: Filtering a list
 
 Let’s write a function that filters a list using a boxed predicate.
 
-This example uses a `box` type constraint, written `a: box`. The next chapter covers constraints
-properly; for now, read it as saying: "the element type must be non-linear, because rejected
-elements are discarded."
+This example uses a `share` type constraint, written `a: share`. The next chapter covers constraints
+properly; for now, read it as saying: "the element type must be shareable."
 
 ```par
 module Main
@@ -155,9 +156,9 @@ import {
   @core/List
 }
 
-dec Filter : [<a: box> List<a>, box [a] Bool] List<a>
+dec Filter : [<a: share> List<a>, box [a] Bool] List<a>
 
-def Filter = [<a: box> list, predicate] list.begin.case {
+def Filter = [<a: share> list, predicate] list.begin.case {
   .end! => .end!,
   .item(x) xs => predicate(x).case {
     .true! => .item(x) xs.loop,
@@ -168,7 +169,7 @@ def Filter = [<a: box> list, predicate] list.begin.case {
 
 Note the types:
 - We accept a `List<a>`.
-- The constraint `a: box` says elements may be discarded.
+- The constraint `a: share` says elements may be copied and discarded.
 - The result is still a `List<a>`.
 
 Let’s try it out:
@@ -179,8 +180,12 @@ def Evens = Filter(Int.Range(1, 100), box [n] {Int.Mod(n, 2) == 0})
 
 Here:
 - `Int.Range(1, 100)` gives a `List<Int>`.
-- `Int` satisfies the `box` constraint, because integers are non-linear.
+- `Int` satisfies the `share` constraint, because integers are shareable.
 - The result is inferred as `List<Int>`.
+
+Why does `Filter` need `share`, rather than merely `drop`? Calling `predicate(x)` is one use
+of `x`, while the `.true!` branch also keeps `x` for the result. This implementation needs to copy
+the value, not merely discard it.
 
 This keeps the list type clear. The constraint says what the implementation needs, without
 wrapping every element in a redundant `box`.

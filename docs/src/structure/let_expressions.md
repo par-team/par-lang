@@ -46,4 +46,16 @@ We'll learn more about those soon.
 > let (a: Nat, b: Nat)! = (3, 4)! in ...      // Okay.
 > ```
 
+`let` may also **shadow** an earlier variable by giving a new value the same name. If the old value
+is a droppable linear value, Par [cleans it up](../types/auto_cleanup.md) before replacing it:
+
+```par
+let resource = OpenFirst in
+let resource = OpenSecond in
+Use(resource)
+```
+
+The first `resource` follows its cleanup protocol at the second `let`. A strict linear value still
+cannot be shadowed — Par will ask you to consume it explicitly.
+
 **Now, onto types and their expressions!**

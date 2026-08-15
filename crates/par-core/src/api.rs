@@ -29,7 +29,7 @@ pub mod frontend {
     pub use crate::frontend_impl::types::registry::{ExternalTypeDef, get_external_type_defs};
     pub use crate::frontend_impl::types::visibility::Visibility;
     pub use crate::frontend_impl::types::{
-        GlobalNameWriter, Operation, PrimitiveType, Type, TypeDefs, TypeError,
+        GlobalNameWriter, Operation, PrimitiveType, Type, TypeBranch, TypeDefs, TypeError,
     };
     pub use par_runtime::data::Data;
     pub use par_runtime::primitive::{Number, ParString, Primitive};

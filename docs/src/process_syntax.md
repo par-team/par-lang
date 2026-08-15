@@ -112,6 +112,21 @@ It takes two sequences, one of `a`s and one of `b`s, and produces a new sequence
 closes the two underlying sequences as well — it must, they are linear. When asked for the next item, it polls both sequences
 for their respective items and yields a pair of that.
 
+> We could avoid the manual cleanup of `seq1` and `seq2` by marking the `.close` branch as a cleanup branch:
+>
+> ```par
+> type Sequence<a> = iterative choice {
+>   .close* => !,
+>   .next => (a) self,
+> }
+> ```
+>
+> Then, we could rely on [auto-cleanup](./types/auto_cleanup.md) to dispose of the two sequences automatically:
+> 
+> ```par
+>   .close* => !,
+> ```
+
 It works, and is understandable. But, it can be even better, when we apply some process syntax!
 
 ```par

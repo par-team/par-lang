@@ -31,13 +31,13 @@ export {
 
   // Keeps a successful value only if it satisfies the predicate, otherwise
   // replaces it with the provided error.
-  dec Filter : [<e, a: box> Try<e, a>, box e, box [a] Bool] Try<e, a>
+  dec Filter : [<e: drop, a: share> Try<e, a>, e, box [a] Bool] Try<e, a>
 
   // Converts `.ok value` to a singleton list and `.err _` to an empty list.
-  dec ToList : [<e: box, a> Try<e, a>] List<a>
+  dec ToList : [<e: drop, a> Try<e, a>] List<a>
 
   // Converts `.ok value` to `.some value` and `.err _` to `.none!`.
-  dec ToOption : [<e: box, a> Try<e, a>] Option<a>
+  dec ToOption : [<e: drop, a> Try<e, a>] Option<a>
 }
 
 def Ok = [<a> result] result.case {
@@ -60,7 +60,7 @@ def FlatMap = [<e, a> result, <b> f] result.case {
   .err e => .err e,
 }
 
-def Filter = [<e, a: box> result, e1, p] result.case {
+def Filter = [<e: drop, a: share> result, e1, p] result.case {
   .ok a => if {
     p(a) => .ok a,
     else => .err e1,
@@ -68,12 +68,12 @@ def Filter = [<e, a: box> result, e1, p] result.case {
   .err e => .err e,
 }
 
-def ToList = [<e: box, a> result] result.case {
+def ToList = [<e: drop, a> result] result.case {
   .ok a => .item(a) .end!,
   .err _ => .end!,
 }
 
-def ToOption = [<e: box, a> result] result.case {
+def ToOption = [<e: drop, a> result] result.case {
   .ok a => .some a,
   .err _ => .none!,
 }

@@ -10,7 +10,7 @@ use par_core::frontend::ParString;
 async fn console_open(mut handle: Handle) {
     loop {
         match handle.case().await.as_str() {
-            "close" => {
+            "close" | "#close" => {
                 handle.break_();
                 break;
             }

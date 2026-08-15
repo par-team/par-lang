@@ -27,7 +27,7 @@ export {
   // Incrementally constructs a list.
   type Builder<a> = iterative choice {
     .add(a) => self,
-    .build => List<a>,
+    .build* => List<a>,
   }
 
   // Creates a new list `Builder`.
@@ -48,10 +48,10 @@ export {
   dec FilterMap : [<a> List<a>, <b> box [a] Option<b>] List<b>
 
   // Keeps the elements for which the test function returns `.true!`.
-  dec Filter : [<a: box> List<a>, box [a] Bool] List<a>
+  dec Filter : [<a: share> List<a>, box [a] Bool] List<a>
 
   // Returns the first element for which the test function returns `.true!`.
-  dec Find : [<a: box> List<a>, box [a] Bool] Option<a>
+  dec Find : [<a: share> List<a>, box [a] Bool] Option<a>
 
   // Applies a folding function repeatedly to the current result and each list
   // element, returning the final result.
@@ -75,7 +75,7 @@ export {
   dec ForEach : [<r> r, <a> List<a>, box [r, a] r] r
 
   // Returns the number of elements in a list.
-  dec Length : [<a: box> List<a>] Nat
+  dec Length : [<a: drop> List<a>] Nat
 
   // Flattens a list of lists into a single list.
   dec Concat : [<a> List<List<a>>] List<a>
@@ -90,30 +90,30 @@ export {
   dec Enumerate : [<a> List<a>] List<(Nat) a>
 
   // Zips two lists into a list of pairs. Stops at the shorter list.
-  dec Zip : [<a: box> List<a>, <b: box> List<b>] List<(a) b>
+  dec Zip : [<a: drop> List<a>, <b: drop> List<b>] List<(a) b>
 
   // Splits a list of pairs into a pair of lists.
   dec Unzip : [<a, b> List<(a) b>] (List<a>) List<b>
 
   // Returns `.true!` if the test function holds for all elements.
   // Short-circuits on the first `.false!`.
-  dec All : [<a: box> List<a>, box [a] Bool] Bool
+  dec All : [<a: drop> List<a>, box [a] Bool] Bool
 
   // Returns `.true!` if the test function holds for at least one element.
   // Short-circuits on the first `.true!`.
-  dec Any : [<a: box> List<a>, box [a] Bool] Bool
+  dec Any : [<a: drop> List<a>, box [a] Bool] Bool
 
   // Returns up to the requested number of elements from the start of a list.
-  dec Take : [<a: box> List<a>, Nat] List<a>
+  dec Take : [<a: drop> List<a>, Nat] List<a>
 
   // Drops the requested number of elements from the start of a list.
-  dec Drop : [<a: box> List<a>, Nat] List<a>
+  dec Drop : [<a: drop> List<a>, Nat] List<a>
 
   // Takes elements from the start while the test function returns `.true!`.
-  dec TakeWhile : [<a: box> List<a>, box [a] Bool] List<a>
+  dec TakeWhile : [<a: share> List<a>, box [a] Bool] List<a>
 
   // Drops elements from the start while the test function returns `.true!`.
-  dec DropWhile : [<a: box> List<a>, box [a] Bool] List<a>
+  dec DropWhile : [<a: share> List<a>, box [a] Bool] List<a>
 
   // Returns the smallest element, or `.none!` for an empty list.
   dec Min : [<a: data> List<a>] Option<a>
@@ -128,10 +128,10 @@ export {
   dec SortDesc : [<a: data> List<a>] List<a>
 
   // Sorts a non-linear list by an extracted data key.
-  dec SortBy : [<a: box> List<a>, <k: data> box [a] k] List<a>
+  dec SortBy : [<a: share> List<a>, <k: data> box [a] k] List<a>
 
   // Sorts a non-linear list by an extracted data key in descending order.
-  dec SortDescBy : [<a: box> List<a>, <k: data> box [a] k] List<a>
+  dec SortDescBy : [<a: share> List<a>, <k: data> box [a] k] List<a>
 
   // Sorts a linear list by a function that returns both the key and the item.
   dec SortLinearBy : [<a> List<a>, <k: data> box [a] (k) a] List<a>
@@ -147,7 +147,7 @@ def Builder = [type a]
   let append: [List<a>] List<a> = [xs] xs
   in begin case {
     .add(x) => let append = [xs: List<a>] append(.item(x) xs) in loop,
-    .build => append(.end!),
+    .build* => append(.end!),
   }
 
 def Map = [<a> list, <b> f] list.begin.case {
@@ -171,7 +171,7 @@ def FilterMap = [<a> list, <b> f] list.begin.case {
   },
 }
 
-def Filter = [<a: box> list, f] list.begin.case {
+def Filter = [<a: share> list, f] list.begin.case {
   .end! => .end!,
   .item(v) list => f(v).case {
     .true! => .item(v) list.loop,
@@ -179,7 +179,7 @@ def Filter = [<a: box> list, f] list.begin.case {
   },
 }
 
-def Find = [<a: box> list, f] list.begin.case {
+def Find = [<a: share> list, f] list.begin.case {
   .end! => .none!,
   .item(v) list => f(v).case {
     .true! => .some v,
@@ -192,7 +192,7 @@ def ForEach = [<r> result, <a> list, f] list.begin.case {
   .item(v) list => do { result->f(v) } in list.loop,
 }
 
-def Length = [<a: box> list]
+def Length = [<a: drop> list]
   let len = 0 in
   list.begin.case {
     .end! => len,
@@ -240,7 +240,7 @@ def Enumerate = [<a> list]
     } in .item((current) v) list.loop,
   }
 
-def Zip = [<a: box> list1, <b: box> list2] chan yield {
+def Zip = [<a: drop> list1, <b: drop> list2] chan yield {
   list1.begin.case {
     .end! => { yield.end! },
     .item(v1) list1 => {
@@ -262,7 +262,7 @@ def Unzip = [<a, b> list] list.begin.case {
   } in (.item(x) xs) .item(y) ys
 }
 
-def All = [<a: box> list, f]
+def All = [<a: drop> list, f]
   list.begin.case {
     .end! => .true!,
     .item(v) list => f(v).case {
@@ -271,9 +271,9 @@ def All = [<a: box> list, f]
     },
   }
 
-def Any = [<a: box> list, f] {not list->All(box [v] {not f(v)})}
+def Any = [<a: drop> list, f] {not list->All(box [v] {not f(v)})}
 
-def Take = [<a: box> list, n]
+def Take = [<a: drop> list, n]
   Nat.Repeat(n).begin.case {
     .end! => .end!,
     .step next => list.case {
@@ -282,7 +282,7 @@ def Take = [<a: box> list, n]
     }
   }
 
-def Drop = [<a: box> list, n]
+def Drop = [<a: drop> list, n]
   Nat.Repeat(n).begin.case {
     .end! => list,
     .step next => list.case {
@@ -291,7 +291,7 @@ def Drop = [<a: box> list, n]
     },
   }
 
-def TakeWhile = [<a: box> list, f] list.begin.case {
+def TakeWhile = [<a: share> list, f] list.begin.case {
   .end! => .end!,
   .item(v) list => f(v).case {
     .true! => .item(v) list.loop,
@@ -299,7 +299,7 @@ def TakeWhile = [<a: box> list, f] list.begin.case {
   },
 }
 
-def DropWhile = [<a: box> list, f] list.begin.case {
+def DropWhile = [<a: share> list, f] list.begin.case {
   .end! => .end!,
   .item(v) list => f(v).case {
     .true! => list.loop,

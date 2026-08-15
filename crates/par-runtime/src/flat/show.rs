@@ -123,6 +123,9 @@ impl<'a, 'b, Ext: Clone> std::fmt::Display for Showable<'a, 'b, &'a Global<Ext>,
             Global::Variable(id) => {
                 write!(f, "{}", id)?;
             }
+            Global::Close { .. } => {
+                write!(f, "close")?;
+            }
             Global::Package(index, captures, _) => {
                 write!(f, "@{}${}", index.0, Showable(captures, self.1))?;
             }

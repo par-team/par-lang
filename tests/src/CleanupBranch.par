@@ -1,0 +1,70 @@
+module CleanupBranch
+
+import {
+  @core/Bool
+  @core/Map
+  @core/Nat
+  @core/Test
+}
+
+type Finalizer = choice {
+  .finish* => !,
+}
+
+type Resource = choice {
+  .release* => Finalizer,
+}
+
+type CleanupEvent = either {
+  .done*!,
+}
+
+def HandleCleanupEventExpression: [CleanupEvent] ! = [event] event.case {
+  .done*! => !,
+}
+
+def HandleCleanupEventCommand: [CleanupEvent] ! = [event] do {
+  event.case {
+    .done*! => {}
+  }
+} in !
+
+def TestAutomaticCleanup: [Test] ! = [test] do {
+  let resource = case {
+    .release* => case {
+      .finish* => do {
+        test.assert(
+          "Automatic cleanup follows a non-close branch and disposes its result",
+          .true!,
+        )
+      } in test.done
+    }
+  }
+} in !
+
+def TestExplicitCleanupBranchCall: [Test] ! = [test] do {
+  let resource: Resource = case {
+    .release* => case {
+      .finish* => do {
+        test.assert("A cleanup branch remains normally callable", .true!)
+      } in test.done
+    }
+  }
+  let finalizer = resource.release
+  finalizer.finish
+} in !
+
+def TestExternalCleanupAlias: [Test] ! = [test] do {
+  let resource: Finalizer = case {
+    .finish* => do {
+      test.assert("Rust externals receive the synthesized cleanup branch", .true!)
+    } in test.done
+  }
+
+  let map = Map.New(type Nat, type Finalizer)
+  map.entry(0)[entry]
+  entry.case {
+    .none! => { map.put(resource) },
+    .some previous => { map.put(resource) },
+  }
+} in !

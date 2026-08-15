@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::frontend_impl::process::VariableUsage;
+use crate::frontend_impl::process::{CLEANUP_BRANCH, CaseBranch, VariableUsage};
 use crate::frontend_impl::program::DefinitionBody;
 use crate::frontend_impl::types::core::get_primitive_type;
 use crate::frontend_impl::{
@@ -526,7 +526,14 @@ impl Compiler {
         let prev = self.context.vars.insert(var.into(), tree);
         match prev {
             Some(prev_tree) => {
-                self.net.link(prev_tree.tree, Tree::Era);
+                let disposer = if prev_tree.ty.is_linear(&self.type_defs).unwrap_or(true)
+                    && prev_tree.ty.is_drop(&self.type_defs).unwrap_or(false)
+                {
+                    Tree::Close
+                } else {
+                    Tree::Era
+                };
+                self.net.link(prev_tree.tree, disposer);
                 Ok(())
             }
             None => Ok(()),
@@ -762,6 +769,7 @@ impl Compiler {
     ) -> Result<()> {
         match cmd {
             Command::Noop => {}
+            Command::Close => self.compile_command_close(&name, usage)?,
             // types get erased.
             Command::SendType(_argument) => self.compile_command_send_type(name, usage)?,
             Command::ReceiveType(parameter) => {
@@ -1043,6 +1051,12 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_command_close(&mut self, name: &LocalName, usage: &VariableUsage) -> Result<()> {
+        let subject = self.use_variable(name, usage, true)?;
+        self.net.link(subject.tree, Tree::Close);
+        Ok(())
+    }
+
     fn compile_command_receive_type(
         &mut self,
         name: LocalName,
@@ -1113,7 +1127,7 @@ impl Compiler {
         span: &Span,
         name: LocalName,
         usage: &VariableUsage,
-        names: &[LocalName],
+        names: &[CaseBranch],
         processes: &[Arc<Process<Type<Universal>, Universal>>],
         else_process: &Option<Arc<Process<Type<Universal>, Universal>>>,
     ) -> Result<()> {
@@ -1123,10 +1137,11 @@ impl Compiler {
 
         let mut branches = HashMap::new();
         let mut choice_and_process: Vec<_> = names.iter().zip(processes.iter()).collect();
-        choice_and_process.sort_by_key(|k| k.0);
+        choice_and_process.sort_by_key(|k| &k.0.name);
 
         for (branch_name, process) in choice_and_process {
-            let branch_name = ArcStr::from(&branch_name.string);
+            let cleanup = branch_name.cleanup;
+            let branch_name = ArcStr::from(&branch_name.name.string);
             let (package_id, _) =
                 self.in_package(format!("Branch {branch_name} at {span}"), |this, id| {
                     this.package_is_case_branch.insert(id, branch_name.clone());
@@ -1140,6 +1155,9 @@ impl Compiler {
                     ))
                 })?;
             branches.insert(branch_name, package_id);
+            if cleanup {
+                branches.insert(ArcStr::from(CLEANUP_BRANCH), package_id);
+            }
         }
 
         let else_branch = match else_process {

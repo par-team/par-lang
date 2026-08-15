@@ -66,7 +66,7 @@ pub fn type_supports_readback(type_defs: &TypeDefs<Universal>, typ: &Type<Univer
         }
         Type::Either(_, branches) | Type::Choice(_, branches) => branches
             .values()
-            .all(|branch| type_supports_readback(type_defs, branch)),
+            .all(|branch| type_supports_readback(type_defs, &branch.typ)),
         Type::Recursive { body, .. } | Type::Iterative { body, .. } => {
             type_supports_readback(type_defs, body)
         }
@@ -168,7 +168,7 @@ impl TypedHandle {
                 let chosen = handle.case().await;
                 let typ = branches
                     .get(&LocalName::from(chosen.clone()))
-                    .cloned()
+                    .map(|branch| branch.typ.clone())
                     .unwrap();
                 TypedReadback::Either(chosen, TypedHandle::new(self.type_defs, typ, handle))
             }
@@ -183,7 +183,7 @@ impl TypedHandle {
                         let mut handle = handle;
                         let typ = branches
                             .get(&LocalName::from(chosen.clone()))
-                            .cloned()
+                            .map(|branch| branch.typ.clone())
                             .unwrap();
                         handle.signal(chosen);
                         TypedHandle::new(type_defs, typ, handle)

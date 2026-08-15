@@ -1,5 +1,5 @@
 use super::{
-    language::{LocalName, Unresolved},
+    language::LocalName,
     process::{Command, Expression, Process, Step, TerminalCommand, Terminator},
 };
 use crate::location::Span;
@@ -111,7 +111,7 @@ struct CaptureAnalysis {
 }
 
 impl CaptureAnalysis {
-    fn from_process(process: &Process<(), Unresolved>) -> Self {
+    fn from_process<Typ, S>(process: &Process<Typ, S>) -> Self {
         let (block_envs, begin_drivers) = BlockEnvAnalyzer::analyze_process(process);
         let (begin_caps, block_caps, poll_caps) =
             compute_captures_from_process(process, &block_envs);
@@ -124,7 +124,7 @@ impl CaptureAnalysis {
         }
     }
 
-    fn from_expression(expression: &Expression<(), Unresolved>) -> Self {
+    fn from_expression<Typ, S>(expression: &Expression<Typ, S>) -> Self {
         let (block_envs, begin_drivers) = BlockEnvAnalyzer::analyze_expression(expression);
         let (begin_caps, block_caps, poll_caps) =
             compute_captures_from_expression(expression, &block_envs);
@@ -137,11 +137,11 @@ impl CaptureAnalysis {
         }
     }
 
-    fn fix_process(
+    fn fix_process<Typ: Clone, S: Clone>(
         &self,
-        process: &Process<(), Unresolved>,
+        process: &Process<Typ, S>,
         env: &LoopEnv,
-    ) -> (Arc<Process<(), Unresolved>>, Captures) {
+    ) -> (Arc<Process<Typ, S>>, Captures) {
         let (terminator, mut caps) = self.fix_terminator(&process.terminator, env);
         let mut steps = Vec::with_capacity(process.steps.len());
 
@@ -161,7 +161,7 @@ impl CaptureAnalysis {
                         span: span.clone(),
                         name: name.clone(),
                         annotation: annotation.clone(),
-                        typ: *typ,
+                        typ: typ.clone(),
                         value,
                     });
                 }
@@ -184,7 +184,7 @@ impl CaptureAnalysis {
                         span: span.clone(),
                         name: name.clone(),
                         usage,
-                        typ: *typ,
+                        typ: typ.clone(),
                         command,
                     });
                 }
@@ -194,11 +194,11 @@ impl CaptureAnalysis {
         (Arc::new(Process::new(steps, terminator)), caps)
     }
 
-    fn fix_terminator(
+    fn fix_terminator<Typ: Clone, S: Clone>(
         &self,
-        terminator: &Terminator<(), Unresolved>,
+        terminator: &Terminator<Typ, S>,
         env: &LoopEnv,
-    ) -> (Terminator<(), Unresolved>, Captures) {
+    ) -> (Terminator<Typ, S>, Captures) {
         match terminator {
             Terminator::Do {
                 span,
@@ -219,7 +219,7 @@ impl CaptureAnalysis {
                         span: span.clone(),
                         name: name.clone(),
                         usage,
-                        typ: *typ,
+                        typ: typ.clone(),
                         command,
                     },
                     caps,
@@ -319,14 +319,15 @@ impl CaptureAnalysis {
         }
     }
 
-    fn fix_command(
+    fn fix_command<Typ: Clone, S: Clone>(
         &self,
-        command: &Command<(), Unresolved>,
+        command: &Command<Typ, S>,
         env: &LoopEnv,
         mut caps: Captures,
-    ) -> (Command<(), Unresolved>, Captures) {
+    ) -> (Command<Typ, S>, Captures) {
         match command {
             Command::Noop => (Command::Noop, caps),
+            Command::Close => (Command::Close, caps),
             Command::Send(argument) => {
                 let (argument, caps1) = self.fix_expression(argument, env, &caps);
                 caps.extend(caps1);
@@ -335,7 +336,12 @@ impl CaptureAnalysis {
             Command::Receive(parameter, annotation, typ, vars) => {
                 caps.remove(parameter);
                 (
-                    Command::Receive(parameter.clone(), annotation.clone(), *typ, vars.clone()),
+                    Command::Receive(
+                        parameter.clone(),
+                        annotation.clone(),
+                        typ.clone(),
+                        vars.clone(),
+                    ),
                     caps,
                 )
             }
@@ -346,12 +352,12 @@ impl CaptureAnalysis {
         }
     }
 
-    fn fix_terminal_command(
+    fn fix_terminal_command<Typ: Clone, S: Clone>(
         &self,
-        command: &TerminalCommand<(), Unresolved>,
+        command: &TerminalCommand<Typ, S>,
         span: &Span,
         env: &LoopEnv,
-    ) -> (TerminalCommand<(), Unresolved>, Captures) {
+    ) -> (TerminalCommand<Typ, S>, Captures) {
         match command {
             TerminalCommand::Link(expression) => {
                 let (expression, caps) = self.fix_expression(expression, env, &Captures::new());
@@ -421,12 +427,12 @@ impl CaptureAnalysis {
         }
     }
 
-    fn fix_expression(
+    fn fix_expression<Typ: Clone, S: Clone>(
         &self,
-        expression: &Expression<(), Unresolved>,
+        expression: &Expression<Typ, S>,
         env: &LoopEnv,
         later_captures: &Captures,
-    ) -> (Arc<Expression<(), Unresolved>>, Captures) {
+    ) -> (Arc<Expression<Typ, S>>, Captures) {
         match expression {
             Expression::Global(span, name, typ) => (
                 Arc::new(Expression::Global(span.clone(), name.clone(), typ.clone())),
@@ -518,14 +524,14 @@ impl CaptureAnalysis {
     }
 }
 
-struct BlockEnvAnalyzer {
-    blocks: IndexMap<usize, Arc<Process<(), Unresolved>>>,
+struct BlockEnvAnalyzer<Typ, S> {
+    blocks: IndexMap<usize, Arc<Process<Typ, S>>>,
     begin_drivers: IndexMap<BeginId, LocalName>,
     block_envs: IndexMap<usize, LoopEnv>,
-    queue: VecDeque<(Arc<Process<(), Unresolved>>, LoopEnv)>,
+    queue: VecDeque<(Arc<Process<Typ, S>>, LoopEnv)>,
 }
 
-impl BlockEnvAnalyzer {
+impl<Typ, S> BlockEnvAnalyzer<Typ, S> {
     fn new() -> Self {
         Self {
             blocks: IndexMap::new(),
@@ -536,7 +542,7 @@ impl BlockEnvAnalyzer {
     }
 
     fn analyze_process(
-        process: &Process<(), Unresolved>,
+        process: &Process<Typ, S>,
     ) -> (IndexMap<usize, LoopEnv>, IndexMap<BeginId, LocalName>) {
         let mut analyzer = Self::new();
         analyzer.visit_process(process, &LoopEnv::default());
@@ -545,7 +551,7 @@ impl BlockEnvAnalyzer {
     }
 
     fn analyze_expression(
-        expression: &Expression<(), Unresolved>,
+        expression: &Expression<Typ, S>,
     ) -> (IndexMap<usize, LoopEnv>, IndexMap<BeginId, LocalName>) {
         let mut analyzer = Self::new();
         analyzer.visit_expression(expression, &LoopEnv::default());
@@ -559,7 +565,7 @@ impl BlockEnvAnalyzer {
         }
     }
 
-    fn visit_expression(&mut self, expression: &Expression<(), Unresolved>, env: &LoopEnv) {
+    fn visit_expression(&mut self, expression: &Expression<Typ, S>, env: &LoopEnv) {
         match expression {
             Expression::Box(_, _, expr, _) => self.visit_expression(expr, env),
             Expression::Chan { process, .. } => self.visit_process(process, env),
@@ -571,7 +577,7 @@ impl BlockEnvAnalyzer {
         }
     }
 
-    fn visit_process(&mut self, process: &Process<(), Unresolved>, env: &LoopEnv) {
+    fn visit_process(&mut self, process: &Process<Typ, S>, env: &LoopEnv) {
         for step in &process.steps {
             match step {
                 Step::Let { value, .. } => self.visit_expression(value, env),
@@ -616,10 +622,11 @@ impl BlockEnvAnalyzer {
         }
     }
 
-    fn visit_command(&mut self, command: &Command<(), Unresolved>, env: &LoopEnv) {
+    fn visit_command(&mut self, command: &Command<Typ, S>, env: &LoopEnv) {
         match command {
             Command::Send(argument) => self.visit_expression(argument, env),
             Command::Noop
+            | Command::Close
             | Command::Receive(..)
             | Command::Signal(_)
             | Command::Continue
@@ -630,7 +637,7 @@ impl BlockEnvAnalyzer {
 
     fn visit_terminal_command(
         &mut self,
-        command: &TerminalCommand<(), Unresolved>,
+        command: &TerminalCommand<Typ, S>,
         span: &Span,
         subject: &LocalName,
         env: &LoopEnv,
@@ -674,8 +681,8 @@ impl BlockEnvAnalyzer {
     }
 }
 
-fn compute_captures_from_process(
-    process: &Process<(), Unresolved>,
+fn compute_captures_from_process<Typ, S>(
+    process: &Process<Typ, S>,
     block_envs: &IndexMap<usize, LoopEnv>,
 ) -> (
     IndexMap<BeginId, Captures>,
@@ -690,8 +697,8 @@ fn compute_captures_from_process(
     )
 }
 
-fn compute_captures_from_expression(
-    expression: &Expression<(), Unresolved>,
+fn compute_captures_from_expression<Typ, S>(
+    expression: &Expression<Typ, S>,
     block_envs: &IndexMap<usize, LoopEnv>,
 ) -> (
     IndexMap<BeginId, Captures>,
@@ -756,9 +763,9 @@ struct CaptureCollector<'a> {
 }
 
 impl<'a> CaptureCollector<'a> {
-    fn expression_captures(
+    fn expression_captures<Typ, S>(
         &mut self,
-        expression: &Expression<(), Unresolved>,
+        expression: &Expression<Typ, S>,
         env: &LoopEnv,
     ) -> Captures {
         match expression {
@@ -780,7 +787,7 @@ impl<'a> CaptureCollector<'a> {
         }
     }
 
-    fn process_captures(&mut self, process: &Process<(), Unresolved>, env: &LoopEnv) -> Captures {
+    fn process_captures<Typ, S>(&mut self, process: &Process<Typ, S>, env: &LoopEnv) -> Captures {
         let mut caps = self.terminator_captures(&process.terminator, env);
         for step in process.steps.iter().rev() {
             match step {
@@ -803,9 +810,9 @@ impl<'a> CaptureCollector<'a> {
         caps
     }
 
-    fn terminator_captures(
+    fn terminator_captures<Typ, S>(
         &mut self,
-        terminator: &Terminator<(), Unresolved>,
+        terminator: &Terminator<Typ, S>,
         env: &LoopEnv,
     ) -> Captures {
         match terminator {
@@ -871,14 +878,15 @@ impl<'a> CaptureCollector<'a> {
         }
     }
 
-    fn command_captures(
+    fn command_captures<Typ, S>(
         &mut self,
-        command: &Command<(), Unresolved>,
+        command: &Command<Typ, S>,
         env: &LoopEnv,
         mut caps: Captures,
     ) -> Captures {
         match command {
             Command::Noop
+            | Command::Close
             | Command::Signal(_)
             | Command::Continue
             | Command::SendType(_)
@@ -895,9 +903,9 @@ impl<'a> CaptureCollector<'a> {
         }
     }
 
-    fn terminal_command_captures(
+    fn terminal_command_captures<Typ, S>(
         &mut self,
-        command: &TerminalCommand<(), Unresolved>,
+        command: &TerminalCommand<Typ, S>,
         span: &Span,
         subject: &LocalName,
         env: &LoopEnv,
@@ -961,14 +969,14 @@ impl<'a> CaptureCollector<'a> {
     }
 }
 
-impl Process<(), Unresolved> {
+impl<Typ: Clone, S: Clone> Process<Typ, S> {
     pub fn fix_captures(&self) -> (Arc<Self>, Captures) {
         let analysis = CaptureAnalysis::from_process(self);
         analysis.fix_process(self, &LoopEnv::default())
     }
 }
 
-impl Expression<(), Unresolved> {
+impl<Typ: Clone, S: Clone> Expression<Typ, S> {
     pub fn fix_captures(&self) -> (Arc<Self>, Captures) {
         let analysis = CaptureAnalysis::from_expression(self);
         analysis.fix_expression(self, &LoopEnv::default(), &Captures::new())

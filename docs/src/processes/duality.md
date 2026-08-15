@@ -117,6 +117,25 @@ Looking at the table, here's what we can see:
 
 The last point is important. It's a fact, in general, that `dual dual A` is equal to `A`.
 
+[Cleanup markers](../types/auto_cleanup.md) are preserved by duality too:
+
+```par
+dual choice {
+  .cancel* => !,
+}
+```
+
+becomes
+
+```par
+either {
+  .cancel* ?,
+}
+```
+
+The choice side promises that `.cancel` is safe to select automatically. The either side carries
+the same marker so that its consumer is forced to register the cleanup branch at runtime (by marking it with a star inside a `.case`), to be potentially selected by auto-cleanup.
+
 ## Duality in action
 
 Here’s a familiar definition:

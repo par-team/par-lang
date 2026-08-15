@@ -30,7 +30,8 @@ pub struct LocalName {
 pub enum TypeConstraint {
     #[default]
     Any,
-    Box,
+    Drop,
+    Share,
     Data,
     Number,
     Signed,
@@ -60,10 +61,11 @@ impl TypeConstraint {
     fn rank(self) -> u8 {
         match self {
             TypeConstraint::Any => 0,
-            TypeConstraint::Box => 1,
-            TypeConstraint::Data => 2,
-            TypeConstraint::Number => 3,
-            TypeConstraint::Signed => 4,
+            TypeConstraint::Drop => 1,
+            TypeConstraint::Share => 2,
+            TypeConstraint::Data => 3,
+            TypeConstraint::Number => 4,
+            TypeConstraint::Signed => 5,
         }
     }
 }
@@ -72,7 +74,8 @@ impl Display for TypeConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeConstraint::Any => Ok(()),
-            TypeConstraint::Box => write!(f, "box"),
+            TypeConstraint::Drop => write!(f, "drop"),
+            TypeConstraint::Share => write!(f, "share"),
             TypeConstraint::Data => write!(f, "data"),
             TypeConstraint::Number => write!(f, "number"),
             TypeConstraint::Signed => write!(f, "signed"),
@@ -481,6 +484,7 @@ pub struct ConstructBranches<S>(pub BTreeMap<LocalName, ConstructBranch<S>>);
 
 #[derive(Clone, Debug)]
 pub struct ConstructBranch<S> {
+    pub cleanup: bool,
     pub steps: Vec<ConstructBranchStep<S>>,
     pub terminator: ConstructBranchTerminator<S>,
 }
@@ -530,6 +534,7 @@ pub struct ApplyBranches<S>(pub BTreeMap<LocalName, ApplyBranch<S>>);
 
 #[derive(Clone, Debug)]
 pub struct ApplyBranch<S> {
+    pub cleanup: bool,
     pub steps: Vec<ApplyBranchStep<S>>,
     pub terminator: ApplyBranchTerminator<S>,
 }
@@ -664,6 +669,7 @@ pub struct CommandBranches<S>(pub BTreeMap<LocalName, CommandBranch<S>>);
 
 #[derive(Clone, Debug)]
 pub struct CommandBranch<S> {
+    pub cleanup: bool,
     pub steps: Vec<CommandBranchStep<S>>,
     pub terminator: CommandBranchTerminator<S>,
 }
@@ -2264,7 +2270,10 @@ impl Context {
                 let mut branches = Vec::new();
                 let mut processes = Vec::new();
                 for (branch_name, construct_branch) in construct_branches {
-                    branches.push(branch_name.clone());
+                    branches.push(process::CaseBranch {
+                        name: branch_name.clone(),
+                        cleanup: construct_branch.cleanup,
+                    });
                     processes.push(self.compile_construct_branch(construct_branch)?);
                 }
                 let else_process = match else_branch {
@@ -2441,7 +2450,10 @@ impl Context {
                 let mut branches = Vec::new();
                 let mut processes = Vec::new();
                 for (branch_name, expression_branch) in expression_branches {
-                    branches.push(branch_name.clone());
+                    branches.push(process::CaseBranch {
+                        name: branch_name.clone(),
+                        cleanup: expression_branch.cleanup,
+                    });
                     processes.push(self.compile_apply_branch(expression_branch)?);
                 }
                 let else_process = match else_branch {
@@ -3157,7 +3169,10 @@ impl Context {
                     let process = self.compile_process_from(source, index)?;
                     self.with_fallthrough(process, |pass| {
                         for (branch_name, process_branch) in process_branches {
-                            branches.push(branch_name.clone());
+                            branches.push(process::CaseBranch {
+                                name: branch_name.clone(),
+                                cleanup: process_branch.cleanup,
+                            });
                             processes
                                 .push(pass.compile_command_branch(process_branch, object_name)?);
                         }
@@ -3177,7 +3192,10 @@ impl Context {
                     })?
                 } else {
                     for (branch_name, process_branch) in process_branches {
-                        branches.push(branch_name.clone());
+                        branches.push(process::CaseBranch {
+                            name: branch_name.clone(),
+                            cleanup: process_branch.cleanup,
+                        });
                         processes.push(self.compile_command_branch(process_branch, object_name)?);
                     }
                     let else_process = match else_branch {
@@ -3331,8 +3349,8 @@ impl Context {
             (),
             process::TerminalCommand::Case(
                 Arc::from([
-                    LocalName::from(literal!("err")),
-                    LocalName::from(literal!("ok")),
+                    process::CaseBranch::from(LocalName::from(literal!("err"))),
+                    process::CaseBranch::from(LocalName::from(literal!("ok"))),
                 ]),
                 Box::from([
                     process::Process::let_step(
@@ -3370,8 +3388,8 @@ impl Context {
                 (),
                 process::TerminalCommand::Case(
                     Arc::from([
-                        LocalName::from(literal!("none")),
-                        LocalName::from(literal!("some")),
+                        process::CaseBranch::from(LocalName::from(literal!("none"))),
+                        process::CaseBranch::from(LocalName::from(literal!("some"))),
                     ]),
                     Box::from([
                         process::Process::let_step(
@@ -3495,8 +3513,8 @@ impl Context {
                         (),
                         process::TerminalCommand::Case(
                             Arc::from([
-                                LocalName::from(literal!("false")),
-                                LocalName::from(literal!("true")),
+                                process::CaseBranch::from(LocalName::from(literal!("false"))),
+                                process::CaseBranch::from(LocalName::from(literal!("true"))),
                             ]),
                             Box::from([failure, success]),
                             None,
@@ -3524,7 +3542,7 @@ impl Context {
                     VariableUsage::Unknown,
                     (),
                     process::TerminalCommand::Case(
-                        Arc::from([variant.clone()]),
+                        Arc::from([process::CaseBranch::from(variant.clone())]),
                         Box::from([success_process]),
                         Some(failure),
                     ),

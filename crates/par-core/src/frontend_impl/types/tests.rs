@@ -3,7 +3,9 @@ mod tests {
     use crate::frontend_impl::language::{
         GlobalName, LocalName, TypeConstraint, TypeParameter, Universal,
     };
-    use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs};
+    use crate::frontend_impl::types::assignability::{Assignability, SubtypeMismatchKind};
+    use crate::frontend_impl::types::lattice::{intersect_types, union_types};
+    use crate::frontend_impl::types::{GlobalNameWriter, Type, TypeDefs, TypeError};
     use crate::location::Span;
     use crate::workspace::render_type_in_scope;
     use arcstr::{ArcStr, literal};
@@ -11,6 +13,33 @@ mod tests {
     use std::fmt::{self, Write};
 
     struct TestNameWriter;
+
+    fn marked_choice(name: &'static str, continuation: Type<Universal>) -> Type<Universal> {
+        let mut typ = Type::choice(vec![(name, continuation)]);
+        let Type::Choice(_, branches) = &mut typ else {
+            unreachable!()
+        };
+        branches.values_mut().next().unwrap().cleanup = true;
+        typ
+    }
+
+    fn marked_either(name: &'static str, continuation: Type<Universal>) -> Type<Universal> {
+        let mut typ = Type::either(vec![(name, continuation)]);
+        let Type::Either(_, branches) = &mut typ else {
+            unreachable!()
+        };
+        branches.values_mut().next().unwrap().cleanup = true;
+        typ
+    }
+
+    fn has_cleanup(typ: &Type<Universal>) -> bool {
+        match typ {
+            Type::Either(_, branches) | Type::Choice(_, branches) => {
+                branches.values().any(|branch| branch.cleanup)
+            }
+            _ => false,
+        }
+    }
 
     impl GlobalNameWriter<Universal> for TestNameWriter {
         fn write_global_name<W: Write>(
@@ -157,6 +186,236 @@ mod tests {
     }
 
     #[test]
+    fn test_drop_classification() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let resource = marked_choice("release", Type::break_());
+        let strict = Type::choice(vec![("use", Type::break_())]);
+
+        assert!(
+            Type::box_(strict)
+                .satisfies_constraint(TypeConstraint::Drop, &type_defs)
+                .unwrap()
+        );
+
+        assert!(
+            Type::pair(
+                resource.clone(),
+                Type::either(vec![("some", resource.clone())])
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            Type::recursive(
+                None,
+                Type::either(vec![
+                    ("end", Type::break_()),
+                    ("item", Type::pair(resource.clone(), Type::self_(None))),
+                ]),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Drop),
+                Box::new(Type::var("a")),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Drop),
+                Box::new(marked_choice("release", Type::var("a"))),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            !Type::Forall(
+                Span::None,
+                constrained_param(TypeConstraint::Any),
+                Box::new(marked_choice("release", Type::var("a"))),
+            )
+            .is_drop(&type_defs)
+            .unwrap()
+        );
+        assert!(
+            !Type::iterative(None, marked_choice("release", Type::self_(None)),)
+                .is_drop(&type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::choice(vec![("use", Type::break_())])
+                .is_drop(&type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::DualSelf(Span::None, None)
+                .is_drop(&type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_cleanup_branch_subtyping() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let plain_choice = Type::choice(vec![("method", Type::break_())]);
+        let cleanup_choice = marked_choice("method", Type::break_());
+        assert!(
+            cleanup_choice
+                .is_definitely_assignable_to(&plain_choice, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            !plain_choice
+                .is_definitely_assignable_to(&cleanup_choice, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+
+        let Assignability::Incompatible(choice_cause) = plain_choice
+            .is_definitely_assignable_to(&cleanup_choice, &type_defs)
+            .unwrap()
+        else {
+            panic!("expected a cleanup mismatch")
+        };
+        assert!(matches!(
+            choice_cause.kind,
+            SubtypeMismatchKind::CleanupBranchMismatch {
+                provided: false,
+                expected: true,
+                ..
+            }
+        ));
+
+        let plain_either = Type::either(vec![("variant", Type::break_())]);
+        let cleanup_either = marked_either("variant", Type::break_());
+        assert!(
+            plain_either
+                .is_definitely_assignable_to(&cleanup_either, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            !cleanup_either
+                .is_definitely_assignable_to(&plain_either, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+
+        let Assignability::Incompatible(either_cause) = cleanup_either
+            .is_definitely_assignable_to(&plain_either, &type_defs)
+            .unwrap()
+        else {
+            panic!("expected a cleanup mismatch")
+        };
+        assert!(matches!(
+            either_cause.kind,
+            SubtypeMismatchKind::CleanupBranchMismatch {
+                provided: true,
+                expected: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cleanup_branch_lattice_rules() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let span = Span::None;
+
+        let plain_choice = Type::choice(vec![("method", Type::break_())]);
+        let cleanup_choice = marked_choice("method", Type::break_());
+        assert!(!has_cleanup(
+            &union_types(&type_defs, &span, &plain_choice, &cleanup_choice).unwrap()
+        ));
+        assert!(has_cleanup(
+            &intersect_types(&type_defs, &span, &plain_choice, &cleanup_choice).unwrap()
+        ));
+
+        let plain_either = Type::either(vec![("variant", Type::break_())]);
+        let cleanup_either = marked_either("variant", Type::break_());
+        assert!(has_cleanup(
+            &union_types(&type_defs, &span, &plain_either, &cleanup_either).unwrap()
+        ));
+        assert!(!has_cleanup(
+            &intersect_types(&type_defs, &span, &plain_either, &cleanup_either).unwrap()
+        ));
+
+        let other_choice = marked_choice("other", Type::break_());
+        assert!(intersect_types(&type_defs, &span, &cleanup_choice, &other_choice).is_err());
+        let other_either = marked_either("other", Type::break_());
+        assert!(union_types(&type_defs, &span, &cleanup_either, &other_either).is_err());
+    }
+
+    #[test]
+    fn test_cleanup_branch_duality_rendering_and_validation() {
+        let typ = marked_choice("release", Type::break_());
+        let dual = typ.clone().dual(Span::None);
+        assert!(has_cleanup(&dual));
+        assert_eq!(dual.dual(Span::None), typ);
+
+        let mut rendered = String::new();
+        typ.pretty_compact(&mut rendered, &TestNameWriter).unwrap();
+        assert_eq!(rendered, "choice {.release* => !,}");
+
+        let mut invalid = marked_choice("first", Type::break_());
+        let Type::Choice(_, branches) = &mut invalid else {
+            unreachable!()
+        };
+        let mut second = Type::choice(vec![("second", Type::break_())]);
+        let Type::Choice(_, second_branches) = &mut second else {
+            unreachable!()
+        };
+        let (name, mut branch) = second_branches.pop_first().unwrap();
+        branch.cleanup = true;
+        branches.insert(name, branch);
+        assert!(matches!(
+            TypeDefs::default().validate_type(&invalid),
+            Err(TypeError::MultipleCleanupBranches(_))
+        ));
+    }
+
+    #[test]
+    fn test_box_modality_subtyping() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let shared = Type::string();
+        let strict = Type::choice(vec![("use", Type::break_())]);
+        let boxed_strict = Type::box_(strict.clone());
+        let nested_boxed_strict = Type::box_(boxed_strict.clone());
+
+        assert!(
+            shared
+                .is_definitely_assignable_to(&Type::box_(shared.clone()), &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            !strict
+                .is_definitely_assignable_to(&Type::box_(strict.clone()), &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            boxed_strict
+                .is_definitely_assignable_to(&nested_boxed_strict, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            nested_boxed_strict
+                .is_definitely_assignable_to(&boxed_strict, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+    }
+
+    #[test]
     fn test_empty_either_subtype_of_any() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let empty_either: Type<Universal> = Type::either(vec![]);
@@ -205,18 +464,18 @@ mod tests {
             )
         };
 
-        // A witness promising `box` may be used where no promise is needed...
+        // A witness promising `share` may be used where no promise is needed...
         assert!(
-            exists(TypeConstraint::Box)
+            exists(TypeConstraint::Share)
                 .is_definitely_assignable_to(&exists(TypeConstraint::Any), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         // ...but an unconstrained (possibly linear) witness must not be
-        // passed off as a `box` one.
+        // passed off as a `share` one.
         assert!(
             !exists(TypeConstraint::Any)
-                .is_definitely_assignable_to(&exists(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&exists(TypeConstraint::Share), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
@@ -233,16 +492,16 @@ mod tests {
             )
         };
 
-        // Accepting any type is stronger than only accepting `box` types...
+        // Accepting any type is stronger than only accepting `share` types...
         assert!(
             forall(TypeConstraint::Any)
-                .is_definitely_assignable_to(&forall(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&forall(TypeConstraint::Share), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         // ...but not the other way around.
         assert!(
-            !forall(TypeConstraint::Box)
+            !forall(TypeConstraint::Share)
                 .is_definitely_assignable_to(&forall(TypeConstraint::Any), &type_defs)
                 .unwrap()
                 .is_assignable()
@@ -262,14 +521,14 @@ mod tests {
         };
 
         assert!(
-            pair(TypeConstraint::Box)
+            pair(TypeConstraint::Share)
                 .is_definitely_assignable_to(&pair(TypeConstraint::Any), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         assert!(
             !pair(TypeConstraint::Any)
-                .is_definitely_assignable_to(&pair(TypeConstraint::Box), &type_defs)
+                .is_definitely_assignable_to(&pair(TypeConstraint::Share), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
@@ -310,7 +569,7 @@ mod tests {
                     Span::None,
                     Box::new(Type::var("b")),
                     Box::new(Type::int()),
-                    vec![parameter("b", TypeConstraint::Box)],
+                    vec![parameter("b", TypeConstraint::Share)],
                 )),
                 vec![],
             )),
@@ -320,7 +579,7 @@ mod tests {
         function
             .pretty_compact(&mut rendered, &TestNameWriter)
             .unwrap();
-        assert_eq!(rendered, "[<a> a, String, <b: box> b] Int");
+        assert_eq!(rendered, "[<a> a, String, <b: share> b] Int");
 
         let pair = Type::<Universal>::Pair(
             Span::None,

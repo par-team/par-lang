@@ -42,6 +42,9 @@ pub enum TypeError<S> {
     InvalidBranch(Span, LocalName, Type<S>),
     MissingBranch(Span, LocalName, Type<S>),
     RedundantBranch(Span, LocalName, Type<S>),
+    MultipleCleanupBranches(Span),
+    CleanupBranchMismatch(Span, LocalName, bool),
+    CleanupBranchMustBeExplicit(Span, LocalName),
     BlockVariableNotPreserved(Span, LocalName),
     MergeVariableTypesCannotBeUnified(Span, LocalName, Type<S>, Type<S>),
     VariableEscapesTypeScope(Span, LocalName),
@@ -333,6 +336,28 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                             from_type_str,
                         )
                     }
+                    SubtypeMismatchKind::CleanupBranchMismatch {
+                        branch,
+                        provided,
+                        expected,
+                    } => {
+                        let explanation = match (*provided, *expected) {
+                            (false, true) => format!(
+                                "The required branch `.{branch}` is a cleanup branch, but the provided one is not."
+                            ),
+                            (true, false) => format!(
+                                "The provided branch `.{branch}` is a cleanup branch, but the required one is not."
+                            ),
+                            _ => unreachable!("a cleanup mismatch must have different markers"),
+                        };
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\n{}\n",
+                            to_type_str,
+                            from_type_str,
+                            explanation,
+                        )
+                    }
                     SubtypeMismatchKind::ImplicitGenericCountMismatch { from_count, to_count } => {
                         let to_plural = if *to_count == 1 { "" } else { "s" };
                         let from_plural = if *from_count == 1 { "" } else { "s" };
@@ -471,6 +496,37 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     "Branch `{}` is not possible for:\n\n  {}\n",
                     branch,
                     typ_str
+                )
+            }
+            Self::MultipleCleanupBranches(span) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    labels = labels,
+                    "An `either` or `choice` may have at most one cleanup branch."
+                )
+            }
+            Self::CleanupBranchMismatch(span, branch, expected) => {
+                let labels = labels_from_span(code, span);
+                if *expected {
+                    miette::miette!(
+                        labels = labels,
+                        "Branch `{}` must be marked `*` to match its type.",
+                        branch
+                    )
+                } else {
+                    miette::miette!(
+                        labels = labels,
+                        "Branch `{}` must not be marked `*`; its type does not mark it as the cleanup branch.",
+                        branch
+                    )
+                }
+            }
+            Self::CleanupBranchMustBeExplicit(span, branch) => {
+                let labels = labels_from_span(code, span);
+                miette::miette!(
+                    labels = labels,
+                    "Cleanup branch `{}` must be handled explicitly and marked `*`; it cannot be covered by `else`.",
+                    branch
                 )
             }
             Self::BlockVariableNotPreserved(span, name) => {
@@ -696,6 +752,9 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::InvalidBranch(span, _, _)
             | Self::MissingBranch(span, _, _)
             | Self::RedundantBranch(span, _, _)
+            | Self::MultipleCleanupBranches(span)
+            | Self::CleanupBranchMismatch(span, _, _)
+            | Self::CleanupBranchMustBeExplicit(span, _)
             | Self::BlockVariableNotPreserved(span, _)
             | Self::MergeVariableTypesCannotBeUnified(span, _, _, _)
             | Self::VariableEscapesTypeScope(span, _)
@@ -726,7 +785,8 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
 fn format_constraint_desc(constraint: TypeConstraint) -> &'static str {
     match constraint {
         TypeConstraint::Any => "no constraints",
-        TypeConstraint::Box => "a `box` constraint",
+        TypeConstraint::Drop => "a `drop` constraint",
+        TypeConstraint::Share => "a `share` constraint",
         TypeConstraint::Data => "a `data` constraint",
         TypeConstraint::Number => "a `number` constraint",
         TypeConstraint::Signed => "a `signed` constraint",

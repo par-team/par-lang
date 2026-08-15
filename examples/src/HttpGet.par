@@ -20,5 +20,4 @@ def Main: ! =
     )
     body.close.try           // not interested
     console.print(`#{status}`)
-    console.close
   } in !

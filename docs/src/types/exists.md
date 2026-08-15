@@ -20,17 +20,14 @@ Here are two simple examples of existential types:
 ```par
 type Any = (type a) a
 
-type DropMe = (type a, a) choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
 The first one is completely opaque — a value of `Any` gives you a value of the hidden type, but no
 operations to perform on it. That makes it useless, but it's the simplest example of an exists type.
 
-The second one offers just one operation: dropping a value of that type.
-It gives us a pair: a value of the hidden type, plus a [choice](./choice.md) with just one operation:
-dropping a value of that type.
+The second one reveals one capability of the hidden type: its values may be dropped. That is enough
+for Par to clean up the hidden value without revealing what it is.
 
 Let’s now see how existential types are used.
 
@@ -46,27 +43,23 @@ Here’s a value of type `Any`:
 def Hidden: Any = (type Int) 42
 ```
 
-But since the type is hidden inside `Any`, with no operations provided, this value is completely useless —
-we can’t do anything with it. In fact, we can't even get rid of it, if we were to instantiate it into a
-variable.
+But since the type is hidden inside `Any`, with no operations or constraints provided, this value is
+completely useless — we can’t do anything with it. In fact, we can't even get rid of it if we were to
+instantiate it into a variable.
 
 Let’s now look at a slightly more interesting example:
 
 ```par
-type DropMe = (type a, a) choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
-The payload here is a pair: a value of the hidden type, plus a [choice](./choice.md) with just one operation:
-dropping a value of that type.
+The payload is a value of the hidden type. The constraint records that the value has a safe structural
+cleanup, whether that means doing nothing for ordinary data or following a cleanup protocol.
 
 Here’s how we can construct a value of `DropMe`:
 
 ```par
-def Drop42: DropMe = (type Int, 42) case {
-  .drop(n) => !,  // `n`, being an `Int`, is dropped by being unused
-}
+def Drop42: DropMe = (type Int) 42
 ```
 
 ## Destruction
@@ -78,20 +71,21 @@ Here’s an example that unpacks and uses a `DropMe`:
 
 ```par
 def UseDrop: ! =
-  let (type a, x) dropper = Drop42
-  in dropper.drop(x)
+  let (type a: drop) x = Drop42
+  in !
 ```
-The pattern `(type a, x) dropper` means:
+The pattern `(type a: drop) x` means:
 - `a` becomes the name of the hidden type, a local type variable.
 - `x` is the stored value of type `a`.
-- `dropper` is the [choice](./choice.md) with the `.drop` method.
+
+Because `x` is unused, Par cleans it up automatically.
 
 We can also unpack existentials **in function parameters,** using patterns. Here’s a function that takes
 a `DropMe` and drops its inner value:
 
 ```par
 dec DropIt : [DropMe] !
-def DropIt = [(type a, x) dropper] dropper.drop(x)
+def DropIt = [(type a: drop) x] !
 ```
 
 ## A Real Example
@@ -102,7 +96,7 @@ implementation details inside interfaces that can be passed around freely.
 Here’s a boxed interface for working with sets:
 
 ```par
-type SetModule<a> = (type set: box) box choice {
+type SetModule<a> = (type set: share) box choice {
   .empty => set,
   .insert(a, set) => set,
   .contains(a, set) => Bool,
@@ -111,7 +105,7 @@ type SetModule<a> = (type set: box) box choice {
 
 This type hides the implementation type of the set.
 The interface is boxed, so it can be copied and discarded.
-The hidden `set` type is constrained with [`box`](./constraints.md), so set values can be reused by
+The hidden `set` type is constrained with [`share`](./constraints.md), so set values can be reused by
 the operations that inspect them.
 The hidden type `set` is never revealed — only its operations are exposed.
 
@@ -159,7 +153,7 @@ Let’s now use that in a function:
 
 ```par
 dec Deduplicate : [type a: data, SetModule<a>, List<a>] List<a>
-def Deduplicate = [type a: data, (type set: box) mSet, list]
+def Deduplicate = [type a: data, (type set: share) mSet, list]
   let visited = mSet.empty
   in list.begin.case {
     .end! => .end!,

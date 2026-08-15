@@ -182,6 +182,11 @@ pub struct Package<Ext: Clone> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Global<Ext: Clone> {
     Variable(usize),
+    /// Compiler-inserted structural disposal for a value satisfying the `drop` constraint.
+    Close {
+        signal: Str<Ext>,
+        erase: GlobalPtr<Ext>,
+    },
     Package(PackagePtr<Ext>, GlobalPtr<Ext>, FanBehavior),
     /// Destruct attempts to convert the interacting node into a value,
     /// and then carries out a negative operation on it according to its variant
@@ -580,6 +585,7 @@ impl Runtime {
             Node::Global(instance, global_index) => match self.arena().get(global_index) {
                 Global::Destruct(..) => None,
                 Global::Fanout(..) => None,
+                Global::Close { .. } => None,
                 Global::Package(package, captures, FanBehavior::Expand) => {
                     let root = self.instantiate_package_captures(
                         package.clone(),
@@ -814,9 +820,42 @@ impl Runtime {
                     }
                 }
             }
+            sym!(
+                NodeRef::Global(close_instance, _, Global::Close { erase, .. }),
+                NodeRef::Global(
+                    value_instance,
+                    _,
+                    Global::Package(_, captures, FanBehavior::Propagate)
+                )
+            ) => {
+                self.rewrites.fanout += 1;
+                self.link(
+                    Node::Global(value_instance, *captures),
+                    Node::Global(close_instance, *erase),
+                );
+            }
+            sym!(
+                NodeRef::Global(_, _, Global::Close { .. }),
+                NodeRef::Shared(_)
+            ) => {
+                self.rewrites.fanout += 1;
+            }
             sym!(NodeRef::Shared(Shared::Async(state)), other) => {
                 let mut lock = state.lock().unwrap();
                 self.enqueue_to_hole(&mut *lock, other.into_node());
+            }
+            sym!(
+                NodeRef::Global(close_instance, _, Global::Close { erase, .. }),
+                NodeRef::Global(fanout_instance, _, Global::Fanout(destinations))
+            ) => {
+                self.rewrites.fanout += 1;
+                let erase = *erase;
+                for destination in *destinations {
+                    self.link(
+                        Node::Global(fanout_instance.clone(), destination),
+                        Node::Global(close_instance.clone(), erase),
+                    );
+                }
             }
             sym!(
                 NodeRef::Global(instance, _, Global::Fanout(destinations)),
@@ -826,6 +865,18 @@ impl Runtime {
             }
             sym!(NodeRef::Linear(Linear::ShareHole(hole)), other) => {
                 self.fill_hole(hole, other.into_node())
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { signal, .. }),
+                NodeRef::Linear(Linear::Request(request))
+            ) => {
+                request
+                    .send(Value::Either(
+                        *signal,
+                        Node::Global(close_instance, close_index),
+                    ))
+                    .unwrap();
+                self.rewrites.ext_send += 1;
             }
             sym!(NodeRef::Linear(Linear::Request(request)), other) => {
                 let node = other.into_node();
@@ -855,6 +906,85 @@ impl Runtime {
                     Node::Shared(captures_in.clone()),
                     other.into_node(),
                 );
+            }
+
+            sym!(
+                NodeRef::Global(_, _, Global::Close { .. }),
+                NodeRef::Linear(Linear::Value(value))
+            ) if matches!(value.as_ref(), Value::Break | Value::Primitive(_)) => {
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(_, _, Global::Close { .. }),
+                NodeRef::Global(_, _, Global::Value(Value::Break | Value::Primitive(_)))
+            ) => {
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
+                NodeRef::Linear(Linear::Value(value))
+            ) if matches!(value.as_ref(), Value::Pair(..)) => {
+                let Value::Pair(left, right) = *value else {
+                    unreachable!()
+                };
+                self.link(left, Node::Global(close_instance.clone(), close_index));
+                self.link(right, Node::Global(close_instance, close_index));
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
+                NodeRef::Global(value_instance, _, Global::Value(Value::Pair(left, right)))
+            ) => {
+                let left = *left;
+                let right = *right;
+                self.link(
+                    Node::Global(value_instance.clone(), left),
+                    Node::Global(close_instance.clone(), close_index),
+                );
+                self.link(
+                    Node::Global(value_instance, right),
+                    Node::Global(close_instance, close_index),
+                );
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
+                NodeRef::Linear(Linear::Value(value))
+            ) if matches!(value.as_ref(), Value::Either(..)) => {
+                let Value::Either(_, payload) = *value else {
+                    unreachable!()
+                };
+                self.link(payload, Node::Global(close_instance, close_index));
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
+                NodeRef::Global(value_instance, _, Global::Value(Value::Either(_, payload)))
+            ) => {
+                self.link(
+                    Node::Global(value_instance, *payload),
+                    Node::Global(close_instance, close_index),
+                );
+                self.rewrites.fanout += 1;
+            }
+            sym!(
+                NodeRef::Global(close_instance, close_index, Global::Close { signal, .. }),
+                NodeRef::Global(
+                    choice_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Choice(context, options))
+                )
+            ) => {
+                let package = self
+                    .lookup_case_branch(*options, *signal)
+                    .expect("Close interacted with a choice without a `.close` branch");
+                let root = self.instantiate_linked_package_body_captures(
+                    choice_instance.clone(),
+                    package,
+                    Node::Global(choice_instance, *context),
+                );
+                self.link(root, Node::Global(close_instance, close_index));
+                self.rewrites.r#match += 1;
             }
 
             sym!(NodeRef::Linear(Linear::Value(value)), other)
@@ -1103,6 +1233,8 @@ impl Global<Linked> {
     pub fn variant_name(&self) -> String {
         match self {
             Global::Variable(_) => "Variable".into(),
+
+            Global::Close { .. } => "Close".into(),
 
             Global::Package(_, _, _) => "Package".into(),
 

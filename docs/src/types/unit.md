@@ -32,7 +32,7 @@ def Unit = !  // infers `Unit` to be of type `!`
 
 ## Destruction
 
-Being a [non-linear](../types_and_expressions.md#linearity) type, variables of type `!` can be left unused.
+Being a [shareable](../types_and_expressions.md#linearity) type, variables of type `!` can be left unused.
 
 If `!` is a part of a larger type, it may be needed to assign it as a part of a pattern. For this
 purpose, the pattern `!` will destruct a `!` value without assigning it to a variable.

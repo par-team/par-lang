@@ -126,6 +126,10 @@ fn link_package_body(body: &PackageBody<Unlinked>) -> Result<PackageBody<Linked>
 fn link_global(node: &Global<Unlinked>) -> Result<Global<Linked>, LinkError> {
     Ok(match node {
         Global::Variable(id) => Global::Variable(*id),
+        Global::Close { signal, erase } => Global::Close {
+            signal: Index(signal.0.clone()),
+            erase: Index(erase.0.clone()),
+        },
         Global::Package(package_ptr, global_ptr, fab_behavior) => Global::Package(
             Index(package_ptr.0.clone()),
             Index(global_ptr.0.clone()),

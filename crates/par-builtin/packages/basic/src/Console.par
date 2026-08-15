@@ -31,7 +31,7 @@ export {
   // console.close
   // ```
   type Console = iterative choice {
-    .close => !,
+    .close* => !,
     .print(String) => self,
     .prompt(String) => (Try<!, String>) self,
   }

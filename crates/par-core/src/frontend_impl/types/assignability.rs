@@ -145,6 +145,11 @@ pub(crate) enum SubtypeMismatchKind {
     MissingChoiceBranch {
         branch: LocalName,
     },
+    CleanupBranchMismatch {
+        branch: LocalName,
+        provided: bool,
+        expected: bool,
+    },
     ConstructorMismatch(ConstructorDifference),
     ImplicitGenericCountMismatch {
         from_count: usize,
@@ -362,19 +367,17 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             }
             (Type::Either(span, mut branches), TypePathSegment::EitherBranch(label))
             | (Type::Either(span, mut branches), TypePathSegment::EitherBranchLabel(label)) => {
-                if let Some(branch_typ) = branches.remove(label) {
-                    let unrolled_branch =
-                        Self::unroll_along_path_segments(branch_typ, rest, type_defs);
-                    branches.insert(label.clone(), unrolled_branch);
+                if let Some(mut branch) = branches.remove(label) {
+                    branch.typ = Self::unroll_along_path_segments(branch.typ, rest, type_defs);
+                    branches.insert(label.clone(), branch);
                 }
                 Type::Either(span, branches)
             }
             (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranch(label))
             | (Type::Choice(span, mut branches), TypePathSegment::ChoiceBranchLabel(label)) => {
-                if let Some(branch_typ) = branches.remove(label) {
-                    let unrolled_branch =
-                        Self::unroll_along_path_segments(branch_typ, rest, type_defs);
-                    branches.insert(label.clone(), unrolled_branch);
+                if let Some(mut branch) = branches.remove(label) {
+                    branch.typ = Self::unroll_along_path_segments(branch.typ, rest, type_defs);
+                    branches.insert(label.clone(), branch);
                 }
                 Type::Choice(span, branches)
             }
@@ -561,7 +564,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
     ) -> Result<Option<SubtypeResult<S>>, TypeError<S>> {
         match (type1, type2) {
             (t1, Self::Box(_, t2))
-                if t1.satisfies_constraint(TypeConstraint::Box, ctx.type_defs)? =>
+                if t1.satisfies_constraint(TypeConstraint::Share, ctx.type_defs)? =>
             {
                 path2.push(TypePathSegment::BoxBody);
                 let res = Type::is_subtype_helper(
@@ -575,7 +578,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 Ok(Some(res))
             }
             (Self::DualBox(_, t1), t2)
-                if t1.satisfies_constraint(TypeConstraint::Box, ctx.type_defs)? =>
+                if t1.satisfies_constraint(TypeConstraint::Share, ctx.type_defs)? =>
             {
                 path1.push(TypePathSegment::BoxBody);
                 let res = Type::is_subtype_helper(
@@ -1001,10 +1004,31 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                         path1.pop();
                         return Ok(res);
                     };
+                    if t1.cleanup && !t2.cleanup {
+                        path1.push(TypePathSegment::EitherBranchLabel(branch.clone()));
+                        path2.push(TypePathSegment::EitherBranchLabel(branch.clone()));
+                        let res = incompatible(
+                            path1,
+                            path2,
+                            SubtypeMismatchKind::CleanupBranchMismatch {
+                                branch: branch.clone(),
+                                provided: t1.cleanup,
+                                expected: t2.cleanup,
+                            },
+                        );
+                        path1.pop();
+                        path2.pop();
+                        return Ok(res);
+                    }
                     path1.push(TypePathSegment::EitherBranch(branch.clone()));
                     path2.push(TypePathSegment::EitherBranch(branch.clone()));
-                    let branch_res =
-                        Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
+                    let branch_res = Type::is_subtype_helper(
+                        t1.typ.clone(),
+                        t2.typ.clone(),
+                        path1,
+                        path2,
+                        ctx.clone(),
+                    )?;
                     path1.pop();
                     path2.pop();
                     res = res & branch_res;
@@ -1027,10 +1051,31 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                         path2.pop();
                         return Ok(res);
                     };
+                    if t2.cleanup && !t1.cleanup {
+                        path1.push(TypePathSegment::ChoiceBranchLabel(branch.clone()));
+                        path2.push(TypePathSegment::ChoiceBranchLabel(branch.clone()));
+                        let res = incompatible(
+                            path1,
+                            path2,
+                            SubtypeMismatchKind::CleanupBranchMismatch {
+                                branch: branch.clone(),
+                                provided: t1.cleanup,
+                                expected: t2.cleanup,
+                            },
+                        );
+                        path1.pop();
+                        path2.pop();
+                        return Ok(res);
+                    }
                     path1.push(TypePathSegment::ChoiceBranch(branch.clone()));
                     path2.push(TypePathSegment::ChoiceBranch(branch.clone()));
-                    let branch_res =
-                        Type::is_subtype_helper(t1.clone(), t2.clone(), path1, path2, ctx.clone())?;
+                    let branch_res = Type::is_subtype_helper(
+                        t1.typ.clone(),
+                        t2.typ.clone(),
+                        path1,
+                        path2,
+                        ctx.clone(),
+                    )?;
                     path1.pop();
                     path2.pop();
                     res = res & branch_res;

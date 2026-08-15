@@ -25,8 +25,8 @@ def Factorial = [n]
   }
 
 dec Fibonacci : iterative choice {
-  .next  => (Nat) self,
-  .close => !,
+  .next   => (Nat) self,
+  .close* => !,
 }
 
 def Fibonacci = do {
@@ -37,5 +37,5 @@ def Fibonacci = do {
     let (a, b)! = (b, a + b)!
   } in (a) loop,
 
-  .close => !,
+  .close* => !,
 }

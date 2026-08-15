@@ -1,4 +1,4 @@
-use crate::frontend_impl::types::{PrimitiveType, Type, TypeDefs, TypeError};
+use crate::frontend_impl::types::{PrimitiveType, Type, TypeBranch, TypeDefs, TypeError};
 use crate::location::Span;
 use std::collections::BTreeMap;
 
@@ -188,10 +188,28 @@ fn union_types_branching<S: Clone + Eq + std::hash::Hash>(
             let mut new_branches = branches1.clone();
             for (name, typ2) in branches2 {
                 if let Some(typ1) = new_branches.get(name) {
-                    new_branches.insert(name.clone(), union_types(typedefs, span, typ1, typ2)?);
+                    new_branches.insert(
+                        name.clone(),
+                        TypeBranch {
+                            cleanup: typ1.cleanup || typ2.cleanup,
+                            typ: union_types(typedefs, span, &typ1.typ, &typ2.typ)?,
+                        },
+                    );
                 } else {
                     new_branches.insert(name.clone(), typ2.clone());
                 }
+            }
+            if new_branches
+                .values()
+                .filter(|branch| branch.cleanup)
+                .count()
+                > 1
+            {
+                return Err(TypeError::TypesCannotBeUnified(
+                    span.clone(),
+                    type1.clone(),
+                    type2.clone(),
+                ));
             }
             Ok(Type::Either(span.clone(), new_branches))
         }
@@ -199,7 +217,13 @@ fn union_types_branching<S: Clone + Eq + std::hash::Hash>(
             let mut new_branches = BTreeMap::new();
             for (name, typ1) in branches1 {
                 if let Some(typ2) = branches2.get(name) {
-                    new_branches.insert(name.clone(), union_types(typedefs, span, typ1, typ2)?);
+                    new_branches.insert(
+                        name.clone(),
+                        TypeBranch {
+                            cleanup: typ1.cleanup && typ2.cleanup,
+                            typ: union_types(typedefs, span, &typ1.typ, &typ2.typ)?,
+                        },
+                    );
                 }
             }
             Ok(Type::Choice(span.clone(), new_branches))
@@ -363,7 +387,13 @@ fn intersect_types_branching<S: Clone + Eq + std::hash::Hash>(
             let mut new_branches = BTreeMap::new();
             for (name, typ1) in branches1 {
                 if let Some(typ2) = branches2.get(name) {
-                    new_branches.insert(name.clone(), intersect_types(typedefs, span, typ1, typ2)?);
+                    new_branches.insert(
+                        name.clone(),
+                        TypeBranch {
+                            cleanup: typ1.cleanup && typ2.cleanup,
+                            typ: intersect_types(typedefs, span, &typ1.typ, &typ2.typ)?,
+                        },
+                    );
                 }
             }
             Ok(Type::Either(span.clone(), new_branches))
@@ -372,10 +402,28 @@ fn intersect_types_branching<S: Clone + Eq + std::hash::Hash>(
             let mut new_branches = branches1.clone();
             for (name, typ2) in branches2 {
                 if let Some(typ1) = new_branches.get(name) {
-                    new_branches.insert(name.clone(), intersect_types(typedefs, span, typ1, typ2)?);
+                    new_branches.insert(
+                        name.clone(),
+                        TypeBranch {
+                            cleanup: typ1.cleanup || typ2.cleanup,
+                            typ: intersect_types(typedefs, span, &typ1.typ, &typ2.typ)?,
+                        },
+                    );
                 } else {
                     new_branches.insert(name.clone(), typ2.clone());
                 }
+            }
+            if new_branches
+                .values()
+                .filter(|branch| branch.cleanup)
+                .count()
+                > 1
+            {
+                return Err(TypeError::TypesCannotBeUnified(
+                    span.clone(),
+                    type1.clone(),
+                    type2.clone(),
+                ));
             }
             Ok(Type::Choice(span.clone(), new_branches))
         }

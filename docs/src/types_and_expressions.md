@@ -45,10 +45,11 @@ aspect, check out [The Process Syntax](./process_syntax.md).
 ## Linearity
 
 Par is based on [linear logic](https://en.wikipedia.org/wiki/Linear_logic), and with that comes a
-**linear type system.** That means: **some values must be used exactly once.**
+**linear type system.** That means the type of a value controls not only _how_ it can be used,
+but also _how many times._
 
-These are called **linear values.** You can't copy them, and you can't throw them away.
-They must be consumed, **exactly once** — in a way their type allows.
+The strictest values must be consumed **exactly once** — in a way their type allows.
+You can't copy them, and you can't throw them away.
 
 This might sound limiting, but it opens the door to something powerful.
 
@@ -61,43 +62,65 @@ With linearity, Par gives you channels where that simply can’t happen.
 That's the foundation of [session types](https://en.wikipedia.org/wiki/Session_type),
 and Par supports them at its core.
 
-But not every type needs that kind of strictness. Some values should be copyable, droppable,
-and passed around freely.
+But not every type needs that kind of strictness. Some values have a natural way to be [cleaned up](./types/auto_cleanup.md),
+and some should be copyable, droppable, and passed around freely.
 
-So Par distinguishes between:
+So Par distinguishes between three usage capabilities:
 
-- **Linear types,** which must be used exactly once.
-- **Non-linear types,** which can be used any number of times — including zero.
+- **Strictly linear types** must be used exactly once.
+- **Droppable linear types** may be used once or left unused. They still cannot be copied.
+- **Shareable types** may be used any number of times — including zero.
 
-The precise rule is: a type is non-linear when it satisfies the [`box` constraint](./types/constraints.md).
-That chapter comes after [Box](./types/box.md), but here is the useful orientation.
+The precise names of the last two capabilities are the [`drop` and `share`
+constraints](./types/constraints.md). Every `share` type also satisfies `drop`, but not the other
+way around. A file handle, for example, can be safely closed without being safe to copy.
 
-### Which types are non-linear?
+How can Par drop a linear value without ignoring its protocol? A [choice](./types/choice.md) can mark
+one branch as its cleanup branch:
+
+```par
+type Resource = choice {
+  .release* => !,
+}
+```
+
+The star declares `.release` to be the canonical way out. If a `Resource` remains unused when its
+process finishes, Par selects that branch automatically. This is covered fully in
+[Auto-Cleanup](./types/auto_cleanup.md).
+
+### Which types are shareable?
 
 These include:
 
 - All [**primitives**](./structure/primitive_types.md): `Int`, `Nat`, `Float`, `String`, `Char`,
   `Byte`, and `Bytes`
 - [**Unit**](./types/unit.md)
-- [**Either**](./types/either.md)
-- [**Pair**](./types/pair.md)
-- [**Recursive**](./types/recursive.md)
-- [**Box**](./types/box.md)
-- [**Forall**](./types/forall.md) and [**Exists**](./types/exists.md), when their type parameters
-  and bodies are constrained enough to be non-linear
-- Any type **composed entirely** of non-linear parts
+- [**Either**](./types/either.md), [**pair**](./types/pair.md), and
+  [**Recursive**](./types/recursive.md) and [**Iterative**](./types/iterative.md) types whose body is shareable
+- Every [**box**](./types/box.md), regardless of the type of its content
+- [**Forall**](./types/forall.md) and [**Exists**](./types/exists.md) whose body is shareable
 
-### Which types are linear?
+### Which types are droppable?
 
-All the rest:
+These include all the shareable types above, plus:
 
-- [**Function**](./types/function.md)
-- [**Choice**](./types/choice.md)
-- [**Iterative**](./types/iterative.md)
-- [**Forall**](./types/forall.md) and [**Exists**](./types/exists.md), when they introduce
-  unconstrained type variables
-- [**Continuation**](./types/continuation.md)
-- Any type that **contains** a linear component, even deeply
+- [**Choice**](./types/choice.md) types with a usable cleanup branch, that is one whose result is also droppable.
+
+Droppability is structural. Dropping a pair drops both of its parts; dropping an either drops the
+payload that is actually present; dropping a recursive structure walks through it. Eventually,
+cleanup reaches shareable values — which need no action — and marked choices — which say what action to
+perform.
+
+See [Type Constraints](./types/constraints.md) and [Auto-Cleanup](./types/auto_cleanup.md) for more information.
+
+### Which types are strictly linear?
+
+Everything that is neither shareable nor droppable is strictly linear. Common examples are:
+
+- A [**function**](./types/function.md)
+- A [**choice**](./types/choice.md) without a cleanup branch
+- A [**continuation**](./types/continuation.md)
+- Any type that **contains** a strictly linear component, even deeply
 
 If a type has a linear piece **anywhere inside it,** it becomes linear — unless that part is
 wrapped in a [box](./types/box.md).

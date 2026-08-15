@@ -64,7 +64,6 @@ def YieldDownloadRequests = [listenUrl, rootPath] chan yield {
         next.loop
       }
 
-      body.close
       throw "Wrong method"
     }
   }
@@ -79,15 +78,12 @@ def DownloadFile = [(sourceUrl, dest)!] chan yield {
 
   let try (status, headers) body = Http.Fetch(("GET", sourceUrl, *()) Bytes.EmptyReader)
   let headers = BoxMap.FromList(headers)
-  catch@clearResp err => { body.close; throw err }
 
   if status != 200 => {
-    throw@clearResp "Bad server response"
+    throw "Bad server response"
   }
 
-  let try@clearResp file = Os.CreateNewFile(dest)
-  catch@clearFile err => { file.close; throw err }
-
+  let try file = Os.CreateNewFile(dest)
   let default(0) totalSize =
     headers.get("content-length")
       ->Option.Map(box String.FromBytes)
@@ -97,9 +93,9 @@ def DownloadFile = [(sourceUrl, dest)!] chan yield {
   let bytesSinceLastEvent = 0
   let timeOfLastEvent = Time.Now
 
-  body.begin.read.try@clearFile.case {
+  body.begin.read.try.case {
     .chunk(bytes) => {
-      file.write(bytes).try@clearResp
+      file.write(bytes).try
 
       bytesSinceLastEvent += Bytes.Length(bytes)
       if Time.Now->Time.Since(timeOfLastEvent) >= 100 * Time.Millisecond => {
@@ -129,7 +125,6 @@ def ShowDownloadProgress = [events, rootPath] chan exit {
 
   catch e => {
     Debug.Log(`Stdout error: ${e}`)
-    tracker.close
     exit!
   }
 
@@ -175,13 +170,11 @@ def ShowDownloadProgress = [events, rootPath] chan exit {
     .end! => {}
   }
 
-  tracker.close
-  stdout.close
   exit!
 }
 
 type ProgressTracker = iterative choice {
-  .close => !,
+  .close* => !,
   .stats => (Nat, Int, Int) self,
   .file(String) => choice {
     .started(Nat) => self,
@@ -195,7 +188,7 @@ def NewProgressTracker: ProgressTracker = do {
   let sumDownloaded: Int = 0
   let sumExpected: Int = 0
 } in begin case {
-  .close => let _ = filesInProgress.list in !,
+  .close* => !,
 
   .stats => do {
     filesInProgress.size[numFiles]

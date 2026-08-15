@@ -1,6 +1,6 @@
 pub(crate) mod core;
 pub(crate) use core::LoopId;
-pub use core::{Operation, PrimitiveType, Type};
+pub use core::{Operation, PrimitiveType, Type, TypeBranch};
 pub(crate) use core::{TypePath, TypePathSegment};
 
 pub(crate) mod visibility;

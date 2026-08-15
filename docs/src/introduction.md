@@ -20,7 +20,7 @@ Par is an attempt to take that idea seriously — to turn linear logic into a pr
 
 Based on linear logic, Par has a **linear type system.** That's close to what you know from Rust:
 linear values have a single owner and are moved instead of copied.
-But unlike in Rust, linear values **cannot be dropped.** Instead, they have to be consumed according to their type.
+But unlike in Rust, linear values **cannot be discarded.** Instead, they have to be consumed according to their type. _(Also, see [auto-cleanup](./types/auto_cleanup.md).)_
 
 This unlocks something special: channels that may only be consumed by sending.
 Now the receiver has a new guarantee — it no longer has to consider the sender forgetting to communicate.

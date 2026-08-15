@@ -9,31 +9,35 @@ dec Identity : [<a> a] a
 def Identity = [<a> x] x
 ```
 
-But this one needs to use its value twice:
+But this one needs permission to leave one value unused:
 
 ```par
-dec Duplicate : [<a: box> a] (a, a)!
-def Duplicate = [<a: box> x] (x, x)!
+dec KeepFirst : [<a: drop> (a, a)!] a
+def KeepFirst = [<a: drop> (first, second)!] first
 ```
 
-The `: box` part is a **type constraint**. It says that the unknown type `a` must be non-linear,
-so values of that type may be reused or dropped.
+The `: drop` part is a **type constraint.** It says that the unknown type `a` has a safe way to be
+disposed of, so `second` can be cleaned up automatically.
 
-Par currently has four constraints:
+Par provides five type constraints:
 
-- `box`
+- `drop`
+- `share`
 - `data`
 - `number`
 - `signed`
 
-They form a chain from broadest to narrowest:
+They form a chain from narrowest to broadest:
 
 ```text
-signed -> number -> data -> box
+signed -> number -> data -> share -> drop
 ```
 
-So every `signed` type is also a `number`, every `number` is also `data`, and every `data` type is
-also `box`.
+Every `signed` type is also a `number`; every `number` is also `data`; every `data` type is also
+`share`; and every `share` type is also `drop`.
+
+The farther right we go, the less generic code may assume. A `drop` value can be disposed of, but
+not necessarily copied, compared, displayed, or added.
 
 ## Syntax
 
@@ -54,7 +58,7 @@ dec Sum : [<a: number> (a) a] a
 Existential types can constrain the hidden type:
 
 ```par
-type SomeData = (type a: data) a
+type SomeDroppable = (type a: drop) a
 ```
 
 Implicit generic pairs can do the same:
@@ -74,41 +78,93 @@ def ShowTwice = [type a: data, x] `#{x} #{x}`
 Named type definitions are the one place where parameters are not constrained:
 
 ```par
-type Boxed<a> = box a      // OK
-type Bad<a: box> = box a   // Error
+type Boxed<a> = box a        // OK
+type Bad<a: share> = box a   // Error
 ```
 
 If a type definition needs constrained behavior, put the constraint on the functions that operate
 on that type.
 
-## The `box` Constraint
+## The `drop` Constraint
 
-The `box` constraint means values are non-linear. A value whose type is known only as `a: box` may
-be copied, reused, or dropped.
+The `drop` constraint means a value may be left unused. For a shareable value this requires no
+action. For a linear value, Par performs its [structural cleanup](./auto_cleanup.md).
 
 ```par
-dec KeepFirst : [<a: box> (a, a)!] a
-def KeepFirst = [<a: box> (first, second)!] first
+dec KeepFirst : [<a: drop> (a, a)!] a
+def KeepFirst = [<a: drop> (first, second)!] first
 ```
 
-In the example, `second` is not used. That is allowed because `a: box`.
+`KeepFirst` never needs another copy of either value, so `drop` is exactly the capability it needs.
+This works for ordinary data as well as cleanup-capable resources.
 
-Types that satisfy `box` include:
+The standard `List.Length` has the same shape of requirement:
 
-- primitives
-- `!`
-- pairs, eithers, and recursive types whose parts also satisfy `box`
-- explicit `box T`
-- type aliases that expand to a `box` type
-- type variables with a `box`, `data`, `number`, or `signed` constraint
+```par
+dec List.Length : [<a: drop> List<a>] Nat
+```
 
-Functions, choices, continuations, and unrestricted type variables do not satisfy `box` unless they
-are wrapped in an explicit `box`.
+It walks through the list and counts its nodes without keeping their elements. A strict linear
+element type would make that impossible; a droppable one is sufficient.
+
+Types that satisfy `drop` include:
+
+- primitives, `!`, and every `share` type
+- an explicit `box T`
+- pairs and eithers whose parts all satisfy `drop`
+- recursive types whose bodies satisfy `drop`, where `self` is assumed `drop`
+- iterative types whose bodies satisfy `drop`, but where `self` itself is not assumed `drop`
+- choices with a cleanup branch whose result satisfies `drop`
+- generic types whose bodies satisfy `drop`
+- type variables constrained by `drop` or any narrower constraint
+
+Functions, continuations, choices without a usable cleanup branch, or unrestricted type variables
+do not satisfy `drop`.
+
+## The `share` Constraint
+
+The `share` constraint means values may be copied, reused, or dropped.
+
+```par
+dec Duplicate : [<a: share> a] (a, a)!
+def Duplicate = [<a: share> x] (x, x)!
+```
+
+`drop` would not be enough here. Constructing the pair uses `x` twice, so `Duplicate` needs
+`share`.
+
+The distinction can be subtler when the two uses appear on different paths. Consider `List.Filter`:
+
+```par
+dec Filter : [<a: share> List<a>, box [a] Bool] List<a>
+def Filter = [<a: share> list, predicate] list.begin.case {
+  .end! => .end!,
+  .item(x) xs => predicate(x).case {
+    .true! => .item(x) xs.loop,
+    .false! => xs.loop,
+  }
+}
+```
+
+The predicate consumes one use of `x`. If it returns `.true!`, the output list needs another use.
+That is copying, so the correct constraint is `share`, even though the `.false!` path merely drops
+the item.
+
+Types that satisfy `share` include:
+
+- primitives and `!`
+- pairs, eithers, recursive and iterative types whose parts satisfy `share`
+- every `box T`, regardless of `T`
+- explicit and implicit generic types whose bodies satisfy `share`
+- type variables constrained by `share`, `data`, `number`, or `signed`
+
+Functions, choices, continuations, and unrestricted type variables do not satisfy `share`
+unless they are wrapped in a `box`.
 
 ## The `data` Constraint
 
-The `data` constraint means values are ordinary data. Data values are non-linear, and additionally
-support:
+The `data` constraint means values are ordinary comparable and displayable data. Data values are
+shareable, and additionally support:
 
 - comparison operators: `<`, `>`, `<=`, `>=`, `==`, `!=`
 - data interpolation in template strings: `#{...}`
@@ -129,21 +185,19 @@ The comparison operators use `@core/Data.Compare` under the hood. The `#{...}` t
 
 Types that satisfy `data` include:
 
-- all primitive types
-- `!`
+- all primitive types and `!`
 - pairs whose elements are data
 - eithers whose payloads are data
 - recursive types whose bodies are data
-- type aliases that expand to data
 - type variables with a `data`, `number`, or `signed` constraint
 
-Adding `box` to a non-data type does not make it data:
+Boxing a non-data type does not make it data:
 
 ```par
-box [Int] Int  // box, but not data
+box [Int] Int  // share, but not data
 ```
 
-If `T` is already data, then `box T` can still be used as data, because boxed data can be used as
+If `T` is already data, then `box T` is data, because boxed data can be used as
 the data value inside.
 
 ## The `number` Constraint
@@ -158,13 +212,16 @@ The `number` constraint is for generic numeric code. A `number` type supports:
 ```par
 module Main
 
-import @core/Number
+import {
+  @core/List
+  @core/Number
+}
 
-dec SumPair : [<a: number> (a) a] a
-def SumPair = [<a: number> (left) right] left + right
-
-dec Zero : [type a: number] a
-def Zero = [type a: number] Number.Zero(type a)
+dec Sum : [<a: number> List<a>] a
+def Sum = [<a: number> list] list.begin.case {
+  .end! => Number.Zero(type a),
+  .item(x) xs => x + xs.loop,
+}
 ```
 
 The number types are:
@@ -172,9 +229,6 @@ The number types are:
 - `Nat`
 - `Int`
 - `Float`
-
-Type aliases that expand to one of these types, and type variables constrained with `number` or
-`signed`, also satisfy `number`.
 
 `number` does not provide subtraction or negation, because `Nat` is a number but not signed.
 
@@ -199,18 +253,16 @@ The signed types are:
 - `Int`
 - `Float`
 
-Type aliases that expand to `Int` or `Float`, and type variables constrained with `signed`, also
-satisfy `signed`.
-
 `Nat` is intentionally not signed.
 
 ## Choosing a Constraint
 
-Use the weakest constraint that gives the function what it needs:
+When accepting a generic argument, use the weakest constraint that gives the function what it needs:
 
-- Use `box` when you only need to copy, reuse, or drop values.
+- Use `drop` when you only need to leave values unused.
+- Use `share` when you need to copy or reuse values.
 - Use `data` when you need comparison or `#{...}` display.
 - Use `number` when you need generic zero, addition, multiplication, or division.
 - Use `signed` when you also need subtraction or negation.
 
-This keeps generic APIs as flexible as possible while still making their capabilities clear.
+On the other hand, when constructing an existential value, use the strongest constraint.

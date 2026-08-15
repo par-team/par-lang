@@ -85,7 +85,7 @@ whether it is implicit or explicit:
 
 This is intentional: it keeps call sites predictable.
 
-Implicit type parameters can also carry constraints, such as `<a: box>` or
+Implicit type parameters can also carry constraints, such as `<a: share>` or
 `<a: data>`. The constraints themselves are covered in [Type Constraints](./constraints.md).
 
 ## Construction
@@ -192,31 +192,25 @@ Just like with functions, the `<a, ...>` binder belongs to one value item, this
 time inside the pair's parentheses. Ordinary and implicit items can be mixed,
 as in `(Header, <a> a) Rest`.
 
-Here is a simple example. `AnyDrop` stores a value of some unknown type, plus a
-small “vtable” for dropping it (a boxed [choice](./choice.md)):
+Here is a simple example. `AnyDroppable` stores a value of some unknown type,
+while remembering that the hidden type satisfies [`drop`](./constraints.md#the-drop-constraint):
 
 ```par
-type AnyDrop = (<a> a) box choice {
-  .drop(a) => !,
-}
+type AnyDroppable = (<a: drop> a)!
 ```
 
 This is the implicit counterpart of the existential type:
 
 ```par
-type DropMe = (type a, a) box choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
 ### Construction
 
-Notice that you do not specify the hidden type when constructing an `AnyDrop`:
+Notice that you do not specify the hidden type when constructing an `AnyDroppable`:
 
 ```par
-def Example: AnyDrop = (7) box case {
-  .drop(_) => !,
-}
+def Example: AnyDroppable = (7)!
 ```
 
 ### Destruction
@@ -225,8 +219,7 @@ Dually, when you unpack an implicit-generic pair, you introduce a local type
 variable:
 
 ```par
-let (<a> value) vtable = Example
-vtable.drop(value)
+let (<a: drop> value)! = Example
 ```
 
 This is the “mirror image” of implicit-generic functions: there you introduce

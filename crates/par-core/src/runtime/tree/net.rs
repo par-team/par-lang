@@ -13,6 +13,7 @@ use futures::channel::oneshot;
 use indexmap::IndexMap;
 use num_bigint::BigInt;
 
+use crate::frontend_impl::process::CLEANUP_BRANCH;
 use par_runtime::fan_behavior::FanBehavior;
 use par_runtime::primitive::{ParString, Primitive, format_float};
 use par_runtime::readback::Number;
@@ -38,6 +39,7 @@ pub enum Tree<Ext> {
     Break,
     Continue,
     Era,
+    Close,
     Par(Box<Tree<Ext>>, Box<Tree<Ext>>),
     Times(Box<Tree<Ext>>, Box<Tree<Ext>>),
     Dup(Box<Tree<Ext>>, Box<Tree<Ext>>),
@@ -85,6 +87,7 @@ impl<Ext> Tree<Ext> {
                 b.map_vars(m);
             }
             Self::Era
+            | Self::Close
             | Self::Break
             | Self::Continue
             | Self::Primitive(_)
@@ -102,6 +105,7 @@ impl<Ext> core::fmt::Debug for Tree<Ext> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Era => f.debug_tuple("Era").finish(),
+            Self::Close => f.debug_tuple("Close").finish(),
             Self::Break => f.debug_tuple("Break").finish(),
             Self::Continue => f.debug_tuple("Continue").finish(),
             Self::Times(a, b) => f.debug_tuple("Times").field(a).field(b).finish(),
@@ -140,6 +144,7 @@ impl<Ext: Clone> Clone for Tree<Ext> {
     fn clone(&self) -> Self {
         match self {
             Self::Era => Self::Era,
+            Self::Close => Self::Close,
             Self::Break => Self::Break,
             Self::Continue => Self::Continue,
             Self::Times(a, b) => Self::Times(a.clone(), b.clone()),
@@ -315,6 +320,23 @@ impl<Ext: Clone> Net<Ext> {
             sym!(Era | Continue, Break) | sym!(Continue, Era) => {
                 self.rewrites.era += 1;
             }
+            sym!(Close, Break | Era) => {
+                self.rewrites.era += 1;
+            }
+            sym!(Times(a0, a1), Close) => {
+                self.link(*a0, Close);
+                self.link(*a1, Close);
+                self.rewrites.era += 1;
+            }
+            sym!(Signal(_, payload), Close) => {
+                self.link(*payload, Close);
+                self.rewrites.era += 1;
+            }
+            sym!(Dup(a0, a1), Close) => {
+                self.link(*a0, Era);
+                self.link(*a1, Era);
+                self.rewrites.era += 1;
+            }
             sym!(Times(a0, a1), Era) | sym!(Par(a0, a1), Era) | sym!(Dup(a0, a1), Era) => {
                 self.link(*a0, Era);
                 self.link(*a1, Era);
@@ -373,6 +395,14 @@ impl<Ext: Clone> Net<Ext> {
                 }
                 self.rewrites.signal += 1;
             }
+            sym!(Close, Choice(context, branches, _)) => {
+                let package = branches
+                    .get(CLEANUP_BRANCH)
+                    .copied()
+                    .expect("Close interacted with a choice without a cleanup branch");
+                self.link(Close, Tree::Package(package, context, FanBehavior::Expand));
+                self.rewrites.signal += 1;
+            }
             (Signal(_, payload), Era) | (Era, Signal(_, payload)) => {
                 self.link(*payload, Era);
                 self.rewrites.era += 1;
@@ -387,6 +417,11 @@ impl<Ext: Clone> Net<Ext> {
             }
             (Package(_, c, FanBehavior::Propagate), Era)
             | (Era, Package(_, c, FanBehavior::Propagate)) => {
+                self.rewrites.era += 1;
+                self.link(*c, Tree::Era);
+            }
+            (Package(_, c, FanBehavior::Propagate), Close)
+            | (Close, Package(_, c, FanBehavior::Propagate)) => {
                 self.rewrites.era += 1;
                 self.link(*c, Tree::Era);
             }
@@ -407,6 +442,11 @@ impl<Ext: Clone> Net<Ext> {
             (Primitive(p), a) | (a, Primitive(p)) => {
                 self.primitive_interact(p, a);
             }
+            sym!(SignalRequest(tx), Close) => {
+                tx.send((ArcStr::from(CLEANUP_BRANCH), Box::new(Close)))
+                    .expect("receiver dropped");
+                self.rewrites.resp += 1;
+            }
             (SignalRequest(tx), Signal(signal, payload))
             | (Signal(signal, payload), SignalRequest(tx)) => {
                 tx.send((signal, payload)).expect("receiver dropped");
@@ -414,6 +454,9 @@ impl<Ext: Clone> Net<Ext> {
             }
             (External(f), a) | (a, External(f)) => self.waiting_for_reducer.push((External(f), a)),
             (ExternalBox(_), Era) | (Era, ExternalBox(_)) => {
+                self.rewrites.era += 1;
+            }
+            (ExternalBox(_), Close) | (Close, ExternalBox(_)) => {
                 self.rewrites.era += 1;
             }
             (ExternalBox(f), Dup(a, b)) | (Dup(a, b), ExternalBox(f)) => {
@@ -452,6 +495,9 @@ impl<Ext: Clone> Net<Ext> {
             }
 
             (_, Tree::Era) => {
+                self.rewrites.era += 1;
+            }
+            (_, Tree::Close) => {
                 self.rewrites.era += 1;
             }
             (p, Tree::Dup(a, b)) => {
@@ -546,6 +592,7 @@ impl<Ext: Clone> Net<Ext> {
                 }
             }
             Tree::Era
+            | Tree::Close
             | Tree::Continue
             | Tree::Break
             | Tree::Primitive(_)
@@ -655,6 +702,7 @@ impl<Ext: Clone> Net<Ext> {
                 }
             }
             Tree::Era => format!("*"),
+            Tree::Close => format!("close"),
             Tree::Break => format!("!"),
             Tree::Continue => format!("?"),
             Tree::Par(a, b) => format!("[{}] {}", self.show_tree(b), self.show_tree(a)),
@@ -724,6 +772,7 @@ impl<Ext: Clone> Net<Ext> {
                 }
             }
             Tree::Era
+            | Tree::Close
             | Tree::Continue
             | Tree::Break
             | Tree::Primitive(_)
@@ -797,7 +846,7 @@ impl<Ext: Clone> Net<Ext> {
             }
             Tree::Signal(_, payload) => self.assert_tree_valid(payload),
             Tree::Choice(context, _, _) => self.assert_tree_valid(context),
-            Tree::Era | Tree::Continue | Tree::Break => {
+            Tree::Era | Tree::Close | Tree::Continue | Tree::Break => {
                 vec![]
             }
             Tree::Var(idx) => {

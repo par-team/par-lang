@@ -345,8 +345,8 @@ impl CheckedWorkspace {
     }
 }
 
-fn push_branch_completion_candidates(
-    branches: &BTreeMap<LocalName, Type<Universal>>,
+fn push_branch_completion_candidates<T>(
+    branches: &BTreeMap<LocalName, T>,
     detail: &'static str,
     candidates: &mut Vec<CompletionCandidate>,
 ) {

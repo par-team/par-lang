@@ -45,7 +45,7 @@ An infinite stream type may use a pair to produce an element together with the r
 
 ```par
 type Stream<a> = iterative choice {
-  .close => !,
+  .close* => !,
   .next  => (a) self,
 }
 ```

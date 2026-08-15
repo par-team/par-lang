@@ -23,7 +23,7 @@ export {
   // - `.read` — read the next chunk. Returns `.end` when exhausted,
   //   or `.chunk(bytes)` with the next chunk of data.
   type Reader<e> = recursive choice {
-    .close => Try<e, !>,
+    .close* => Try<e, !>,
     .read => Try<e, either {
       .end!,
       .chunk(Bytes) self,
@@ -36,7 +36,7 @@ export {
   // - `.flush` — flush pending data without closing.
   // - `.write(bytes)` — write a chunk of bytes.
   type Writer<e> = iterative choice {
-    .close => Try<e, !>,
+    .close* => Try<e, !>,
     .flush => Try<e, self>,
     .write(Bytes) => Try<e, self>,
   }
@@ -63,7 +63,7 @@ export {
   type Parser<e> = recursive either {
     .empty!,
     .ready iterative@attempt choice {
-      .close => Try<e, !>,
+      .close* => Try<e, !>,
       .remainder => Try<e, Bytes>,
       .byte => Try<e, (Byte) self>,
       .minMax(Pattern, Pattern) => Try<e, either {
@@ -226,7 +226,7 @@ def Chunks = [<e> parser] parser.begin.case {
   .ready parser => parser.byte.case {
     .err e => .end.err e,
     .ok(byte) parser => .item case {
-      .cancel => parser.begin.case {
+      .cancel* => parser.begin.case {
         .empty! => .ok!,
         .ready parser => parser.close,
       },
@@ -245,12 +245,12 @@ def SplitByPattern = [<e> parser, separator] parser.begin.case {
       .fail parser => Remainder(.ready parser).case {
         .err e => .end.err e,
         .ok chunk => .item case {
-          .cancel => .ok!,
+          .cancel* => .ok!,
           .get => (chunk) .end.ok!,
         },
       },
       .match(chunk, _) parser => .item case {
-        .cancel => parser.begin.case {
+        .cancel* => parser.begin.case {
           .empty! => .ok!,
           .ready parser => parser.close,
         },
