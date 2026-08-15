@@ -128,7 +128,7 @@ impl Element {
 
     pub fn show_content(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
-            .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY))
+            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::GRAY))
             .inner_margin(egui::Margin::same(4))
             .outer_margin(egui::Margin::same(2))
             .show(ui, |ui| {

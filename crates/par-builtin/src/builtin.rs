@@ -23,6 +23,8 @@ mod sql;
 mod string;
 mod time;
 mod url;
+#[cfg(not(target_family = "wasm"))]
+mod websocket;
 
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::env;
@@ -186,6 +188,10 @@ const BASIC_SOURCE_FILES: &[BuiltinSourceFile] = &[
     BuiltinSourceFile {
         relative_path_from_src: "Sql.par",
         source: include_str!("../packages/basic/src/Sql.par"),
+    },
+    BuiltinSourceFile {
+        relative_path_from_src: "WebSocket.par",
+        source: include_str!("../packages/basic/src/WebSocket.par"),
     },
 ];
 

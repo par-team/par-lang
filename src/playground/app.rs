@@ -341,7 +341,7 @@ fn apply_playground_visuals(visuals: &mut egui::Visuals) {
     } else {
         egui::Color32::from_gray(194)
     };
-    let button_stroke = egui::Stroke::new(1.0, button_stroke_color);
+    let button_stroke = egui::Stroke::new(1.0_f32, button_stroke_color);
     let button_radius = egui::CornerRadius::same(3);
 
     for widget in [

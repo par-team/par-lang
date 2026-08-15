@@ -1,0 +1,48 @@
+// WebSocket message streams and client connections.
+export module WebSocket
+
+import {
+  @core/Bytes
+  @core/String
+  @core/Try
+  @core/Url
+}
+
+export {
+  // Error type for WebSocket operations (a human-readable message).
+  type Error = String
+
+  // A complete WebSocket data message.
+  type Message = either {
+    .text String,
+    .binary Bytes,
+  }
+
+  // The incoming side of a WebSocket connection.
+  //
+  // - `.close` — stop receiving messages.
+  // - `.read` — read the next message. Returns `.end` when a WebSocket close
+  //   frame is received. Connection and protocol failures return `.err`.
+  type Reader = recursive choice {
+    .close* => Try<Error, !>,
+    .read => Try<Error, either {
+      .end!,
+      .message(Message) self,
+    }>,
+  }
+
+  // The outgoing side of a WebSocket connection.
+  //
+  // - `.close` — initiate the closing handshake with status code 1000
+  //   (normal closure) and an empty reason.
+  // - `.send(message)` — send one text or binary message.
+  type Writer = iterative choice {
+    .close* => Try<Error, !>,
+    .send(Message) => Try<Error, self>,
+  }
+
+  // Opens a client WebSocket connection. The URL must use `ws` or `wss`.
+  dec Connect : [Url] Try<Error, (Reader) Writer>
+}
+
+def Connect = external

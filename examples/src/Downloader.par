@@ -49,7 +49,7 @@ def YieldDownloadRequests = [listenUrl, rootPath] chan yield {
     .incoming(request, respond) next => {
       let (method, url, headers) body = request
       catch e => {
-        respond((400, *()) Bytes.Reader(e))
+        respond.http((400, *()) Bytes.Reader(e))
         next.loop
       }
 
@@ -60,7 +60,7 @@ def YieldDownloadRequests = [listenUrl, rootPath] chan yield {
 
         let destination = rootPath.append(url.path->Bytes.TrimLeft(.bytes "/"))
         yield.item((sourceUrl, destination)!)
-        respond((200, *()) Bytes.EmptyReader)
+        respond.http((200, *()) Bytes.EmptyReader)
         next.loop
       }
 
