@@ -23,13 +23,21 @@ use hyper::{
     body::Incoming,
     http::{HeaderName, HeaderValue, StatusCode, header::HOST},
     service::service_fn,
+    upgrade::{OnUpgrade, Upgraded},
 };
 use hyper_util::rt::TokioIo;
 use num_bigint::BigUint;
 use tokio::{net::TcpListener, signal, sync::Notify};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Error as WebSocketError, error::ProtocolError, handshake::server::create_response,
+        protocol::Role,
+    },
+};
 use url::Url as ParsedUrl;
 
-use crate::builtin::{list::readback_list, url::provide_url_value};
+use crate::builtin::{list::readback_list, url::provide_url_value, websocket::provide_connection};
 use par_runtime::readback::Handle;
 use par_runtime::{external_def, primitive::ParString};
 
@@ -259,7 +267,7 @@ struct ListenerControl {
 }
 
 enum ListenerEvent {
-    Incoming(IncomingRequest),
+    Incoming(Box<IncomingRequest>),
     Shutdown(Result<(), String>),
 }
 
@@ -268,7 +276,13 @@ struct IncomingRequest {
     url: ParsedUrl,
     headers: Vec<(String, String)>,
     body: Incoming,
-    responder: oneshot::Sender<Result<Response<ResponseBody>, BodyError>>,
+    respond: IncomingRespond,
+}
+
+struct IncomingRespond {
+    response: oneshot::Sender<Result<Response<ResponseBody>, BodyError>>,
+    upgrade_request: Request<()>,
+    on_upgrade: OnUpgrade,
 }
 
 #[derive(Debug, Clone)]
@@ -389,7 +403,7 @@ async fn handle_connection(stream: tokio::net::TcpStream, control: ListenerContr
 }
 
 async fn handle_request(
-    req: Request<Incoming>,
+    mut req: Request<Incoming>,
     control: ListenerControl,
 ) -> Result<Response<ResponseBody>, hyper::Error> {
     if control.is_shutdown() {
@@ -399,8 +413,15 @@ async fn handle_request(
         ));
     }
 
+    let on_upgrade = hyper::upgrade::on(&mut req);
     let (parts, body) = req.into_parts();
     let method = parts.method.as_str().to_string();
+
+    let mut upgrade_request = Request::new(());
+    *upgrade_request.method_mut() = parts.method.clone();
+    *upgrade_request.uri_mut() = parts.uri.clone();
+    *upgrade_request.version_mut() = parts.version;
+    *upgrade_request.headers_mut() = parts.headers.clone();
 
     let headers_vec = parts
         .headers
@@ -445,13 +466,17 @@ async fn handle_request(
         url: parsed_url,
         headers: headers_vec,
         body,
-        responder: resp_tx,
+        respond: IncomingRespond {
+            response: resp_tx,
+            upgrade_request,
+            on_upgrade,
+        },
     };
 
     if control
         .sender
         .clone()
-        .send(ListenerEvent::Incoming(incoming))
+        .send(ListenerEvent::Incoming(Box::new(incoming)))
         .await
         .is_err()
     {
@@ -483,15 +508,15 @@ async fn provide_listener_value(mut handle: Handle, mut state: ListenerState) {
                 url,
                 headers,
                 body,
-                responder,
-            } = request;
+                respond,
+            } = *request;
 
             handle.send().concurrently(|handle| {
                 provide_http_request_value(handle, method, url, headers, body)
             });
             handle
                 .send()
-                .concurrently(|handle| provide_responder_function(handle, responder));
+                .concurrently(|handle| provide_respond_value(handle, respond));
             Box::pin(provide_listener_value(handle, state)).await;
         }
 
@@ -575,22 +600,114 @@ async fn provide_request_body_reader(mut handle: Handle, mut body: Incoming) {
     }
 }
 
-async fn provide_responder_function(
-    mut handle: Handle,
-    responder: oneshot::Sender<Result<Response<ResponseBody>, BodyError>>,
-) {
-    match build_response(handle.receive()).await {
-        Ok(response) => {
-            let _ = responder.send(Ok(response));
+async fn provide_respond_value(mut handle: Handle, respond: IncomingRespond) {
+    match handle.case().await.as_str() {
+        "http" => match build_response(handle.receive()).await {
+            Ok(response) => {
+                let _ = respond.response.send(Ok(response));
+                handle.signal(literal!("ok"));
+                handle.break_();
+            }
+            Err(err) => {
+                let _ = respond.response.send(Err(BodyError(err.clone())));
+                handle.signal(literal!("err"));
+                handle.provide_string(err);
+            }
+        },
+        "webSocket" => provide_websocket_upgrade(handle, respond).await,
+        _ => unreachable!(),
+    }
+}
+
+async fn provide_websocket_upgrade(mut handle: Handle, respond: IncomingRespond) {
+    match accept_websocket(respond).await {
+        Ok(socket) => {
             handle.signal(literal!("ok"));
-            handle.break_();
+            provide_connection(handle, socket).await;
         }
-        Err(err) => {
-            let _ = responder.send(Err(BodyError(err.clone())));
+        Err(error) => {
             handle.signal(literal!("err"));
-            handle.provide_string(err);
+            handle.provide_string(ParString::from(error));
         }
     }
+}
+
+async fn accept_websocket(
+    respond: IncomingRespond,
+) -> Result<WebSocketStream<TokioIo<Upgraded>>, String> {
+    let IncomingRespond {
+        response,
+        upgrade_request,
+        on_upgrade,
+    } = respond;
+
+    let handshake_response = match create_response(&upgrade_request) {
+        Ok(response) => response.map(|()| empty_response_body()),
+        Err(error) => {
+            let unsupported_version = matches!(
+                &error,
+                WebSocketError::Protocol(ProtocolError::MissingSecWebSocketVersionHeader)
+            );
+            let error = error.to_string();
+            let mut rejection = websocket_rejection(&upgrade_request, &error);
+            if unsupported_version {
+                rejection
+                    .headers_mut()
+                    .insert("Sec-WebSocket-Version", HeaderValue::from_static("13"));
+            }
+            let _ = response.send(Ok(rejection));
+            return Err(error);
+        }
+    };
+
+    if response.send(Ok(handshake_response)).is_err() {
+        return Err(
+            "HTTP request ended before the WebSocket upgrade response was sent".to_string(),
+        );
+    }
+
+    let upgraded = on_upgrade.await.map_err(|error| error.to_string())?;
+    Ok(server_websocket(upgraded).await)
+}
+
+async fn server_websocket(upgraded: Upgraded) -> WebSocketStream<TokioIo<Upgraded>> {
+    WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, None).await
+}
+
+fn websocket_rejection(request: &Request<()>, error: &str) -> Response<ResponseBody> {
+    let status = if has_websocket_upgrade_intent(request) {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::UPGRADE_REQUIRED
+    };
+    let mut response = simple_response(status, error);
+    response
+        .headers_mut()
+        .insert("Upgrade", HeaderValue::from_static("websocket"));
+    response
+}
+
+fn has_websocket_upgrade_intent(request: &Request<()>) -> bool {
+    request
+        .headers()
+        .get("Upgrade")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+        || request
+            .headers()
+            .get("Connection")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split([' ', ','])
+                    .any(|token| token.eq_ignore_ascii_case("upgrade"))
+            })
+}
+
+fn empty_response_body() -> ResponseBody {
+    Full::new(Bytes::new())
+        .map_err(|infallible| match infallible {})
+        .boxed()
 }
 
 async fn build_response(mut handle: Handle) -> Result<Response<ResponseBody>, ParString> {
@@ -681,4 +798,108 @@ fn simple_response(status: StatusCode, message: impl Into<String>) -> Response<R
         .status(status)
         .body(body)
         .expect("valid response")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures::{SinkExt, StreamExt, channel::mpsc};
+    use hyper::{Request, body::Incoming, service::service_fn};
+    use hyper_util::rt::TokioIo;
+    use tokio::time::timeout;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::{
+        IncomingRequest, ListenerControl, ListenerEvent, accept_websocket, handle_request,
+    };
+
+    #[tokio::test]
+    async fn http_upgrade_produces_a_working_websocket() {
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let (event_tx, mut event_rx) = mpsc::unbounded();
+        let control = ListenerControl::new(event_tx, "localhost".to_string());
+
+        let server = tokio::spawn(async move {
+            let service = service_fn(move |request: Request<Incoming>| {
+                handle_request(request, control.clone())
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(server_io), service)
+                .with_upgrades()
+                .await
+                .unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            tokio_tungstenite::client_async("ws://localhost/socket", client_io)
+                .await
+                .unwrap()
+                .0
+        });
+
+        let incoming = timeout(Duration::from_secs(1), event_rx.next())
+            .await
+            .expect("HTTP listener did not receive the upgrade request")
+            .expect("HTTP listener event stream ended");
+        let ListenerEvent::Incoming(incoming) = incoming else {
+            panic!("listener shut down during upgrade");
+        };
+        let IncomingRequest { respond, .. } = *incoming;
+
+        let mut server_socket = accept_websocket(respond).await.unwrap();
+        let mut client_socket = client.await.unwrap();
+
+        client_socket
+            .send(Message::Text("hello".into()))
+            .await
+            .unwrap();
+        let message = timeout(Duration::from_secs(1), server_socket.next())
+            .await
+            .expect("server did not receive WebSocket message")
+            .expect("server WebSocket ended")
+            .expect("server WebSocket read failed");
+        assert_eq!(message, Message::Text("hello".into()));
+
+        server_socket
+            .send(Message::Binary(bytes::Bytes::from_static(b"world")))
+            .await
+            .unwrap();
+        let message = timeout(Duration::from_secs(1), client_socket.next())
+            .await
+            .expect("client did not receive WebSocket message")
+            .expect("client WebSocket ended")
+            .expect("client WebSocket read failed");
+        assert_eq!(
+            message,
+            Message::Binary(bytes::Bytes::from_static(b"world"))
+        );
+
+        client_socket.send(Message::Close(None)).await.unwrap();
+        let _ = timeout(Duration::from_secs(1), server_socket.next()).await;
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn non_upgrade_requests_are_rejected_with_upgrade_required() {
+        let request = Request::builder().method("GET").uri("/").body(()).unwrap();
+        let response = super::websocket_rejection(&request, "not an upgrade");
+
+        assert_eq!(response.status(), hyper::StatusCode::UPGRADE_REQUIRED);
+        assert_eq!(response.headers()["Upgrade"], "websocket");
+    }
+
+    #[test]
+    fn upgrade_intent_with_an_invalid_handshake_is_bad_request() {
+        let request = Request::builder()
+            .method("GET")
+            .uri("/")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .body(())
+            .unwrap();
+        let response = super::websocket_rejection(&request, "invalid handshake");
+
+        assert_eq!(response.status(), hyper::StatusCode::BAD_REQUEST);
+    }
 }

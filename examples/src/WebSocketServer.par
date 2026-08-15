@@ -1,0 +1,86 @@
+module WebSocketServer
+
+import {
+  @basic/Http
+  @basic/WebSocket
+  @core/Cell
+  @core/Debug
+  @core/Url
+}
+
+// An echo server. Each WebSocket session runs independently while the listener
+// continues accepting requests. Open ws://127.0.0.1:8080 in a WebSocket client.
+def Main: ! = chan exit {
+  let exit = Cell.Share(exit, chan sessions {
+    Http.Listen("127.0.0.1:8080").begin.case {
+      .shutdown _ => {
+        sessions.end!
+      }
+
+      .incoming(request, respond) next => {
+        sessions.split(chan session {
+          Echo(request, respond)
+          session.end!
+        })
+        next.loop
+      }
+    }
+  })
+
+  exit!
+}
+
+dec Echo : [Http.Request, Http.Respond] !
+def Echo = [request, respond] chan exit {
+  catch error => {
+    Debug.Log(error)
+    exit!
+  }
+
+  let (method, url, headers) body = request
+  body.close
+
+  let try (reader) writer = respond.webSocket
+  reader.begin.read.try.case {
+    .end! => {
+      writer.close.try
+      exit!
+    }
+
+    .message(message) => {
+      writer.send(message).try
+      reader.loop
+    }
+  }
+}
+
+// Run `par run WebSocketServer.Client` while the server is running.
+def Client: ! = chan exit {
+  catch error => {
+    Debug.Log(error)
+    exit!
+  }
+
+  let try url = Url.FromString("ws://127.0.0.1:8080")
+  let try (reader) writer = WebSocket.Connect(url)
+  writer.send(.text "Hello from the client!").try
+
+  reader.begin.read.try.case {
+    .end! => {
+      writer.close.try
+      exit!
+    }
+
+    .message(message) => {
+      message.case {
+        .text text => {
+          Debug.Log(text)
+        }
+        .binary _ => {}
+      }
+      writer.close.try
+      reader.close.try
+      exit!
+    }
+  }
+}

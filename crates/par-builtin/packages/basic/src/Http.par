@@ -11,6 +11,7 @@ import {
   @core/Try
   @core/String
   @core/Url
+  WebSocket
 }
 
 export {
@@ -32,6 +33,13 @@ export {
     (List<(String) Bytes>)
     Bytes.Reader<Error>
 
+  // Completes an incoming HTTP request with an HTTP response or by
+  // accepting it as a WebSocket connection.
+  type Respond = choice {
+    .http(Response) => Try<Error, !>,
+    .webSocket => Try<Error, (WebSocket.Reader) WebSocket.Writer>,
+  }
+
   // Sends an HTTP request and returns the response.
   //
   // ```par
@@ -50,8 +58,8 @@ export {
   //
   // Returns a recursive stream of events:
   // - `.shutdown result` — the server has shut down (e.g. on Ctrl+C or error).
-  // - `.incoming(request, respond) next` — a request arrived. Call `respond` with
-  //   a `Response` to send the reply. The result indicates if sending succeeded.
+  // - `.incoming(request, respond) next` — a request arrived. Select `.http`
+  //   with a `Response`, or select `.webSocket` to accept a WebSocket upgrade.
   //
   // ```par
   // Http.Listen("127.0.0.1:8080").begin.case {
@@ -59,14 +67,14 @@ export {
   //   .incoming(request, respond) next => {
   //     let (method, url, headers) body = request
   //     body.close
-  //     respond((200, *()) Bytes.EmptyReader)
+  //     respond.http((200, *()) Bytes.EmptyReader)
   //     next.loop
   //   }
   // }
   // ```
   dec Listen : [String] recursive either {
     .shutdown Try<Error, !>,
-    .incoming(Request, [Response] Try<Error, !>) self,
+    .incoming(Request, Respond) self,
   }
 }
 
