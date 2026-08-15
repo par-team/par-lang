@@ -91,8 +91,9 @@ Cleanup is **structural**: Par follows the shape of the value being discarded.
 - A shareable value needs no action.
 - A pair cleans up both of its parts.
 - An either cleans up the payload that is actually present.
-- A recursive value is cleaned up according to its finite structure.
+- A recursive value is cleaned up recursively.
 - A choice selects its marked branch, then continues with the result.
+- An iterative value can be cleaned up, but not recursively. That could lead to infinite loops.
 
 Because this rule applies recursively, a whole list of resources may be left unused:
 
@@ -137,6 +138,16 @@ unused has to put `drop` on `e`:
 dec AbandonWriter : [type e: drop, Writer<e>] !
 def AbandonWriter = [type e: drop, writer] !
 ```
+
+> The `Try` type represents the result of a fallible operation: either a success or an error.
+> It is defined as follows:
+> 
+> ```par
+> type Try<e, a> = either {
+>   .err e,
+>   .ok a,
+> }
+> ```
 
 The same constraint lets us discard a value without knowing anything else about its type:
 

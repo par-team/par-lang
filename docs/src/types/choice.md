@@ -14,8 +14,7 @@ their own thing.
 A _choice type_ is defined by a finite number of branches, each with a different name and a result.
 
 Values of a choice type are objects that are destructed using one of the available branches, to
-obtain its result. That branch is normally chosen explicitly; a [marked cleanup branch](./auto_cleanup.md) may also be
-chosen by Par when the value is left unused.
+obtain its result.
 
 ```par
 type ChooseStringOrNumber = choice {
