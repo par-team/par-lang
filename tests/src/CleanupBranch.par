@@ -42,6 +42,22 @@ def TestAutomaticCleanup: [Test] ! = [test] do {
   }
 } in !
 
+def TestAutomaticCleanupBeforeLoop: [Test] ! = [test] do {
+  let resource = case {
+    .release* => case {
+      .finish* => do {
+        test.assert(
+          "Automatic cleanup happens before entering a recursive loop",
+          .true!,
+        )
+      } in test.done
+    }
+  }
+} in Nat.Repeat(1).begin.case {
+  .end! => !,
+  .step repeat => repeat.loop,
+}
+
 def TestExplicitCleanupBranchCall: [Test] ! = [test] do {
   let resource: Resource = case {
     .release* => case {

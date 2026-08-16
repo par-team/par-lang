@@ -24,14 +24,19 @@ enum ProcessAnalyzerMode {
 }
 
 fn terminator_ends_path<Typ, S>(terminator: &Terminator<Typ, S>) -> bool {
-    matches!(
-        terminator,
-        Terminator::Do {
-            command: TerminalCommand::Link(_) | TerminalCommand::Break | TerminalCommand::Loop(..),
-            ..
-        } | Terminator::Submit { .. }
-            | Terminator::Goto(..)
-    )
+    match terminator {
+        Terminator::Do { command, .. } => match command {
+            TerminalCommand::Link(_)
+            | TerminalCommand::Break
+            | TerminalCommand::Begin { .. }
+            | TerminalCommand::Loop(..) => true,
+            TerminalCommand::Case(_, processes, else_process) => {
+                !processes.is_empty() || else_process.is_some()
+            }
+        },
+        Terminator::Submit { .. } | Terminator::Goto(..) => true,
+        _ => false,
+    }
 }
 
 /// A deferred step whose type depends on the type inferred for the process suffix.
@@ -97,6 +102,19 @@ enum InferenceFrame<S> {
     },
 }
 impl<S: Clone + Eq + std::hash::Hash> Context<S> {
+    fn capture_entry_context(
+        &mut self,
+        captures: &Captures,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Self {
+        let mut entry_context = self.split();
+        if let Err(error) = self.capture(None, captures, CapturePolicy::Linear, &mut entry_context)
+        {
+            emit(error);
+        }
+        entry_context
+    }
+
     fn analyze_process(
         &mut self,
         process: &Process<(), S>,
@@ -254,7 +272,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             }
         }
 
-        let terminator = match &process.terminator {
+        let tail = self.check_process_terminator(&process.terminator, emit);
+        let tail = Arc::unwrap_or_clone(tail);
+        steps.extend(tail.steps);
+        Arc::new(Process::new(steps, tail.terminator))
+    }
+
+    fn check_process_terminator(
+        &mut self,
+        terminator: &Terminator<(), S>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Arc<Process<Type<S>, S>> {
+        let terminator = match terminator {
             Terminator::Do {
                 span,
                 name,
@@ -313,9 +342,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 captures,
                 then,
                 else_,
-            } => self.check_process_poll(
-                span, kind, driver, point, clients, name, captures, then, else_, emit,
-            ),
+            } => {
+                return self.check_process_poll(
+                    span, kind, driver, point, clients, name, captures, then, else_, emit,
+                );
+            }
             Terminator::Submit {
                 span,
                 driver,
@@ -338,10 +369,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         if ends_path {
             tail = self.discharge_obligations(&tail_span, tail, emit);
         }
-
-        let tail = Arc::unwrap_or_clone(tail);
-        steps.extend(tail.steps);
-        Arc::new(Process::new(steps, tail.terminator))
+        tail
     }
 
     fn check_process_poll(
@@ -356,7 +384,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         then: &Process<(), S>,
         else_: &Process<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> Terminator<Type<S>, S> {
+    ) -> Arc<Process<Type<S>, S>> {
         let is_repoll = matches!(kind, PollKind::Repoll);
 
         let preserved_vars: IndexMap<_, _> = self
@@ -371,6 +399,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut base;
         let mut then_ctx;
         let name_typ;
+        let mut outside;
 
         if is_repoll {
             let (poll_driver, poll_pool_type, poll_points, poll_current_point) =
@@ -383,16 +412,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     ),
                     None => {
                         emit(TypeError::RepollOutsidePoll(span.clone()));
-                        return Terminator::Unreachable(span.clone());
+                        return Process::terminal(Terminator::Unreachable(span.clone()));
                     }
                 };
             if poll_driver != *driver {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
-                return Terminator::Unreachable(span.clone());
+                return Process::terminal(Terminator::Unreachable(span.clone()));
             }
             if self.get_variable(driver).is_none() {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
-                return Terminator::Unreachable(span.clone());
+                return Process::terminal(Terminator::Unreachable(span.clone()));
             }
 
             let mut point_client_type = poll_points
@@ -437,6 +466,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     });
             }
 
+            let entry_context = self.capture_entry_context(captures, emit);
+            outside = std::mem::replace(self, entry_context);
             base = self.clone();
 
             let Type::Recursive {
@@ -485,7 +516,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         } else {
             if clients.is_empty() {
                 emit(TypeError::PollMustHaveAtLeastOneClient(span.clone()));
-                return Terminator::Unreachable(span.clone());
+                return Process::terminal(Terminator::Unreachable(span.clone()));
             }
 
             let mut client_type = None;
@@ -517,8 +548,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 client_type = next;
             }
 
-            base = self.clone();
-
             let Type::Recursive {
                 span: typ_span,
                 asc,
@@ -531,10 +560,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     span.clone(),
                     client_type,
                 ));
-                return Terminator::Unreachable(span.clone());
+                return Process::terminal(Terminator::Unreachable(span.clone()));
             };
 
             let pool_type = client_type.clone();
+
+            let entry_context = self.capture_entry_context(captures, emit);
+            outside = std::mem::replace(self, entry_context);
+            base = self.clone();
 
             let mut asc = asc.clone();
             let loop_id = LoopId::new();
@@ -609,10 +642,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         let typed_else = else_ctx.check_process(else_, emit);
 
-        self.blocks = else_ctx.blocks;
-        self.variables.clear();
-
-        Terminator::Poll {
+        let terminator = Terminator::Poll {
             span: span.clone(),
             kind: kind.clone(),
             driver: driver.clone(),
@@ -623,7 +653,11 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             captures: captures.clone(),
             then: typed_then,
             else_: typed_else,
-        }
+        };
+        outside.blocks = else_ctx.blocks;
+        let tail = outside.discharge_obligations(span, Process::terminal(terminator), emit);
+        *self = outside;
+        tail
     }
 
     fn check_process_submit(
@@ -1237,16 +1271,41 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 );
                 (TerminalCommand::Link(expression), None)
             }
-            TerminalCommand::Case(branches, processes, else_process) => self.check_command_case(
-                span,
-                object,
-                &typ,
-                branches,
-                processes,
-                else_process,
-                mode,
-                emit,
-            ),
+            TerminalCommand::Case(branches, processes, else_process) => {
+                if processes.is_empty() && else_process.is_none() {
+                    return self.check_command_case(
+                        span,
+                        object,
+                        &typ,
+                        branches,
+                        processes,
+                        else_process,
+                        mode,
+                        emit,
+                    );
+                }
+
+                let mut captures = Captures::new();
+                for process in processes.iter().chain(else_process.iter()) {
+                    for name in process.free_variables() {
+                        captures.add(name, span.clone(), VariableUsage::Unknown);
+                    }
+                }
+                let mut entry_context = self.capture_entry_context(&captures, emit);
+                let checked = entry_context.check_command_case(
+                    span,
+                    object,
+                    &typ,
+                    branches,
+                    processes,
+                    else_process,
+                    mode,
+                    emit,
+                );
+                self.loop_points = entry_context.loop_points;
+                self.blocks = entry_context.blocks;
+                checked
+            }
             TerminalCommand::Break => {
                 if !matches!(typ, Type::Continue(_) | Type::Fail(_)) {
                     emit(TypeError::InvalidOperation(
@@ -1262,18 +1321,24 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 label,
                 captures,
                 body,
-            } => self.check_command_begin(
-                inference_subject,
-                span,
-                object,
-                &typ,
-                *unfounded,
-                label,
-                captures,
-                body,
-                mode,
-                emit,
-            ),
+            } => {
+                let mut entry_context = self.capture_entry_context(captures, emit);
+                let checked = entry_context.check_command_begin(
+                    inference_subject,
+                    span,
+                    object,
+                    &typ,
+                    *unfounded,
+                    label,
+                    captures,
+                    body,
+                    mode,
+                    emit,
+                );
+                self.loop_points = entry_context.loop_points;
+                self.blocks = entry_context.blocks;
+                checked
+            }
             TerminalCommand::Loop(label, driver, captures) => self.check_command_loop(
                 inference_subject,
                 span,
@@ -1886,14 +1951,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let (tail, mut inferred_type, typed_prefix_len) = match completed_suffix {
             Some(completed) => completed,
             None => {
-                let (terminator, inferred_type) =
+                let (tail, inferred_type) =
                     self.infer_terminator(&process.terminator, &subject, emit);
-                let ends_path = terminator_ends_path(&terminator);
-                let tail_span = terminator.span();
-                let mut tail = Process::terminal(terminator);
-                if ends_path {
-                    tail = self.discharge_obligations(&tail_span, tail, emit);
-                }
                 (tail, inferred_type, process.steps.len())
             }
         };
@@ -2074,8 +2133,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         terminator: &Terminator<(), S>,
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Terminator<Type<S>, S>, Type<S>) {
-        match terminator {
+    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
+        let (terminator, inferred_type) = match terminator {
             Terminator::Do {
                 span,
                 name,
@@ -2147,19 +2206,21 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 captures,
                 then,
                 else_,
-            } => self.infer_process_poll(
-                span,
-                kind,
-                driver,
-                point,
-                clients,
-                name,
-                captures,
-                then,
-                else_,
-                inference_subject,
-                emit,
-            ),
+            } => {
+                return self.infer_process_poll(
+                    span,
+                    kind,
+                    driver,
+                    point,
+                    clients,
+                    name,
+                    captures,
+                    then,
+                    else_,
+                    inference_subject,
+                    emit,
+                );
+            }
             Terminator::Submit {
                 span,
                 driver,
@@ -2183,7 +2244,14 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             Terminator::Goto(span, index, captures) => {
                 self.infer_process_goto(span, *index, captures, inference_subject, emit)
             }
+        };
+        let ends_path = terminator_ends_path(&terminator);
+        let tail_span = terminator.span();
+        let mut tail = Process::terminal(terminator);
+        if ends_path {
+            tail = self.discharge_obligations(&tail_span, tail, emit);
         }
+        (tail, inferred_type)
     }
 
     fn infer_terminal_command(
@@ -2199,7 +2267,35 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 (TerminalCommand::Link(expression), typ.dual(Span::None))
             }
             TerminalCommand::Case(branches, processes, else_process) => {
-                self.infer_command_case(span, subject, branches, processes, else_process, emit)
+                if processes.is_empty() && else_process.is_none() {
+                    return self.infer_command_case(
+                        span,
+                        subject,
+                        branches,
+                        processes,
+                        else_process,
+                        emit,
+                    );
+                }
+
+                let mut captures = Captures::new();
+                for process in processes.iter().chain(else_process.iter()) {
+                    for name in process.free_variables() {
+                        captures.add(name, span.clone(), VariableUsage::Unknown);
+                    }
+                }
+                let mut entry_context = self.capture_entry_context(&captures, emit);
+                let inferred = entry_context.infer_command_case(
+                    span,
+                    subject,
+                    branches,
+                    processes,
+                    else_process,
+                    emit,
+                );
+                self.loop_points = entry_context.loop_points;
+                self.blocks = entry_context.blocks;
+                inferred
             }
             TerminalCommand::Break => (TerminalCommand::Break, Type::Continue(span.clone())),
             TerminalCommand::Begin { .. } => {
@@ -2228,7 +2324,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         else_: &Arc<Process<(), S>>,
         inference_subject: &LocalName,
         emit: &mut impl FnMut(TypeError<S>),
-    ) -> (Terminator<Type<S>, S>, Type<S>) {
+    ) -> (Arc<Process<Type<S>, S>>, Type<S>) {
         let is_repoll = matches!(kind, PollKind::Repoll);
 
         let preserved_vars: IndexMap<_, _> = self
@@ -2243,6 +2339,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         let mut base;
         let mut then_ctx;
         let name_typ;
+        let mut outside;
 
         if is_repoll {
             let (poll_driver, poll_pool_type, poll_points, poll_current_point) =
@@ -2256,7 +2353,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     None => {
                         emit(TypeError::RepollOutsidePoll(span.clone()));
                         return (
-                            Terminator::Unreachable(span.clone()),
+                            Process::terminal(Terminator::Unreachable(span.clone())),
                             Type::Fail(span.clone()),
                         );
                     }
@@ -2264,7 +2361,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if poll_driver != *driver {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
                 return (
-                    Terminator::Unreachable(span.clone()),
+                    Process::terminal(Terminator::Unreachable(span.clone())),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2272,7 +2369,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if self.get_variable(driver).is_none() {
                 emit(TypeError::RepollOutsidePoll(span.clone()));
                 return (
-                    Terminator::Unreachable(span.clone()),
+                    Process::terminal(Terminator::Unreachable(span.clone())),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2319,6 +2416,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     });
             }
 
+            let entry_context = self.capture_entry_context(captures, emit);
+            outside = std::mem::replace(self, entry_context);
             base = self.clone();
 
             let Type::Recursive {
@@ -2368,7 +2467,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             if clients.is_empty() {
                 emit(TypeError::PollMustHaveAtLeastOneClient(span.clone()));
                 return (
-                    Terminator::Unreachable(span.clone()),
+                    Process::terminal(Terminator::Unreachable(span.clone())),
                     Type::Fail(span.clone()),
                 );
             }
@@ -2403,8 +2502,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 client_type = next;
             }
 
-            base = self.clone();
-
             let Type::Recursive {
                 span: typ_span,
                 asc,
@@ -2418,12 +2515,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     client_type,
                 ));
                 return (
-                    Terminator::Unreachable(span.clone()),
+                    Process::terminal(Terminator::Unreachable(span.clone())),
                     Type::Fail(span.clone()),
                 );
             };
 
             let pool_type = client_type.clone();
+
+            let entry_context = self.capture_entry_context(captures, emit);
+            outside = std::mem::replace(self, entry_context);
+            base = self.clone();
 
             let mut asc = asc.clone();
             let loop_id = LoopId::new();
@@ -2498,27 +2599,27 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
 
         let (typed_else, else_type) = else_ctx.infer_process(else_, inference_subject, emit);
 
-        self.blocks = else_ctx.blocks;
-        self.variables.clear();
-
-        (
-            Terminator::Poll {
-                span: span.clone(),
-                kind: kind.clone(),
-                driver: driver.clone(),
-                point: point.clone(),
-                clients: typed_clients,
-                name: name.clone(),
-                name_typ,
-                captures: captures.clone(),
-                then: typed_then,
-                else_: typed_else,
-            },
-            intersect_types(&self.type_defs, span, &then_type, &else_type).unwrap_or_else(|e| {
+        let inferred_type = intersect_types(&self.type_defs, span, &then_type, &else_type)
+            .unwrap_or_else(|e| {
                 emit(e);
                 Type::Fail(span.clone())
-            }),
-        )
+            });
+        let terminator = Terminator::Poll {
+            span: span.clone(),
+            kind: kind.clone(),
+            driver: driver.clone(),
+            point: point.clone(),
+            clients: typed_clients,
+            name: name.clone(),
+            name_typ,
+            captures: captures.clone(),
+            then: typed_then,
+            else_: typed_else,
+        };
+        outside.blocks = else_ctx.blocks;
+        let tail = outside.discharge_obligations(span, Process::terminal(terminator), emit);
+        *self = outside;
+        (tail, inferred_type)
     }
 
     fn infer_process_submit(
