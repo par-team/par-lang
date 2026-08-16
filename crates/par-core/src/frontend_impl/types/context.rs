@@ -158,11 +158,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 }
             },
         };
-        let checked_def = match checked_def {
-            DefinitionBody::Par(expression) => DefinitionBody::Par(expression.fix_captures().0),
-            DefinitionBody::External(span) => DefinitionBody::External(span),
-        };
-
         self.variables = original_variables;
         self.loop_points = original_loop_points;
         self.poll = original_poll;

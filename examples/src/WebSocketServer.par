@@ -38,7 +38,6 @@ def Echo = [request, respond] chan exit {
   }
 
   let (method, url, headers) body = request
-  body.close
 
   let try (reader) writer = respond.webSocket
   reader.begin.read.try.case {
