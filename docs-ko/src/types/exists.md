@@ -15,14 +15,12 @@
 ```par
 type Any = (type a) a
 
-type DropMe = (type a, a) choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
 전자의 타입은 완전히 불투명하다. `Any` 타입의 값에는 숨은 타입을 가지는 값이 있지만, 그 값에 수행할 수 있는 연산은 딸려오지 않는다. 실제 쓸모는 없지만, 존재 타입의 가장 간단한 예제에 해당한다.
 
-후자의 타입은 해당하는 타입의 값을 버리는 한 가지 연산만을 제공한다. 이 타입의 내용물은 순서쌍으로, 한쪽은 숨은 타입의 값, 다른 한쪽은 그 타입의 값을 버리는 하나의 연산만 있는 [선택](./choice.md) 값이다.
+후자의 타입에서는 숨은 타입의 능력 중 하나, 즉 값을 정리할 수 있다는 것을 공개하고 있다. 이 정도로도 Par에서 숨은 값 자체가 무엇인지 모르고도 값을 정리할 수 있도록 하는 데는 충분하다.
 
 그러면 존재 타입을 어떻게 사용하는지 확인해 보자.
 
@@ -38,24 +36,20 @@ type DropMe = (type a, a) choice {
 def Hidden: Any = (type Int) 42
 ```
 
-하지만 선택한 타입이 `Any`로 숨겨져 있고 주어진 다른 연산도 없으므로, 이 값은 전혀 쓸모가 없으며 아무런 조작도 할 수 없다. 사실 이 값을 변수로 인스턴스화한다면 버리는 것조차도 불가능하다.
+하지만 선택한 타입이 `Any`로 숨겨져 있고 주어진 다른 연산이나 제약도 없으므로, 이 값은 전혀 쓸모가 없으며 아무런 조작도 할 수 없다. 사실 이 값을 변수로 인스턴스화한다면 버리는 것조차도 불가능하다.
 
 조금 더 흥미로운 예제를 살펴 보자.
 
 ```par
-type DropMe = (type a, a) choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
-여기서 페이로드는 순서쌍으로, 한쪽은 숨은 타입의 값, 다른 한쪽은 그 타입의 값을 버리는 하나의 연산만 있는 [선택](./choice.md) 값이다.
+이 타입의 페이로드는 숨은 타입을 가지는 값이다. 타입의 제약에 의해 이 값이 아무것도 하지 않아도 되는 일반 데이터인지, 정리 프로토콜을 따르는 값인지는 모르지만 안전한 구조적 정리가 가능하다는 것을 알 수 있다.
 
 `DropMe`의 값은 다음과 같이 생성할 수 있다.
 
 ```par
-def Drop42: DropMe = (type Int, 42) case {
-  .drop(n) => !,  // `n`은 `Int`이므로 사용하지 않음으로써 버릴 수 있다.
-}
+def Drop42: DropMe = (type Int) 42
 ```
 
 ## 소멸
@@ -66,20 +60,21 @@ def Drop42: DropMe = (type Int, 42) case {
 
 ```par
 def UseDrop: ! =
-  let (type a, x) dropper = Drop42
-  in dropper.drop(x)
+  let (type a: drop) x = Drop42
+  in !
 ```
 
-패턴 `(type a, x) dropper`는 다음과 같은 의미이다.
+패턴 `(type a: drop) x`는 다음과 같은 의미이다.
 - `a`는 숨은 타입의 이름에 해당하는 지역 타입 변수가 된다.
 - `x`는 존재 값에 보관한 타입 `a`에 해당하는 값이다.
-- `dropper`는 `.drop` 메서드가 있는 [선택](./choice.md) 값이다.
+
+`x`를 사용하지 않으므로 Par에서 자동으로 정리한다.
 
 **함수 매개변수**에서도 패턴을 사용해 존재 값을 풀어낼 수 있다. 다음은 `DropMe`를 전달받아 내부의 값을 버리는 함수이다.
 
 ```par
 dec DropIt : [DropMe] !
-def DropIt = [(type a, x) dropper] dropper.drop(x)
+def DropIt = [(type a: drop) x] !
 ```
 
 ## 현실적인 예제
@@ -89,14 +84,14 @@ def DropIt = [(type a, x) dropper] dropper.drop(x)
 다음은 집합을 조작하는 박싱된 인터페이스이다.
 
 ```par
-type SetModule<a> = (type set: box) box choice {
+type SetModule<a> = (type set: share) box choice {
   .empty => set,
   .insert(a, set) => set,
   .contains(a, set) => Bool,
 }
 ```
 
-이 타입은 집합을 구현하는 타입을 숨기고 있다. 인터페이스 자체가 박싱되어 있기 때문에 복사하거나 버릴 수 있다. 추가로 숨은 `set` 타입도 [`box`](./constraints.md)로 제약되었기 때문에 집합을 조작하는 연산 이후에도 집합 값을 재사용할 수 있다. 이때 숨은 타입 `set`은 전혀 드러나지 않으며, `set`에 대한 연산만이 노출된다.
+이 타입은 집합을 구현하는 타입을 숨기고 있다. 인터페이스 자체가 박싱되어 있기 때문에 복사하거나 버릴 수 있다. 추가로 숨은 `set` 타입도 [`share`](./constraints.md)로 제약되었기 때문에 집합을 조작하는 연산 이후에도 집합 값을 재사용할 수 있다. 이때 숨은 타입 `set`은 전혀 드러나지 않으며, `set`에 대한 연산만이 노출된다.
 
 리스트를 사용해 비효율적이지만 간단한 `SetModule`을 구현해 보자. 이 구현체는 `==`을 사용해 주어진 값이 이미 집합에 존재하는지 판정하므로 [`data`](./constraints.md) 원소를 지원한다.
 
@@ -139,7 +134,7 @@ def ListSet = [type a: data] (type List<a>) box case {
 
 ```par
 dec Deduplicate : [type a: data, SetModule<a>, List<a>] List<a>
-def Deduplicate = [type a: data, (type set: box) mSet, list]
+def Deduplicate = [type a: data, (type set: share) mSet, list]
   let visited = mSet.empty
   in list.begin.case {
     .end! => .end!,

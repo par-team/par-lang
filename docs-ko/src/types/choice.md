@@ -10,7 +10,7 @@
 
 *선택 타입*은 유한 개의 분지(branch)로 이루어지며, 각각 다른 이름과 결과를 가진다.
 
-선택 타입의 값은 그 값에 있는 분지 중 하나를 선택해 결과값을 얻을 수 있는 (얻어야 하는) 개체이다.
+선택 타입의 값은 그 값에 있는 분지 중 하나를 선택해 결과값을 얻는 개체이다.
 
 ```par
 type ChooseStringOrNumber = choice {
@@ -35,19 +35,21 @@ choice {
 
 ```par
 type CancellableFunction<a, b> = choice {
-  .cancel => !,
+  .cancel* => !,
   //.apply => [a] b,
   .apply(a) => b,
 }
 ```
 
-[함수](./function.md)와 같이 **선택 타입도 [선형](../types_and_expressions.md#선형성)이다.** 선택 타입의 값은 버리거나 복사할 수 없으며, 주어진 분지 중 하나를 사용해 반드시 한 번 소멸시켜야 한다.
+[함수](./function.md)와 같이 **선택 타입도 [선형](../types_and_expressions.md#선형성)이다.** 선택 값은 복사할 수 없으며, 주어진 분지 중 하나를 사용해 반드시 한 번 소멸시켜야 한다.
+
+선택 값은 보통 명시적으로 소멸시켜야 하지만, 한 가지 유용한 예외가 있다. 선택 값은 분지 중 하나를 위의 `.cancel*`과 같이 별표(`*`)로 표시할 수 있다. 이렇게 하면 이 분지를 정리 연산으로 선언하게 되며, 분지의 결과 역시 정리가 가능하다면 선택 값 전체를 사용하지 않고 버려도 Par에서 자동으로 이 분지를 선택한다. 자세한 원리는 [자동 정리](./auto_cleanup.md) 장에서 다룬다.
 
 > 선택 타입은 [반복](./iterative.md) 타입과 조합해 여러 번 조작할 수 있는 객체를 만드는 데 자주 쓰인다. 예를 들어, `@basic/Console`에 내장되어 표준 출력으로 출력하는 핸들로 쓰이는 `Console` 타입이 *반복 선택* 타입이다.
 > 
 > ```par
 > type Console = iterative choice {
->   .close => !,
+>   .close* => !,
 >   .print(String) => self,
 > }
 > ```
@@ -81,7 +83,7 @@ def Example: ChooseStringOrNumber = case {
 
 ```par
 def FormatInt: CancellableFunction<Int, String> = case {
-  .cancel => !,
+  .cancel* => !,
   .apply(n) => `#{n}`,
 }
 ```

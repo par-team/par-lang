@@ -72,7 +72,7 @@ Concat(left, right)
 
 이는 함수 호출을 일관적으로 만들기 위한 의도적인 설계이다.
 
-암시적 타입 매개변수에는 `<a: box>`나 `<a: data>`와 같이 제약을 추가할 수도 있다. 타입 제약에 관해서는 [타입 제약](./constraints.md)에서 다룬다.
+암시적 타입 매개변수에는 `<a: share>`나 `<a: data>`와 같이 제약을 추가할 수도 있다. 타입 제약에 관해서는 [타입 제약](./constraints.md)에서 다룬다.
 
 ## 생성
 
@@ -157,30 +157,24 @@ Concat(type List<Nat> in *(), numbers)
 
 `<a, ...>` 대입자는 함수의 경우와 같이 값 요소 중 하나에 속하되, 순서쌍이므로 소괄호 안에 작성한다. `(Header, <a> a) Rest`와 같이 일반 요소와 암시적 제네릭 요소를 혼용할 수도 있다.
 
-단순한 예제를 확인해 보자. `AnyDrop`은 어떤 알 수 없는 타입의 값 하나를 보관하면서, 추가로 그 값을 버리는 작은 '가상 함수 테이블' (박싱된 [선택](./choice.md) 값)을 가지고 있다.
+단순한 예제를 확인해 보자. `AnyDroppable`은 어떤 알 수 없는 타입의 값 하나를 보관하면서, 그 타입이 [`drop`](./constraints.md#drop-정리-제약)을 만족함을 기억하고 있다.
 
 ```par
-type AnyDrop = (<a> a) box choice {
-  .drop(a) => !,
-}
+type AnyDroppable = (<a: drop> a)!
 ```
 
 이 타입은 존재 타입의 암시적 버전에 해당한다.
 
 ```par
-type DropMe = (type a, a) box choice {
-  .drop(a) => !,
-}
+type DropMe = (type a: drop) a
 ```
 
 ### 생성
 
-`AnyDrop`을 생성할 때 숨은 타입을 작성하지 않는 것을 확인할 수 있다.
+`AnyDroppable`을 생성할 때 숨은 타입을 작성하지 않는 것을 확인할 수 있다.
 
 ```par
-def Example: AnyDrop = (7) box case {
-  .drop(_) => !,
-}
+def Example: AnyDroppable = (7)!
 ```
 
 ### 소멸
@@ -188,8 +182,7 @@ def Example: AnyDrop = (7) box case {
 쌍대의 관점에 의해, 암시적 제네릭 순서쌍을 풀어낼 때는 지역 타입 변수를 작성해야 한다.
 
 ```par
-let (<a> value) vtable = Example
-vtable.drop(value)
+let (<a: drop> value)! = Example
 ```
 
 이는 암시적 제네릭 함수의 '거울상'으로 생각할 수 있다. 함수의 경우에는 생성 시에 `<a, ...>`를 작성하고 호출 시에 추론이 일어나지만, 여기서는 별도의 `a` 없이 생성하는 대신 소멸 시에 `a`를 작성한다.

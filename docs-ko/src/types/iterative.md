@@ -18,32 +18,36 @@
 
 ```par
 type Sequence<a> = iterative choice {
-    .close => !,
+    .close* => !,
     .next => (a) self,
 }
 ```
 
 > **반복(이나 [재귀](./recursive.md)) 타입이 중첩되어 있다면, 여러 개 중 하나를 구분해야 할 수 있다.** 이때는 `iterative`와 `self`에 **레이블**을 추가할 수 있으며, 골뱅이표를 사용한다(`iterative@label`, `self@label`). 어떤 소문자 식별자든 레이블로 사용할 수 있다.
 
-반복 타입은 본문의 내용과 무관하게 **항상 선형**이므로, 버리거나 복사할 수 없다.
+반복 타입은 자신의 본문으로부터 [타입 제약](./constraints.md)을 물려받는다. 반복 프로토콜은 [선택](./choice.md) 타입을 포함하므로 선형이 되는 경우가 많지만, 항상 그래야 한다는 보장은 없다.
 
-위에서 정의한 `Sequence`를 보면 내부의 [선택](./choice.md) 타입에 `.close` 분지를 포함한 것을 확인할 수 있다. `Sequence<a>`는 선형 타입이므로 `.next` 분지만 있었다면 값을 완전히 소멸시키는 것이 불가능했을 것이다.
+- 정리 분지가 없는 반복 선택은 순수 선형이다.
+- 결과값이 정리 가능한 `.close*` 분지와 값이 [정리 분지](./auto_cleanup.md)가 있을 경우에는 정리가 가능하다.
+- `iterative box choice`와 같이 본문이 공유 타입일 경우에는 반복 타입 자체가 공유 타입이 된다.
+
+예제 타입에 `.close*` 분지가 있는 것을 기억해 보자. 이 분지는 명시적으로 수열을 멈추는 메소드 역할을 하며, 별표가 있어 수열을 사용하지 않고 버릴 때 Par에서 자동으로 이 분지를 선택한다. 이 기능은 나중에 [자동 정리](./auto_cleanup.md) 장에서 다룬다.
 
 반복 타입 역시 [재귀 타입](./recursive.md)과 마찬가지로 `self`를 *전개*시킨 형태와 동치시킬 수 있다.
 
 1. 원래 정의:
    ```par
    type Sequence<a> = iterative choice {
-     .close => !,
+     .close* => !,
      .next => (a) self,
    }
    ```
 2. 1차 전개:
    ```par
    type Sequence<a> = choice {
-     .close => !,
+     .close* => !,
      .next => (a) iterative choice {
-       .close => !,
+       .close* => !,
        .next => (a) self,
      },
    }
@@ -51,11 +55,11 @@ type Sequence<a> = iterative choice {
 3. 2차 전개:
    ```par
    type Sequence<a> = choice {
-     .close => !,
+     .close* => !,
      .next => (a) choice {
-       .close => !,
+       .close* => !,
        .next => (a) iterative choice {
-         .close => !,
+         .close* => !,
          .next => (a) self,
        },
      },
@@ -67,7 +71,7 @@ type Sequence<a> = iterative choice {
 >
 > ```par
 > type ValidSequence<a> = iterative (a) choice {
->   .close => !,
+>   .close* => !,
 >   .next => self,  // 올바른 코드. `self`가 `choice`로 감싸져 있다.
 > }
 > 
@@ -95,7 +99,7 @@ import @core/Int
 
 dec SevenForever : Sequence<Int>
 def SevenForever = begin case {
-  .close => !,
+  .close* => !,
   .next  => (7) loop,
 }
 ```
@@ -107,16 +111,16 @@ def SevenForever = begin case {
 1. 원래 코드:
    ```par
    def SevenForever = begin case {
-     .close => !,
+     .close* => !,
      .next  => (7) loop,
    }
    ```
 2. 1차 전개:
    ```par
    def SevenForever = case {
-     .close => !,
+     .close* => !,
      .next  => (7) begin case {
-       .close => !,
+       .close* => !,
        .next  => (7) loop,
      },
    }
@@ -124,11 +128,11 @@ def SevenForever = begin case {
 3. 2차 전개:
    ```par
    def SevenForever = case {
-     .close => !,
+     .close* => !,
      .next  => (7) case {
-       .close => !,
+       .close* => !,
        .next  => (7) begin case {
-         .close => !,
+         .close* => !,
          .next  => (7) loop,
        },
      },
@@ -148,7 +152,7 @@ import @core/Nat
 def Fibonacci: Sequence<Nat> =
   let (a, b)! = (0, 1)!
   in begin case {
-    .close => !,
+    .close* => !,
     .next =>
       let (a, b)! = (b, a + b)!
       in (a) loop
@@ -157,14 +161,14 @@ def Fibonacci: Sequence<Nat> =
 
 이 기능은 매우 유용하다. 대다수의 프로그래밍 언어에서 이와 비슷한 `Fibonacci` 객체를 구현하려면 내부 상태를 기술하는 `class`나 `struct`를 정의한 뒤 메서드 내에서 갱신하여야 한다. Par에서는 내부 상태에 별도의 타입을 사용할 필요 없이 익명의 식으로 반복 객체를 생성할 수 있다. **내부 상태는 그저 지역 변수에 불과하다.**
 
-`Fibonacci`의 경우에는 내부 상태가 비선형이다. `.close` 분지가 선택되면 `a`와 `b`가 자동으로 버려지기 때문에 별도의 처리 없이 단위 값으로 바로 소멸시키는 것이 가능하다.
+`Fibonacci`의 경우에는 내부 상태가 공유 값이다. `.close*` 분지가 선택되면 `a`와 `b`가 사용하지 않아도 되기 때문에 별도의 처리 없이 단위 값으로 바로 소멸시키는 것이 가능하다.
 
 내부 상태가 선형인 경우도 살펴 보자! 임의의 정수열을 입력받은 뒤, 모든 원소에 `1`을 더해서 새로운 수열을 생성하는 함수를 구현해 보자.
 
 ```par
 dec Increment : [Sequence<Int>] Sequence<Int>
 def Increment = [seq] begin case {
-  .close => let ! = seq.close in !,
+  .close* => let ! = seq.close in !,
   .next =>
     let (x) seq = seq.next
     in let x = x + 1
@@ -174,7 +178,7 @@ def Increment = [seq] begin case {
 def FibonacciPlusOne = Increment(Fibonacci)
 ```
 
-이 경우에는 `.close` 분지에서 입력받은 `seq` 값을 명시적으로 닫아야 한다. 이 값은 선형이므로 마음대로 버릴 수 없다.
+여기서 입력인 `seq`는 선형이지만, 다행히 나중에 다룰 [자동 정리](./auto_cleanup.md)가 가능한 타입이다. 여기서는 이해를 돕기 위해 `let ! = seq.close`를 작성했지만, 굳이 사용하지 않고 암시적으로 버릴 수도 있다.
 
 ### 전체성의 임시방편, `.unfounded`
 
@@ -189,9 +193,10 @@ def FibonacciPlusOne = Increment(Fibonacci)
 ```par
 def Head = [type a, seq: Sequence<a>]
   let (x) seq = seq.next
-  in let ! = seq.close
   in x
 ```
+
+함수가 종료될 때 남은 수열은 [자동으로 정리](./auto_cleanup.md)된다.
 
 [재귀](./recursive.md)를 활용하면 반복 타입을 여러 겹 소멸시킬 수 있다. 다음은 주어진 수열의 처음 N개의 원소를 리스트로 옮겨서 반환하는 함수이다.
 

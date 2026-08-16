@@ -42,4 +42,14 @@ def Twelve = let (a, b)! = (3, 4)! in a * b
 > let (a: Nat, b: Nat)! = (3, 4)! in ...      // 올바른 코드
 > ```
 
+`let`식은 기존의 이름에 새 값을 대입함으로써 앞의 변수를 **가릴** 수도 있다. 기존의 값이 약한 선형 값일 경우에는 Par에서 변수를 가리기 전에 [기존 값을 정리](../types/auto_cleanup.md)한다.
+
+```par
+let resource = OpenFirst in
+let resource = OpenSecond in
+Use(resource)
+```
+
+첫 번째 `resource`는 두 번째 `let`식이 실행되는 시점에서 값의 정리 프로토콜을 실행한다. 순수 선형 값은 가리는 것이 불가능하며, 사용자가 직접 사용해야 한다.
+
 **이제 정말로 여러 가지 타입과 식을 둘러보자!**

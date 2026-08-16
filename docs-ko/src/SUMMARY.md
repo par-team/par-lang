@@ -20,6 +20,7 @@
   - [반복](./types/iterative.md)
   - [박스](./types/box.md)
   - [타입 제약](./types/constraints.md)
+  - [자동 정리](./types/auto_cleanup.md)
   - [존재](./types/exists.md)
   - [후속문](./types/continuation.md)
   - [문법 요약](./big_table.md)

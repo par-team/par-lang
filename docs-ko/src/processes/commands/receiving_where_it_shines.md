@@ -6,7 +6,7 @@
 
 ```par
 type Sequence<a> = iterative choice {
-  .close => !,
+  .close* => !,
   .next => (a) self,
 }
 ```
@@ -22,7 +22,7 @@ dec Fibonacci : Sequence<Nat>
 def Fibonacci =
   let (a) b = (0) 1
   in begin case {
-    .close => !
+    .close* => !
     .next =>
       let (a) b = (b) {a + b}
       in (a) loop
@@ -71,7 +71,7 @@ def Console.Open : Console
 
 ```par
 type Console = iterative choice {
-  .close => !,
+  .close* => !,
   .print(String) => self,
 }
 ```
@@ -100,9 +100,6 @@ def Program: ! = do {
       remaining.loop
     }
   }
-
-  fib.close
-  console.close
 } in !
 ```
 
@@ -115,4 +112,4 @@ def Program: ! = do {
 
 *수신* 명령이 진정으로 빛을 발하는 곳이 바로 `fib.next[n]` 줄이다. 여기서는 `.next` 분지의 페이로드(자연수)를 수신한 뒤 `fib`를 수열의 나머지 부분으로 갱신한다. 참고로 이 코드는 *선택*과 *수신*의 두 명령을 조합한 것이다.
 
-모두 마친 뒤에는 수열과 콘솔을 모두 닫는다. 두 값이 모두 선형이므로 이 과정은 필수이다.
+모두 마친 뒤에도 `fib`와 `console`이 모두 선형이지만, 공통적으로 `.close*` 분지가 있어 정리가 가능하며, 마지막의 `!`에 도달했을 때 자동으로 정리된다. `fib.close`와 `console.close`를 명시적으로 작성할 수도 있지만, 여기서는 굳이 필요하지 않다.

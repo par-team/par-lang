@@ -18,7 +18,7 @@
 
 ```par
 type Source<a> = recursive choice {
-  .close => !,
+  .close* => !,
   .next => either {
     .end!,
     .item(a) self,
@@ -34,7 +34,7 @@ type Source<a> = recursive choice {
 type Source<a> = recursive either {
   .end!,
   .item(a) choice {
-    .close => !,
+    .close* => !,
     .next => self,
   }
 }
@@ -48,7 +48,7 @@ type Source<a> = recursive either {
 type Source<a> = recursive either {
   .end!,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -56,7 +56,7 @@ type Source<a> = recursive either {
 
 여기서는 소스가 알아서 코드를 실행(하여 `.item`이나 `.end!`를 생성)할 수 있으므로 `poll`과 상성이 좋다. 하지만 `.item`을 생성하더라도 그 값을 즉시 전달하지는 않으며, 사용자에게 최종 결정을 맡긴다.
 - `.get`을 선택하면 사용자에게 값을 전달하고 계속한다.
-- `.discard`를 선택하면 취소하고 `!`로 마무리한다.
+- `.discard`를 선택하면 취소하고 `!`로 마무리한다. 또한 별표를 추가해서 정리 경로로 등록하고 있다.
 
 > 💡 이 구조를 **협력적 취소**라 한다. 생산자가 취소를 받아들일 수 있는 상태(여기서는 `.item`을 생성한 직후)에만 사용자가 실제로 취소할 수 있다.
 
@@ -100,7 +100,7 @@ poll(...) {
 type Source<a> = recursive either {
   .end!,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -109,7 +109,7 @@ type SourceFan<a> = recursive either {
   .end!,
   .spawn(self) self,
   .item choice {
-    .discard => !,
+    .discard* => !,
     .get => (a) self,
   }
 }
@@ -140,7 +140,7 @@ def MergeSources = [<a> sources] poll(SourceFan(sources)) {
     .spawn(l) r => submit(l, r),
 
     .item s => .item case {
-      .discard => ...   // 취소 모드로 전환
+      .discard* => ...  // 취소 모드로 전환
       .get => ...       // 원소 1개를 생산하고 계속 진행
     }
   }
@@ -170,20 +170,14 @@ def MergeSources = [<a> sources] poll(SourceFan(sources)) {
 1. 현재 소스 `s` (지금 코드상에서 가지고 있다)
 2. 풀에 남아 있는 나머지 모든 소스
 
-현재 소스는 바로 버릴 수 있다.
+현재의 `s` 자체가 정리 가능한 선택 값이므로 자동 정리에 맡기면 된다. 그 다음에는 `repoll()`로 풀을 재사용하되 핸들러를 바꾸어 풀을 비운다.
 
 ```par
-let ! = s.discard in ...
-```
-
-그런 다음에는 (추가 클라이언트 없이) `repoll()`을 사용해 **기어를 전환**하여, 같은 풀을 재사용하되 핸들러를 바꾸어 풀을 비운다.
-
-```par
-.discard => let ! = s.discard in repoll() {
+.discard* => repoll() {
   fan => fan.case {
     .end! => submit(),
     .spawn(l) r => submit(l, r),
-    .item s => let ! = s.discard in submit(),
+    .item _ => submit(),  // 자동 정리에서 `.discard` 메서드를 호출함
   }
   else => !,
 }
@@ -207,11 +201,11 @@ def MergeSources = [<a> sources] poll(SourceFan(sources)) {
     .spawn(l) r => submit(l, r),
 
     .item s => .item case {
-      .discard => let ! = s.discard in repoll() {
+      .discard* => repoll() {
         fan => fan.case {
           .end! => submit(),
           .spawn(l) r => submit(l, r),
-          .item s => let ! = s.discard in submit(),
+          .item _ => submit(),  // 자동 정리에서 `.discard` 메서드를 호출함
         }
         else => !,
       }
