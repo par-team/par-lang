@@ -3,7 +3,9 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
+    fs,
     hash::Hash,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -17,6 +19,7 @@ use crate::{
     location::{Span, Spanning},
 };
 use arcstr::{ArcStr, literal};
+use bytes::Bytes;
 use par_runtime::pkgid::PackageId;
 use par_runtime::primitive::{ParString, Primitive};
 
@@ -363,6 +366,11 @@ impl<S> Condition<S> {
 #[derive(Clone, Debug)]
 pub enum Expression<S> {
     Primitive(Span, Primitive),
+    Include {
+        span: Span,
+        path_span: Span,
+        path: ArcStr,
+    },
     Template {
         span: Span,
         parts: Vec<TemplatePart<S>>,
@@ -825,6 +833,37 @@ pub enum CompileError {
     NoMatchingCatch(Span),
     MatchingCatchDisabled(Span, CatchDisabledReason),
     NoSuchPollPoint(Span, Option<LocalName>),
+    IncludeWithoutPackageRoot {
+        span: Span,
+        path: ArcStr,
+    },
+    IncludeAbsolutePath {
+        span: Span,
+        path: ArcStr,
+    },
+    IncludePathResolution {
+        span: Span,
+        path: ArcStr,
+        candidate: PathBuf,
+        message: String,
+    },
+    IncludeOutsidePackage {
+        span: Span,
+        path: ArcStr,
+        target: PathBuf,
+        package_root: PathBuf,
+    },
+    IncludeNotRegularFile {
+        span: Span,
+        path: ArcStr,
+        target: PathBuf,
+    },
+    IncludeRead {
+        span: Span,
+        path: ArcStr,
+        target: PathBuf,
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -841,6 +880,12 @@ impl Spanning for CompileError {
             Self::NoMatchingCatch(span) => span.clone(),
             Self::MatchingCatchDisabled(span, _) => span.clone(),
             Self::NoSuchPollPoint(span, _) => span.clone(),
+            Self::IncludeWithoutPackageRoot { span, .. }
+            | Self::IncludeAbsolutePath { span, .. }
+            | Self::IncludePathResolution { span, .. }
+            | Self::IncludeOutsidePackage { span, .. }
+            | Self::IncludeNotRegularFile { span, .. }
+            | Self::IncludeRead { span, .. } => span.clone(),
         }
     }
 }
@@ -886,6 +931,60 @@ impl CompileError {
                 span,
                 format!("No such `poll@...`/`repoll@...` label `@{label}` is in scope here."),
             ),
+            Self::IncludeWithoutPackageRoot { span, path } => mk_report_owned(
+                span,
+                format!(
+                    "Cannot include `{path}` because this compilation has no filesystem-backed package root."
+                ),
+            ),
+            Self::IncludeAbsolutePath { span, path } => mk_report_owned(
+                span,
+                format!("Include path `{path}` must be relative to the package root."),
+            ),
+            Self::IncludePathResolution {
+                span,
+                path,
+                candidate,
+                message,
+            } => mk_report_owned(
+                span,
+                format!(
+                    "Could not resolve included file `{path}` at `{}`: {message}",
+                    candidate.display()
+                ),
+            ),
+            Self::IncludeOutsidePackage {
+                span,
+                path,
+                target,
+                package_root,
+            } => mk_report_owned(
+                span,
+                format!(
+                    "Included file `{path}` resolves outside package root `{}` (target: `{}`).",
+                    package_root.display(),
+                    target.display()
+                ),
+            ),
+            Self::IncludeNotRegularFile { span, path, target } => mk_report_owned(
+                span,
+                format!(
+                    "Included path `{path}` is not a regular file (resolved to `{}`).",
+                    target.display()
+                ),
+            ),
+            Self::IncludeRead {
+                span,
+                path,
+                target,
+                message,
+            } => mk_report_owned(
+                span,
+                format!(
+                    "Could not read included file `{path}` at `{}`: {message}",
+                    target.display()
+                ),
+            ),
         }
     }
 }
@@ -894,6 +993,7 @@ impl CompileError {
 pub(crate) struct Context {
     passes: Passes,
     original_object_name: Option<LocalName>,
+    package_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -969,7 +1069,76 @@ impl Context {
         Self {
             passes: Passes::new(),
             original_object_name: None,
+            package_root: None,
         }
+    }
+
+    pub(crate) fn with_package_root(package_root: &Path) -> Self {
+        Self {
+            package_root: Some(package_root.to_path_buf()),
+            ..Self::new()
+        }
+    }
+
+    fn compile_include(
+        &self,
+        expression_span: &Span,
+        path_span: &Span,
+        path: &ArcStr,
+    ) -> Result<Arc<process::Expression<(), Unresolved>>, CompileError> {
+        let Some(package_root) = &self.package_root else {
+            return Err(CompileError::IncludeWithoutPackageRoot {
+                span: path_span.clone(),
+                path: path.clone(),
+            });
+        };
+        let requested = Path::new(path.as_str());
+        if requested.is_absolute() {
+            return Err(CompileError::IncludeAbsolutePath {
+                span: path_span.clone(),
+                path: path.clone(),
+            });
+        }
+
+        let candidate = package_root.join(requested);
+        let target =
+            fs::canonicalize(&candidate).map_err(|error| CompileError::IncludePathResolution {
+                span: path_span.clone(),
+                path: path.clone(),
+                candidate: candidate.clone(),
+                message: error.to_string(),
+            })?;
+        if !target.starts_with(package_root) {
+            return Err(CompileError::IncludeOutsidePackage {
+                span: path_span.clone(),
+                path: path.clone(),
+                target,
+                package_root: package_root.clone(),
+            });
+        }
+        if !target.is_file() {
+            return Err(CompileError::IncludeNotRegularFile {
+                span: path_span.clone(),
+                path: path.clone(),
+                target,
+            });
+        }
+
+        let contents = fs::read(&target).map_err(|error| CompileError::IncludeRead {
+            span: path_span.clone(),
+            path: path.clone(),
+            target,
+            message: error.to_string(),
+        })?;
+        let primitive = match String::from_utf8(contents) {
+            Ok(text) => Primitive::string(ParString::from(text)),
+            Err(error) => Primitive::bytes(Bytes::from(error.into_bytes())),
+        };
+        Ok(Arc::new(process::Expression::Primitive(
+            expression_span.clone(),
+            primitive,
+            (),
+        )))
     }
 
     pub(crate) fn restore_object_name(
@@ -1812,6 +1981,12 @@ impl Context {
                 value.clone(),
                 (),
             )),
+
+            Expression::Include {
+                span,
+                path_span,
+                path,
+            } => self.compile_include(span, path_span, path)?,
 
             Expression::Template { parts, .. } => {
                 let desugared = Self::desugar_template_expression(parts);
@@ -3745,6 +3920,7 @@ impl<S> Spanning for Expression<S> {
     fn span(&self) -> Span {
         match self {
             Self::Primitive(span, _)
+            | Self::Include { span, .. }
             | Self::Template { span, .. }
             | Self::List(span, _)
             | Self::Global(span, _)

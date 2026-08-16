@@ -69,9 +69,41 @@ def Empty = <<>>
 
 Byte values are stored modulo 256, so out-of-range byte literal values wrap around.
 
+## Including Files at Compile Time
+
+The `include` expression embeds a file as a primitive value when the program is compiled:
+
+```par
+def HomePage = include("html/index.html")
+def Logo = include("assets/logo.png")
+```
+
+The file path must be a double-quoted string literal. The path is
+relative to the package root — the directory containing `Par.toml` — regardless of which source file
+contains the expression. For example:
+
+```text
+my_package/
+  Par.toml
+  src/
+    Main.par
+    web/Server.par
+  html/
+    index.html
+```
+
+Both `Main.par` and `web/Server.par` can use `include("html/index.html")` and it will resolve to the same file.
+
+The path must stay within the package's directory and absolute paths are not allowed. 
+
+The compiler preserves the file byte-for-byte and checks whether it is valid UTF-8. Valid UTF-8
+becomes a `String`, invalid UTF-8 becomes `Bytes`. An empty file is
+valid UTF-8 and therefore becomes `String`. Since `String` is a subtype of `Bytes`, text files can
+also be used wherever bytes are expected.
+
 ## Operators
 
-Numbers are usually manipulated with operators, not with imported helper functions.
+Numbers are usually manipulated with operators.
 
 ```par
 def Arithmetic = 1 + 2 * 3       // = 7

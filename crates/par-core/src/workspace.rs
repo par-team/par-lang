@@ -1,4 +1,4 @@
-use crate::frontend::lower;
+use crate::frontend::lower_with_package_root;
 use crate::frontend::parse_source_file;
 use crate::frontend_impl::language::{
     BuiltinOperatorModule, CompileError, GlobalName, Resolved, ResolvedPackageRef, TypeParameter,
@@ -958,6 +958,7 @@ impl std::error::Error for WorkspaceError {}
 pub struct WorkspacePackage {
     pub id: PackageId,
     pub parsed: ParsedPackage,
+    package_root: Option<PathBuf>,
     pub dependencies: BTreeMap<String, PackageId>,
     pub externals: BTreeMap<ModulePath, ExternalModule>,
 }
@@ -967,9 +968,15 @@ impl WorkspacePackage {
         Self {
             id,
             parsed,
+            package_root: None,
             dependencies: BTreeMap::new(),
             externals: BTreeMap::new(),
         }
+    }
+
+    fn with_package_root(mut self, package_root: PathBuf) -> Self {
+        self.package_root = Some(package_root);
+        self
     }
 
     pub fn with_dependency(mut self, alias: impl Into<String>, package: PackageId) -> Self {
@@ -1545,7 +1552,9 @@ impl PackageGraph {
                 let files = collect_source_files(&package.layout, overrides)
                     .map_err(WorkspaceDiscoveryError::Load)?;
                 let parsed = parse_loaded_files(files).map_err(WorkspaceDiscoveryError::Load)?;
+                let root_dir = canonicalize_path(&package.layout.root_dir)?;
                 Ok(WorkspacePackage::new(package.id, parsed)
+                    .with_package_root(root_dir)
                     .with_dependencies(package.dependencies))
             })
             .collect::<Result<Vec<_>, WorkspaceDiscoveryError>>()?;
@@ -1808,6 +1817,7 @@ fn load_package(
     let WorkspacePackage {
         id,
         parsed,
+        package_root,
         dependencies,
         mut externals,
     } = package;
@@ -1874,12 +1884,16 @@ fn load_package(
             }
 
             let imported_aliases = imported_aliases(&imports, &current_module_path);
-            let mut lowered_file = lower(file.source_file.body.clone()).map_err(|error| {
-                WorkspaceError::LowerError {
-                    file: file.name.clone(),
-                    source: Arc::clone(&file.source),
-                    error,
+            let mut lowered_file = match &package_root {
+                Some(package_root) => {
+                    lower_with_package_root(file.source_file.body.clone(), package_root)
                 }
+                None => crate::frontend::lower(file.source_file.body.clone()),
+            }
+            .map_err(|error| WorkspaceError::LowerError {
+                file: file.name.clone(),
+                source: Arc::clone(&file.source),
+                error,
             })?;
             if file.module_part_suffix.is_none() {
                 if let Some(external_module) = externals.remove(&parsed_module.path) {
@@ -2581,6 +2595,7 @@ fn write_type_parameters(f: &mut impl Write, params: &[TypeParameter]) -> fmt::R
 mod tests {
     use super::*;
     use crate::frontend_impl::language::TypeConstraint;
+    use crate::frontend_impl::program::DefinitionBody;
     use crate::frontend_impl::types::Visibility;
     use arcstr::literal;
     use std::fs;
@@ -2666,6 +2681,14 @@ mod tests {
                 fs::create_dir_all(parent).expect("failed to create parent directory");
             }
             fs::write(path, source).expect("failed to write source file");
+        }
+    }
+
+    fn workspace_error_from_package(root: &Path) -> WorkspaceError {
+        let packages = discover_workspace_packages_from_path(root, None).unwrap();
+        match assemble_workspace(packages) {
+            Ok(_) => panic!("expected workspace assembly to fail"),
+            Err(error) => error,
         }
     }
 
