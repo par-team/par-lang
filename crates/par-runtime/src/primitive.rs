@@ -91,8 +91,74 @@ pub fn format_float(value: f64) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Primitive {
     Number(Number),
+    Sequence(ByteSequence),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ByteSequence(ByteSequenceRepr);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum ByteSequenceRepr {
     String(ParString),
     Bytes(Bytes),
+}
+
+impl ByteSequence {
+    pub fn string(value: ParString) -> Self {
+        Self(ByteSequenceRepr::String(value))
+    }
+
+    pub fn bytes(value: Bytes) -> Self {
+        Self(ByteSequenceRepr::Bytes(value))
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.0 {
+            ByteSequenceRepr::String(value) => value.as_str().as_bytes(),
+            ByteSequenceRepr::Bytes(value) => value.as_ref(),
+        }
+    }
+
+    pub fn into_bytes(self) -> Bytes {
+        match self.0 {
+            ByteSequenceRepr::String(value) => value.as_bytes(),
+            ByteSequenceRepr::Bytes(value) => value,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match &self.0 {
+            ByteSequenceRepr::String(value) => Some(value.as_str()),
+            ByteSequenceRepr::Bytes(_) => None,
+        }
+    }
+
+    pub fn into_string(self) -> Result<ParString, Self> {
+        match self.0 {
+            ByteSequenceRepr::String(value) => Ok(value),
+            ByteSequenceRepr::Bytes(value) => Err(Self::bytes(value)),
+        }
+    }
+}
+
+impl PartialEq for ByteSequence {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for ByteSequence {}
+
+impl PartialOrd for ByteSequence {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ByteSequence {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,22 +198,32 @@ impl Ord for Number {
 }
 
 impl Primitive {
+    pub fn string(value: ParString) -> Self {
+        Self::Sequence(ByteSequence::string(value))
+    }
+
+    pub fn bytes(value: Bytes) -> Self {
+        Self::Sequence(ByteSequence::bytes(value))
+    }
+
     pub fn pretty(&self, f: &mut impl Write, _indent: usize) -> fmt::Result {
         match self {
             Self::Number(Number::Zero) => write!(f, "0"),
             Self::Number(Number::Int(i)) => write!(f, "{}", i),
             Self::Number(Number::Float(value)) => write!(f, "{}", format_float(*value)),
-            Self::String(s) => write!(f, "{:?}", s.as_str()),
-            Self::Bytes(b) => {
-                write!(f, "<<")?;
-                for (i, &byte) in b.as_ref().iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " ")?;
+            Self::Sequence(sequence) => match sequence.as_str() {
+                Some(value) => write!(f, "{:?}", value),
+                None => {
+                    write!(f, "<<")?;
+                    for (i, &byte) in sequence.as_bytes().iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "{}", byte as i64)?;
                     }
-                    write!(f, "{}", byte as i64)?;
+                    write!(f, ">>")
                 }
-                write!(f, ">>")
-            }
+            },
         }
     }
 

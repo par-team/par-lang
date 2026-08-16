@@ -481,16 +481,15 @@ impl<Ext: Clone> Net<Ext> {
                 resp.send(i).expect("receiver dropped");
                 self.rewrites.resp += 1;
             }
-            (Primitive::String(s), Tree::StringRequest(resp)) => {
-                resp.send(s).expect("receiver dropped");
+            (Primitive::Sequence(sequence), Tree::StringRequest(resp)) => {
+                let string = sequence.into_string().unwrap_or_else(|sequence| {
+                    panic!("Invalid byte sequence interaction with String: {sequence:?}")
+                });
+                resp.send(string).expect("receiver dropped");
                 self.rewrites.resp += 1;
             }
-            (Primitive::Bytes(b), Tree::BytesRequest(resp)) => {
-                resp.send(b).expect("receiver dropped");
-                self.rewrites.resp += 1;
-            }
-            (Primitive::String(s), Tree::BytesRequest(resp)) => {
-                resp.send(s.as_bytes()).expect("receiver dropped");
+            (Primitive::Sequence(sequence), Tree::BytesRequest(resp)) => {
+                resp.send(sequence.into_bytes()).expect("receiver dropped");
                 self.rewrites.resp += 1;
             }
 
@@ -727,8 +726,10 @@ impl<Ext: Clone> Net<Ext> {
             Tree::Primitive(Primitive::Number(Number::Float(value))) => {
                 format!("primitive({})", format_float(*value))
             }
-            Tree::Primitive(Primitive::String(s)) => format!("primitive({:?})", s),
-            Tree::Primitive(Primitive::Bytes(b)) => format!("primitive({:?})", b),
+            Tree::Primitive(Primitive::Sequence(sequence)) => match sequence.as_str() {
+                Some(string) => format!("primitive({string:?})"),
+                None => format!("primitive({:?})", sequence.as_bytes()),
+            },
 
             Tree::SignalRequest(_) => format!("<signal request>"),
             Tree::IntRequest(_) => format!("<int request>"),

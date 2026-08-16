@@ -75,21 +75,21 @@ impl Handle {
     }
 
     pub fn provide_string(self, value: ParString) {
-        self.handle.provide_primitive(Primitive::String(value))
+        self.handle.provide_primitive(Primitive::string(value))
     }
 
     pub fn provide_bytes(self, value: Bytes) {
-        self.handle.provide_primitive(Primitive::Bytes(value))
+        self.handle.provide_primitive(Primitive::bytes(value))
     }
 
     pub fn provide_char(self, value: char) {
         self.handle
-            .provide_primitive(Primitive::String(value.into()))
+            .provide_primitive(Primitive::string(value.into()))
     }
 
     pub fn provide_byte(self, value: u8) {
         self.handle
-            .provide_primitive(Primitive::Bytes(Bytes::copy_from_slice(&[value])))
+            .provide_primitive(Primitive::bytes(Bytes::copy_from_slice(&[value])))
     }
 
     pub fn send_number(&mut self, value: &Number) {
@@ -110,24 +110,31 @@ impl Handle {
 
     pub async fn byte(self) -> u8 {
         let primitive = self.handle.primitive().await.unwrap();
-        let Primitive::Bytes(value) = primitive else {
+        let Primitive::Sequence(value) = primitive else {
             panic!(
                 "Unexpected primitive in Handle! Expected Bytes, got {:?}",
                 primitive
             )
         };
+        let value = value.into_bytes();
         assert!(value.len() == 1);
         value.as_ref()[0]
     }
 
     pub async fn char(self) -> char {
         let primitive = self.handle.primitive().await.unwrap();
-        let Primitive::String(value) = primitive else {
+        let Primitive::Sequence(value) = primitive else {
             panic!(
                 "Unexpected primitive in Handle! Expected String, got {:?}",
                 primitive
             )
         };
+        let value = value.into_string().unwrap_or_else(|value| {
+            panic!(
+                "Unexpected byte sequence in Handle! Expected String, got {:?}",
+                value
+            )
+        });
         let mut chars = value.as_str().chars();
         let ch = chars.next().unwrap();
         assert!(chars.next().is_none());
@@ -136,21 +143,25 @@ impl Handle {
 
     pub async fn string(self) -> ParString {
         let primitive = self.handle.primitive().await.unwrap();
-        let Primitive::String(value) = primitive else {
+        let Primitive::Sequence(value) = primitive else {
             panic!(
                 "Unexpected primitive in Handle! Expected String, got {:?}",
                 primitive
             )
         };
-        value
+        value.into_string().unwrap_or_else(|value| {
+            panic!(
+                "Unexpected byte sequence in Handle! Expected String, got {:?}",
+                value
+            )
+        })
     }
 
     pub async fn bytes(self) -> Bytes {
         match self.handle.primitive().await.unwrap() {
-            Primitive::String(e) => e.as_bytes(),
-            Primitive::Bytes(e) => e,
+            Primitive::Sequence(value) => value.into_bytes(),
             primitive => panic!(
-                "Unexpected primitive in Handle! Expected String or Bytes, got {:?}",
+                "Unexpected primitive in Handle! Expected Bytes, got {:?}",
                 primitive
             ),
         }

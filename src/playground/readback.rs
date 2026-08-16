@@ -398,7 +398,7 @@ impl Element {
                     Event::Byte(b) | Event::ByteRequest(b) => {
                         ui.label(
                             RichText::from(
-                                Primitive::Bytes(Bytes::copy_from_slice(&[*b])).pretty_string(),
+                                Primitive::bytes(Bytes::copy_from_slice(&[*b])).pretty_string(),
                             )
                             .strong()
                             .code(),
@@ -406,7 +406,7 @@ impl Element {
                     }
                     Event::Bytes(b) | Event::BytesRequest(b) => {
                         ui.label(
-                            RichText::from(Primitive::Bytes(b.clone()).pretty_string())
+                            RichText::from(Primitive::bytes(b.clone()).pretty_string())
                                 .strong()
                                 .code(),
                         );

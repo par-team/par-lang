@@ -276,7 +276,7 @@ def TestColumnTypes: [Test] ! = [test] chan done {
   db.execute("CREATE TABLE cells (i INTEGER, f REAL, t TEXT, b BLOB, z INTEGER)", *())[try@db _]
   db.execute(
     "INSERT INTO cells (i, f, t, b, z) VALUES (?, ?, ?, ?, ?)",
-    *(.int 7, .float 2.5, .text "hi", .bytes <<104 105>>, .null!),
+    *(.int 7, .float 2.5, .text "hi", .bytes "hi", .null!),
   )[try@db _]
   db.query("SELECT i, f, t, b, z FROM cells", *())[try@db rows]
   let try@db all = Stream.ToList(rows)

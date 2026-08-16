@@ -487,14 +487,17 @@ fn data_float(data: &Data) -> Result<f64, String> {
 
 fn data_string(data: &Data) -> Result<String, String> {
     match data {
-        Data::Primitive(Primitive::String(value)) => Ok(value.as_str().to_string()),
+        Data::Primitive(Primitive::Sequence(value)) => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "invalid text parameter".to_string()),
         _ => Err("invalid text parameter".to_string()),
     }
 }
 
 fn data_bytes(data: &Data) -> Result<Vec<u8>, String> {
     match data {
-        Data::Primitive(Primitive::Bytes(value)) => Ok(value.to_vec()),
+        Data::Primitive(Primitive::Sequence(value)) => Ok(value.as_bytes().to_vec()),
         _ => Err("invalid byte parameter".to_string()),
     }
 }
@@ -600,7 +603,7 @@ fn value_float(value: f64) -> Data {
 fn value_text(value: &str) -> Data {
     Data::Either(
         literal!("text"),
-        Box::new(Data::Primitive(Primitive::String(
+        Box::new(Data::Primitive(Primitive::string(
             ParString::copy_from_slice(value),
         ))),
     )
@@ -609,7 +612,7 @@ fn value_text(value: &str) -> Data {
 fn value_bytes(value: &[u8]) -> Data {
     Data::Either(
         literal!("bytes"),
-        Box::new(Data::Primitive(Primitive::Bytes(Bytes::copy_from_slice(
+        Box::new(Data::Primitive(Primitive::bytes(Bytes::copy_from_slice(
             value,
         )))),
     )

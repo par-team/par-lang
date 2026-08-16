@@ -1698,7 +1698,7 @@ fn expr_literal_string(input: &mut Input) -> Result<Expression<Unresolved>> {
         .map(|token| {
             // validated in lexer
             let value = unescaper::unescape(token.raw).unwrap();
-            Expression::Primitive(token.span(), Primitive::String(ParString::from(value)))
+            Expression::Primitive(token.span(), Primitive::string(ParString::from(value)))
         })
         .parse_next(input)
 }
@@ -1748,7 +1748,7 @@ fn expr_literal_bytes_empty(input: &mut Input) -> Result<Expression<Unresolved>>
         t(TokenKind::Gt),
     )
     .map(|(pre, post)| {
-        Expression::Primitive(pre.span.join(post.span()), Primitive::Bytes(Bytes::new()))
+        Expression::Primitive(pre.span.join(post.span()), Primitive::bytes(Bytes::new()))
     })
     .parse_next(input)
 }
@@ -1761,7 +1761,7 @@ fn expr_literal_bytes_nonempty(input: &mut Input) -> Result<Expression<Unresolve
     .map(|(pre, (bytes, post))| {
         Expression::Primitive(
             pre.span.join(post.span()),
-            Primitive::Bytes(Bytes::from(bytes)),
+            Primitive::bytes(Bytes::from(bytes)),
         )
     })
     .parse_next(input)

@@ -122,10 +122,12 @@ pub(crate) fn get_primitive_type<S: Clone>(primitive: &Primitive) -> Type<S> {
         Primitive::Number(Number::Int(n)) if n >= &BigInt::ZERO => Type::nat(),
         Primitive::Number(Number::Int(_)) => Type::int(),
         Primitive::Number(Number::Float(_)) => Type::float(),
-        Primitive::String(s) if is_single_char(s.as_str()) => Type::char(),
-        Primitive::String(_) => Type::string(),
-        Primitive::Bytes(b) if b.len() == 1 => Type::byte(),
-        Primitive::Bytes(_) => Type::bytes(),
+        Primitive::Sequence(sequence) => match sequence.as_str() {
+            Some(string) if is_single_char(string) => Type::char(),
+            Some(_) => Type::string(),
+            None if sequence.as_bytes().len() == 1 => Type::byte(),
+            None => Type::bytes(),
+        },
     }
 }
 
