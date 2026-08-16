@@ -783,6 +783,7 @@ fn par_syntax() -> Syntax {
             "unfounded",
             "loop",
             "module",
+            "include",
             "import",
             "as",
             "export",

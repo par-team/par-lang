@@ -8,6 +8,7 @@ pub mod frontend {
     use crate::location::FileName;
     use crate::runtime_impl::{Compiled, RuntimeCompilerError};
     use par_runtime::linker::Unlinked;
+    use std::path::Path;
     use std::sync::Arc;
 
     pub mod language {
@@ -57,6 +58,20 @@ pub mod frontend {
     }
 
     pub fn lower(module: HighLevelModule) -> Result<LowLevelUnresolvedModule, CompileError> {
+        lower_with_context(module, Context::new)
+    }
+
+    pub(crate) fn lower_with_package_root(
+        module: HighLevelModule,
+        package_root: &Path,
+    ) -> Result<LowLevelUnresolvedModule, CompileError> {
+        lower_with_context(module, || Context::with_package_root(package_root))
+    }
+
+    fn lower_with_context(
+        module: HighLevelModule,
+        context: impl Fn() -> Context,
+    ) -> Result<LowLevelUnresolvedModule, CompileError> {
         let compiled_definitions = module
             .definitions
             .into_iter()
@@ -66,7 +81,7 @@ pub mod frontend {
                     name,
                     body: match body {
                         DefinitionBody::Par(expr) => {
-                            let compiled = Context::new().compile_expression(&expr)?;
+                            let compiled = context().compile_expression(&expr)?;
                             let compiled = compiled.optimize().fix_captures().0;
                             DefinitionBody::Par(compiled)
                         }

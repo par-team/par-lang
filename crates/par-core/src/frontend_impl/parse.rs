@@ -1622,6 +1622,7 @@ fn infix_operand(input: &mut Input) -> Result<Expression<Unresolved>> {
 
 fn postfix_base(input: &mut Input) -> Result<Expression<Unresolved>> {
     alt((
+        expr_include,
         expr_literal,
         expr_list,
         global_name.map(|name| Expression::Global(name.span(), name)),
@@ -1629,6 +1630,23 @@ fn postfix_base(input: &mut Input) -> Result<Expression<Unresolved>> {
         expr_grouped,
         expr_todo,
     ))
+    .parse_next(input)
+}
+
+fn expr_include(input: &mut Input) -> Result<Expression<Unresolved>> {
+    commit_after(
+        t(TokenKind::Include),
+        (
+            preceded(t(TokenKind::LParen), t(TokenKind::String)),
+            t(TokenKind::RParen),
+        ),
+    )
+    .map(|(include, (path, close))| Expression::Include {
+        span: include.span().join(close.span()),
+        path_span: path.span(),
+        // Validated by the lexer.
+        path: ArcStr::from(unescaper::unescape(path.raw).unwrap()),
+    })
     .parse_next(input)
 }
 
@@ -4047,6 +4065,24 @@ def Value = `Hi ${name}, age #{1 + {2}}.`
             }
             other => panic!("unexpected AST: {other:#?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_include_expression() {
+        let expr = parse_single_definition_expression(
+            r#"module Main
+
+def Value = include("html\u{2f}index.html")->Use
+"#,
+        );
+
+        let Expression::Application(_, included, _) = expr else {
+            panic!("expected include to compose as a postfix expression")
+        };
+        assert!(matches!(
+            *included,
+            Expression::Include { ref path, .. } if path.as_str() == "html/index.html"
+        ));
     }
 
     #[test]
