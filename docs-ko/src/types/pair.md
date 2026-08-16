@@ -42,7 +42,7 @@ type List<a> = recursive either {
 
 ```par
 type Stream<a> = iterative choice {
-  .close => !,
+  .close* => !,
   .next  => (a) self,
 }
 ```
