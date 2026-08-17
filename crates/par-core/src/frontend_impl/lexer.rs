@@ -272,6 +272,48 @@ impl<'a, T: FromStr> ParseSlice<T> for &Token<'a> {
 pub(crate) type Tokens<'i> = TokenSlice<'i, Token<'i>>;
 pub(crate) type Input<'a> = Tokens<'a>;
 
+pub(crate) const RESERVED_KEYWORDS: &[(&str, TokenKind)] = &[
+    ("begin", TokenKind::Begin),
+    ("box", TokenKind::Box),
+    ("case", TokenKind::Case),
+    ("catch", TokenKind::Catch),
+    ("chan", TokenKind::Chan),
+    ("choice", TokenKind::Choice),
+    ("dec", TokenKind::Dec),
+    ("def", TokenKind::Def),
+    ("do", TokenKind::Do),
+    ("dual", TokenKind::Dual),
+    ("either", TokenKind::Either),
+    ("else", TokenKind::Else),
+    ("export", TokenKind::Export),
+    ("if", TokenKind::If),
+    ("include", TokenKind::Include),
+    ("import", TokenKind::Import),
+    ("is", TokenKind::Is),
+    ("in", TokenKind::In),
+    ("iterative", TokenKind::Iterative),
+    ("let", TokenKind::Let),
+    ("and", TokenKind::And),
+    ("as", TokenKind::As),
+    ("module", TokenKind::Module),
+    ("neg", TokenKind::Neg),
+    ("or", TokenKind::Or),
+    ("not", TokenKind::Not),
+    ("loop", TokenKind::Loop),
+    ("poll", TokenKind::Poll),
+    ("repoll", TokenKind::Repoll),
+    ("submit", TokenKind::Submit),
+    ("recursive", TokenKind::Recursive),
+    ("self", TokenKind::Self_),
+    ("throw", TokenKind::Throw),
+    ("try", TokenKind::Try),
+    ("default", TokenKind::Default),
+    ("type", TokenKind::Type),
+    ("unfounded", TokenKind::Unfounded),
+    ("external", TokenKind::External),
+    ("todo", TokenKind::Todo),
+];
+
 pub(crate) fn lex<'s>(input: &'s str, file: &FileName) -> Vec<Token<'s>> {
     lex_with_comments(input, file).tokens
 }
@@ -291,49 +333,18 @@ fn identifier_kind(raw: &str) -> Option<TokenKind> {
         return None;
     }
 
-    Some(match raw {
-        "begin" => TokenKind::Begin,
-        "box" => TokenKind::Box,
-        "case" => TokenKind::Case,
-        "catch" => TokenKind::Catch,
-        "chan" => TokenKind::Chan,
-        "choice" => TokenKind::Choice,
-        "dec" => TokenKind::Dec,
-        "def" => TokenKind::Def,
-        "do" => TokenKind::Do,
-        "dual" => TokenKind::Dual,
-        "either" => TokenKind::Either,
-        "else" => TokenKind::Else,
-        "export" => TokenKind::Export,
-        "if" => TokenKind::If,
-        "include" => TokenKind::Include,
-        "import" => TokenKind::Import,
-        "is" => TokenKind::Is,
-        "in" => TokenKind::In,
-        "iterative" => TokenKind::Iterative,
-        "let" => TokenKind::Let,
-        "and" => TokenKind::And,
-        "as" => TokenKind::As,
-        "module" => TokenKind::Module,
-        "neg" => TokenKind::Neg,
-        "or" => TokenKind::Or,
-        "not" => TokenKind::Not,
-        "loop" => TokenKind::Loop,
-        "poll" => TokenKind::Poll,
-        "repoll" => TokenKind::Repoll,
-        "submit" => TokenKind::Submit,
-        "recursive" => TokenKind::Recursive,
-        "self" => TokenKind::Self_,
-        "throw" => TokenKind::Throw,
-        "try" => TokenKind::Try,
-        "default" => TokenKind::Default,
-        "type" => TokenKind::Type,
-        "unfounded" => TokenKind::Unfounded,
-        "external" => TokenKind::External,
-        "todo" => TokenKind::Todo,
-        raw if raw.starts_with(char::is_uppercase) => TokenKind::UppercaseIdentifier,
-        _ => TokenKind::LowercaseIdentifier,
-    })
+    Some(
+        RESERVED_KEYWORDS
+            .iter()
+            .find_map(|(keyword, kind)| (*keyword == raw).then_some(*kind))
+            .unwrap_or_else(|| {
+                if raw.starts_with(char::is_uppercase) {
+                    TokenKind::UppercaseIdentifier
+                } else {
+                    TokenKind::LowercaseIdentifier
+                }
+            }),
+    )
 }
 
 pub(crate) fn is_lowercase_identifier(raw: &str) -> bool {

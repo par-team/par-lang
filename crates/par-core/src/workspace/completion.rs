@@ -39,7 +39,7 @@ impl CheckedWorkspace {
         if let Some((case_row, case_column)) =
             case_branch_completion_context_before_dot(source, dot)
         {
-            if let Some(hover) = self.hover_at(file, case_row, case_column) {
+            if let Some(hover) = self.hover_index().query(file, case_row, case_column) {
                 if let Some(typ) = hover.typ() {
                     self.push_type_completion_candidates(
                         typ,
@@ -65,7 +65,7 @@ impl CheckedWorkspace {
             // In that case alias-member completion is authoritative: if we also ran hover/type-based
             // completion, we'd incorrectly mix in value-type items like `begin`/branch labels.
             if !completed_module_alias {
-                if let Some(hover) = self.hover_at(file, hover_row, hover_column) {
+                if let Some(hover) = self.hover_index().query(file, hover_row, hover_column) {
                     if let Some(typ) = hover.typ() {
                         self.push_type_completion_candidates(
                             typ,
@@ -1505,7 +1505,7 @@ def Fibonacci =
         let file = checked.workspace().sources().keys().next().unwrap();
         let case_index = source.match_indices("case").last().unwrap().0;
         let (row, column) = row_and_column_for_offset(source, case_index).unwrap();
-        let hover = checked.hover_at(file, row, column).unwrap();
+        let hover = checked.hover_index().query(file, row, column).unwrap();
 
         assert!(hover.typ().is_some(), "missing hover type at case token");
     }
@@ -1530,7 +1530,7 @@ def Main : ! = StreamValue.case {
         let file = checked.workspace().sources().keys().next().unwrap();
         let case_index = source.match_indices("case").last().unwrap().0;
         let (row, column) = row_and_column_for_offset(source, case_index).unwrap();
-        let hover = checked.hover_at(file, row, column).unwrap();
+        let hover = checked.hover_index().query(file, row, column).unwrap();
 
         assert_eq!(
             checked.render_hover_signature_in_file(file, &hover),

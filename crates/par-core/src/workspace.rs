@@ -14,6 +14,7 @@ use crate::frontend_impl::types::error::labels_from_span;
 use crate::frontend_impl::types::{
     Type, TypeError, Visibility, VisibilityIndex, validate_visibility,
 };
+use crate::frontend_impl::{keyword_docs, lexer::lex};
 use crate::location::{FileName, Span, Spanning};
 use crate::runtime_impl::{Compiled, RuntimeCompilerError};
 use arcstr::ArcStr;
@@ -1172,7 +1173,41 @@ impl CheckedWorkspace {
         row: u32,
         column: u32,
     ) -> Option<process::HoverInfo<Universal>> {
-        self.hover_index.query(file, row, column)
+        if let Some((name, doc)) = self.keyword_documentation_at(file, row, column) {
+            Some(process::HoverInfo::keyword(name, doc))
+        } else {
+            self.hover_index.query(file, row, column)
+        }
+    }
+
+    fn keyword_documentation_at(
+        &self,
+        file: &FileName,
+        row: u32,
+        column: u32,
+    ) -> Option<(&'static str, DocComment)> {
+        let source = self.workspace.sources.get(file)?;
+        lex(source, file).into_iter().find_map(|token| {
+            let Some((start, end)) = token.span.points() else {
+                return None;
+            };
+            let contains_position = (start.row < row
+                || (start.row == row && start.column <= column))
+                && (end.row > row || (end.row == row && end.column >= column));
+            if contains_position {
+                keyword_docs::documentation(token.kind).map(|documentation| {
+                    (
+                        documentation.name,
+                        DocComment {
+                            span: token.span,
+                            markdown: ArcStr::from(documentation.markdown),
+                        },
+                    )
+                })
+            } else {
+                None
+            }
+        })
     }
 
     pub fn compile_runtime(
@@ -1203,6 +1238,9 @@ impl CheckedWorkspace {
         let mut output = String::new();
         if let Some((module, types, declarations)) = hover.module_items() {
             return self.render_module_signature_in_file(file, module, types, declarations);
+        }
+        if let Some(keyword) = hover.keyword_name() {
+            return keyword.to_string();
         }
         if hover.is_type() {
             if let Some(global_name) = hover.global_name() {
@@ -1286,7 +1324,10 @@ impl CheckedWorkspace {
         file: &FileName,
         hover: &process::HoverInfo<Universal>,
     ) -> String {
-        let signature = self.render_hover_signature_in_file(file, hover);
+        let signature = hover
+            .keyword_name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.render_hover_signature_in_file(file, hover));
         if let Some(doc) = hover.doc() {
             format!("```par\n{signature}\n```\n\n{}", doc.markdown)
         } else {
@@ -2821,6 +2862,28 @@ def Main = Run
         assert_eq!(
             run_hover.global_name().map(|name| name.primary.as_str()),
             Some("Run")
+        );
+    }
+
+    #[test]
+    fn hover_info_includes_keyword_documentation() {
+        let source = "\
+module Main
+
+def Expression = let value = 3 in value
+";
+        let checked = checked_workspace_from_source(source);
+        let file = checked.workspace().sources().keys().next().unwrap();
+
+        let let_index = source.match_indices("let").next().unwrap().0;
+        let (row, column) = row_and_column(source, let_index);
+        let hover = checked.hover_at(file, row, column).unwrap();
+        assert_eq!(hover.keyword_name(), Some("let"));
+        assert!(hover.doc().is_some());
+        assert!(
+            checked
+                .render_hover_markdown_in_file(file, &hover)
+                .starts_with("```par\nlet\n```")
         );
     }
 
