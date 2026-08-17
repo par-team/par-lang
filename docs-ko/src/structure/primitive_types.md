@@ -65,9 +65,36 @@ def Empty = <<>>
 
 바이트 값은 256으로 나눈 나머지로 저장되므로 범위를 벗어난 바이트 리터럴은 오버플로우가 된다.
 
+## 컴파일 시에 파일 불러오기
+
+`include`식을 사용해 프로그램을 컴파일할 때 특정 파일의 내용을 원시 값으로 불러올 수 있다.
+
+```par
+def HomePage = include("html/index.html")
+def Logo = include("assets/logo.png")
+```
+
+파일 경로는 반드시 큰따옴표를 사용하는 문자열 리터럴이어야 한다. 경로 탐색은 `include`식이 있는 소스 파일의 위치와 무관하게 패키지의 루트(`Par.toml`이 있는 디렉토리)를 기준으로 한다. 다음 패키지를 보자.
+
+```text
+my_package/
+  Par.toml
+  src/
+    Main.par
+    web/Server.par
+  html/
+    index.html
+```
+
+`Main.par`와 `web/Server.par` 모두 `include("html/index.html")`을 사용할 수 있으며, 같은 파일을 가리킨다.
+
+패키지의 디렉토리 바깥에 있는 경로는 사용할 수 없으며, 절대 경로 역시 금지된다.
+
+컴파일러에서는 파일의 내용을 바이트 단위로 보존하고, 값으로 변환하기 전에 파일의 인코딩을 확인해 올바른 UTF-8 텍스트에는 `String`, 그렇지 않으면 `Bytes` 타입을 부여한다. 특히 빈 파일도 올바른 UTF-8이므로 `String`이 된다. `String`은 `Bytes`의 서브타입이므로 텍스트 파일도 바이트열을 요구하는 곳에 자유롭게 사용할 수 있다.
+
 ## 연산자
 
-수 타입은 보통 헬퍼 함수를 가져오는 대신 연산자를 사용해 조작한다.
+수 타입은 보통 연산자를 사용해 조작한다.
 
 ```par
 def Arithmetic = 1 + 2 * 3       // = 7
