@@ -1,5 +1,7 @@
 # Introduction
 
+[한국어로 읽기](https://par.run/book-ko)
+
 **Par** is affectionately named after the most bemusing connective of
 [linear logic](https://en.wikipedia.org/wiki/Linear_logic): ⅋, pronounced _"par"_.
 That's because Par is based directly on (classical) linear logic, as an experiment to
