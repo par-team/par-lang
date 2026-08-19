@@ -607,13 +607,16 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         if debug_enabled() {
             debug_log_stack(ctx);
         }
+
         let min_left = ctx
             .visited
             .iter()
             .skip(ind)
             .map(|(t1, _t2)| t1)
             .filter(|t1| t1.is_fixpoint())
-            .filter_map(|t1| t1.size(ctx.type_defs).ok().map(|size| (size, t1)))
+            .map(|t1| t1.size(ctx.type_defs).map(|size| (size, t1)))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .min_by_key(|(size, _)| *size)
             .map(|(_, typ)| typ)
             .expect("minimum should exist");
@@ -623,7 +626,9 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             .skip(ind)
             .map(|(_t1, t2)| t2)
             .filter(|t2| t2.is_fixpoint())
-            .filter_map(|t2| t2.size(ctx.type_defs).ok().map(|size| (size, t2)))
+            .map(|t2| t2.size(ctx.type_defs).map(|size| (size, t2)))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .min_by_key(|(size, _)| *size)
             .map(|(_, typ)| typ)
             .expect("minimum should exist");
