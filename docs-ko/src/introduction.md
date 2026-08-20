@@ -1,7 +1,5 @@
 # 들어가며
 
-[English Version](https://par.run/book)
-
 **Par**라는 이름은 [선형 논리](https://ko.wikipedia.org/wiki/선형_논리)의 가장 기묘한 연결사이자 동일하게 '*par*'라고 읽는 ⅋에서 따온 것으로, 그 뒤에는 이 언어의 직접적인 기초가 되는 (고전) 선형 논리라는 패러다임으로 어디까지 갈 수 있을지 시험해보고자 하는 뜻이 담겨 있다.
 
 선형 논리뿐만 아니라 [System F](https://en.wikipedia.org/wiki/System_F) 등의 개념을 창시한 [장-이브 지라르](https://en.wikipedia.org/wiki/Jean-Yves_Girard)는 자신의 [첫 선형 논리 논문](https://www.sciencedirect.com/science/article/pii/0304397587900454)의 3페이지에 이렇게 적은 바가 있다.
