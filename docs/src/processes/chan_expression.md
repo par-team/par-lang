@@ -98,7 +98,7 @@ You’re not linking a process to a value. You’re linking one channel to anoth
 > In contrast, `do`/`in` blocks don’t end themselves — they continue into the expression after `in`.
 
 When a link or break terminates a process, Par [automatically cleans up](../types/auto_cleanup.md)
-any remaining values that satisfy `drop`. A console may close, a stream may cancel, and a
+any remaining values that satisfy `drop`. A console or stream may close, and a
 transaction may roll back on the way out. Strictly linear obligations have to be consumed
 explicitly; trying to leave one behind is a type error.
 

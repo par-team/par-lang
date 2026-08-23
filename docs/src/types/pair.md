@@ -44,7 +44,7 @@ type List<a> = recursive either {
 An infinite stream type may use a pair to produce an element together with the remainder of the stream:
 
 ```par
-type Stream<a> = iterative choice {
+type InfiniteStream<a> = iterative choice {
   .close* => !,
   .next  => (a) self,
 }

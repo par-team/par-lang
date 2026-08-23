@@ -189,9 +189,8 @@ writer.close.try
 The `.try` keeps the closing error by sending it to the nearest `catch`, rather than letting cleanup
 discard it. We will cover both constructs in [Error Handling](../quality_of_life/error_handling.md).
 
-The standard library uses this pattern in several places. `Console`, `Bytes.Reader`, and
-`Bytes.Writer` provide `.close*`. `Stream` provides `.cancel*`, while `Sql.Transaction` provides
-`.rollback*`.
+The standard library uses marked cleanup branches in several places. `Console`, `Bytes.Reader`,
+`Bytes.Writer`, and `Stream` provide `.close*`, while `Sql.Transaction` provides `.rollback*`.
 
 Not every choice has a cleanup branch. The marker says that a branch is always safe to select when
 the value is left unused. If no branch has that property, none is marked. The choice then remains
