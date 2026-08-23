@@ -30,8 +30,11 @@ export {
     },
   }
 
-  // Collects the stream into a list, preserving any production error.
+  // Collects the stream into a list. If the stream fails, the list is discarded and the error is returned.
   dec ToList : [<e, a: drop> Stream<e, a>] Try<e, List<a>>
+
+  // Collects the stream into a list. If the stream fails, the items collected so far are returned along with the error.
+  dec Collect : [<e, a> Stream<e, a>] (Try<e, !>) List<a>
 
   // Creates an infallible stream from a list.
   dec FromList : [<a: drop> List<a>] Stream<either {}, a>
@@ -96,6 +99,17 @@ def ToList = [<e, a: drop> stream]
     .item(value) stream => do {
       builder.add(value)
     } in stream.loop,
+  }
+
+def Collect = [<e, a> stream]
+  stream.begin.next.case {
+    .end result => result.case {
+      .ok! => (.ok!) .end!,
+      .err e => (.err e) .end!,
+    }
+    .item(value) stream => do {
+      let (result) list = stream.loop
+    } in (result) .item(value) list,
   }
 
 def FromList = [<a: drop> list] list.begin.case {
