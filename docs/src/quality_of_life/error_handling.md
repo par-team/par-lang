@@ -6,7 +6,7 @@ our programs meet systems beyond their control.
 
 Par represents errors with explicit `Try` values. On top of them, `try`/`catch`/`throw` provide a
 lightweight syntax for propagating errors through a process. And when propagation abandons
-resources in scope, [auto-cleanup](../types/auto_cleanup.md) makes sure they are still closed, canceled, or
+resources in scope, [auto-cleanup](../types/auto_cleanup.md) makes sure they are still closed or
 rolled back.
 
 ## Errors Are Values

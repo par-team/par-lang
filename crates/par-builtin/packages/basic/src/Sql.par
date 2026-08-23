@@ -74,10 +74,10 @@ export {
     // when their results are never inspected; use `.split` for concurrency.
     .execute(String, List<Value>) => (Try<Error, Nat>) self,
 
-    // Run a query and return a lazy stream. Acquisition, startup, and first-row
-    // failures are reported in the outer `Try`; later mid-result failures
-    // surface at the stream's `.end.err`. Cancelling always succeeds. The
-    // stream owns its checked-out connection until drained or cancelled.
+    // Run a query and return a pull-based stream. Acquisition, startup, and
+    // first-row failures are reported in the outer `Try`; failures encountered
+    // by later `.next` requests are reported in the stream's `.end.err`. Closing the
+    // stream releases its checked-out connection and always succeeds.
     .query(String, List<Value>) => (Try<Error, Stream<Error, Row>>) self,
 
     // Begin a transaction. The database handle is returned immediately; the
@@ -107,7 +107,7 @@ export {
   //
   // SQLite does not create a missing database file by default; open with
   // `sqlite://file.db?mode=rwc` to create it. An in-memory SQLite database is
-  // pinned to a single connection, so drain or cancel its query streams before
+  // pinned to a single connection, so drain or close its query streams before
   // running further statements.
   dec Open : [String] Try<Error, Database>
 

@@ -133,14 +133,17 @@ export {
   // Closes a parser, returning any source error.
   dec Close : [<e> Parser<e>] Try<e, !>
 
-  // Streams a parser's remaining input one byte at a time.
-  dec Chunks : [<e> Parser<e>] Stream<e, Bytes>
+  // Streams a parser's remaining input one byte at a time. Closing the stream
+  // closes the parser and drops any resulting source error.
+  dec Chunks : [<e: drop> Parser<e>] Stream<e, Bytes>
 
-  // Splits a parser's remaining input on a byte separator.
-  dec SplitBy : [<e> Parser<e>, Bytes] Stream<e, Bytes>
+  // Splits a parser's remaining input on a byte separator. Closing the stream
+  // closes the parser and drops any resulting source error.
+  dec SplitBy : [<e: drop> Parser<e>, Bytes] Stream<e, Bytes>
 
-  // Splits a parser's remaining input on a byte pattern.
-  dec SplitByPattern : [<e> Parser<e>, Pattern] Stream<e, Bytes>
+  // Splits a parser's remaining input on a byte pattern. Closing the stream
+  // closes the parser and drops any resulting source error.
+  dec SplitByPattern : [<e: drop> Parser<e>, Pattern] Stream<e, Bytes>
 
   // Trims the given pattern once from the start of a byte sequence.
   dec TrimLeft : [Bytes, Pattern] Bytes
@@ -221,40 +224,44 @@ def Close = [<e> parser] parser.case {
   .ready parser => parser.close,
 }
 
-def Chunks = [<e> parser] parser.begin.case {
-  .empty! => .end.ok!,
-  .ready parser => parser.byte.case {
-    .err e => .end.err e,
-    .ok(byte) parser => .item case {
-      .cancel* => parser.begin.case {
-        .empty! => .ok!,
-        .ready parser => parser.close,
-      },
-      .get => (byte) parser.loop,
+def Chunks = [<e: drop> parser] do {
+  parser.begin
+} in case {
+  .close* => parser.case {
+    .empty! => !,
+    .ready parser => let _ = parser.close in !,
+  },
+  .next => parser.case {
+    .empty! => .end.ok!,
+    .ready parser => parser.byte.case {
+      .err e => .end.err e,
+      .ok(byte) parser => .item(byte) parser.loop,
     },
   },
 }
 
-def SplitBy = [<e> parser, separator] parser->SplitByPattern(.bytes separator)
+def SplitBy = [<e: drop> parser, separator] parser->SplitByPattern(.bytes separator)
 
-def SplitByPattern = [<e> parser, separator] parser.begin.case {
-  .empty! => .end.ok!,
-  .ready parser => parser.minMax(.repeat.one.any!, separator).case {
-    .err e => .end.err e,
-    .ok result => result.case {
-      .fail parser => Remainder(.ready parser).case {
-        .err e => .end.err e,
-        .ok chunk => .item case {
-          .cancel* => .ok!,
-          .get => (chunk) .end.ok!,
+def SplitByPattern = [<e: drop> parser, separator] do {
+  parser.begin
+} in case {
+  .close* => parser.case {
+    .empty! => !,
+    .ready parser => let _ = parser.close in !,
+  },
+  .next => parser.case {
+    .empty! => .end.ok!,
+    .ready parser => parser.minMax(.repeat.one.any!, separator).case {
+      .err e => .end.err e,
+      .ok result => result.case {
+        .fail parser => Remainder(.ready parser).case {
+          .err e => .end.err e,
+          .ok chunk => .item(chunk) case {
+            .close* => !,
+            .next => .end.ok!,
+          },
         },
-      },
-      .match(chunk, _) parser => .item case {
-        .cancel* => parser.begin.case {
-          .empty! => .ok!,
-          .ready parser => parser.close,
-        },
-        .get => (chunk) parser.loop,
+        .match(chunk, _) parser => .item(chunk) parser.loop,
       },
     },
   },

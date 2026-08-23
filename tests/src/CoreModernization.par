@@ -22,6 +22,20 @@ import {
 type Key = (Nat) Nat
 type PairList = List<(Key) String>
 
+type NonDroppableStreamError = choice {
+  .recover => List<Nat>,
+}
+
+dec WithNonDroppableError : [<a> Stream<either {}, a>] Stream<NonDroppableStreamError, a>
+def WithNonDroppableError = [<a> stream]
+  stream->Stream.MapErr(box [impossible] impossible.case {})
+
+dec RecoverNatStream : [Try<NonDroppableStreamError, List<Nat>>] List<Nat>
+def RecoverNatStream = [result] result.case {
+  .ok values => values,
+  .err error => error.recover,
+}
+
 def KeyA : Key = (1) 2
 def KeyB : Key = (0) 3
 def KeyC : Key = (2) 0
@@ -152,6 +166,12 @@ def TestStreamCombinators : [Test] ! = [test] do {
     ->Stream.ToList
     ->Try.Ok
 
+  let firstNone = numbers
+    ->Stream.FromList
+    ->Stream.Take(0)
+    ->Stream.ToList
+    ->Try.Ok
+
   let withoutTwo = numbers
     ->Stream.FromList
     ->Stream.Drop(2)
@@ -184,6 +204,7 @@ def TestStreamCombinators : [Test] ! = [test] do {
   test
     .assert("Stream.Map and Stream.Filter compose", transformed == {*(6, 8)})
     .assert("Stream.Take limits a stream", firstTwo == {*(1, 2)})
+    .assert("Stream.Take(0) yields no items", firstNone == {*()})
     .assert("Stream.Drop skips a prefix", withoutTwo == {*(3, 4)})
     .assert("Stream.Enumerate pairs values with indices", enumerated == {*((0) 1, (1) 2, (2) 3, (3) 4)})
     .assert("Stream.TakeWhile keeps the matching prefix", takeUnderThree == {*(1, 2)})
@@ -195,22 +216,36 @@ def TestStreamCombinators : [Test] ! = [test] do {
 } in !
 
 def TestStreamFlattening : [Test] ! = [test] do {
-  let stream1 = *(1, 2)->Stream.FromList
-  let stream2 = *(3)->Stream.FromList
-  let stream3 = *(4, 5)->Stream.FromList
+  let stream1 = *(1, 2)->Stream.FromList->WithNonDroppableError
+  let stream2 = *(3)->Stream.FromList->WithNonDroppableError
+  let stream3 = *(4, 5)->Stream.FromList->WithNonDroppableError
   let nested = *(stream1, stream2, stream3)
 
-  let concatenated = nested->Stream.Concat->Stream.ToList->Try.Ok
+  let concatenated = nested->Stream.Concat->Stream.ToList->RecoverNatStream
 
   let flatMapped = *(1, 2, 3)
     ->Stream.FromList
-    ->Stream.FlatMap(box [n] Stream.FromList(*(n, n * 10)))
+    ->WithNonDroppableError
+    ->Stream.FlatMap(box [n]
+      Stream.FromList(*(n, n * 10))->WithNonDroppableError
+    )
     ->Stream.ToList
-    ->Try.Ok
+    ->RecoverNatStream
+
+  let flattened = *(
+    *(6)->Stream.FromList->WithNonDroppableError,
+    *(7, 8)->Stream.FromList->WithNonDroppableError,
+  )
+    ->Stream.FromList
+    ->WithNonDroppableError
+    ->Stream.Flatten
+    ->Stream.ToList
+    ->RecoverNatStream
 
   test
     .assert("Stream.Concat joins a list of streams", concatenated == {*(1, 2, 3, 4, 5)})
     .assert("Stream.FlatMap maps and flattens streams", flatMapped == {*(1, 10, 2, 20, 3, 30)})
+    .assert("Stream.Flatten joins a stream of streams", flattened == {*(6, 7, 8)})
 } in !
 
 def TestStreamSplitting : [Test] ! = [test] do {

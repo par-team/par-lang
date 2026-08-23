@@ -224,7 +224,7 @@ def TestQueryStartupError: [Test] ! = [test] chan done {
   result.case {
     .err _ => { test.assert("query on a missing table fails at startup", .true!); done! },
     .ok stream => {
-      Stream.Cancel(stream).case { .ok! => {}, .err _ => {} }
+      stream.close
       test.assert("query on a missing table should have failed", .false!)
       done!
     },
@@ -501,12 +501,12 @@ def TestSqlWrittenTemporals: [Test] ! = [test] chan done {
   }
 }
 
-// Cancelling a stream mid-results succeeds and returns its connection to the
+// Closing a stream mid-results succeeds and returns its connection to the
 // pool: the in-memory database has only one connection, so a leaked connection
 // would make the follow-up statement fail.
-def TestCancelMidStream: [Test] ! = [test] chan done {
+def TestCloseMidStream: [Test] ! = [test] chan done {
   catch e: Sql.Error => {
-    test.assert(`cancel test should not error: ${e}`, .false!)
+    test.assert(`close test should not error: ${e}`, .false!)
     done!
   }
 
@@ -517,38 +517,29 @@ def TestCancelMidStream: [Test] ! = [test] chan done {
   db.execute("INSERT INTO nums (n) VALUES (1), (2), (3)", *())[try@db _]
   db.query("SELECT n FROM nums ORDER BY n", *())[try@db rows]
 
-  rows.case {
+  rows.begin.next.case {
     .end _ => {
       db.close
-      test.assert("expected rows before cancelling", .false!)
+      test.assert("expected rows before closing", .false!)
       done!
     },
-    .item rows => {
-      rows.get[row]
+    .item(row) rows => {
       let firstOk = IntField(row, "n").case { .ok n => n == 1, .err _ => .false! }
-      Stream.Cancel(rows).case {
-        .ok! => {
-          db.execute("INSERT INTO nums (n) VALUES (4)", *())[try@db inserted]
-          db.close
-          test.assert("first row read before cancel", firstOk)
-          test.assert("statement after cancel succeeds", inserted == 1)
-          done!
-        },
-        .err e => {
-          db.close
-          test.assert(`cancel failed: ${e}`, .false!)
-          done!
-        },
-      }
+      rows.close
+      db.execute("INSERT INTO nums (n) VALUES (4)", *())[try@db inserted]
+      db.close
+      test.assert("first row read before close", firstOk)
+      test.assert("statement after close succeeds", inserted == 1)
+      done!
     },
   }
 }
 
-// Dropping a live stream selects its marked `.cancel*` branch. The test process
+// Dropping a live stream selects its marked `.close*` branch. The test process
 // can normalize only if the SQL external accepts and completes `#close`.
-def TestAutomaticCancelMidStream: [Test] ! = [test] chan done {
+def TestAutomaticCloseMidStream: [Test] ! = [test] chan done {
   catch e: Sql.Error => {
-    test.assert(`automatic cancel test should not error: ${e}`, .false!)
+    test.assert(`automatic close test should not error: ${e}`, .false!)
     done!
   }
 
@@ -559,17 +550,16 @@ def TestAutomaticCancelMidStream: [Test] ! = [test] chan done {
   db.execute("INSERT INTO auto_nums (n) VALUES (1), (2), (3)", *())[try@db _]
   db.query("SELECT n FROM auto_nums ORDER BY n", *())[try@db rows]
 
-  rows.case {
+  rows.begin.next.case {
     .end _ => {
       db.close
-      test.assert("expected rows before automatic cancellation", .false!)
+      test.assert("expected rows before automatic close", .false!)
       done!
     },
-    .item rows => {
-      rows.get[row]
+    .item(row) rows => {
       let firstOk = IntField(row, "n").case { .ok n => n == 1, .err _ => .false! }
       db.close
-      test.assert("first row read before automatic cancel", firstOk)
+      test.assert("first row read before automatic close", firstOk)
       done!
     },
   }
