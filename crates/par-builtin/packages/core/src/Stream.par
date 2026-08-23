@@ -1,8 +1,8 @@
-// Pull-based streams with fallible completion and explicit cancellation.
+// Finite pull-based streams with fallible production and infallible close.
 //
-// A stream can end successfully, end with an error, or yield one item at a time.
-// Consumers may stop early by calling `.cancel`, which lets the producer close
-// any underlying resource before the stream is discarded.
+// Consumers request one item at a time with `.next`. A requested step can
+// either produce an item, finish successfully, or finish with an error. Consumers may
+// stop early with `.close`, allowing the producer to release its resources.
 export module Stream
 
 import {
@@ -14,23 +14,23 @@ import {
 }
 
 export {
-  // A pull-based sequence of values of type `a` whose completion can fail with
-  // an error of type `e`.
+  // A finite pull-based sequence of values of type `a` whose production can
+  // fail with an error of type `e`.
   //
-  // Cases:
-  // - `.end` means the stream is exhausted. Its payload is `.ok!` on normal
-  //   completion, or `.err` if the producer failed.
-  // - `.item` offers one item. The consumer must either call `.get` to receive
-  //   it and continue, or `.cancel` to stop early.
-  type Stream<e, a> = recursive either {
-    .end Try<e, !>,
-    .item choice {
-      .cancel* => Try<e, !>,
-      .get => (a) self,
+  // Operations:
+  // - `.close` abandons the stream and releases its resources.
+  // - `.next` requests the next step. It returns `.item(value) stream` when an
+  //   item is available, `.end.ok!` on normal completion, or `.end.err e` when
+  //   production fails.
+  type Stream<e, a> = recursive choice {
+    .close* => !,
+    .next => either {
+      .end Try<e, !>,
+      .item(a) self,
     },
   }
 
-  // Collects the stream into a list, preserving any stream error.
+  // Collects the stream into a list, preserving any production error.
   dec ToList : [<e, a: drop> Stream<e, a>] Try<e, List<a>>
 
   // Creates an infallible stream from a list.
@@ -46,25 +46,25 @@ export {
   dec MapErr : [<e1, a> Stream<e1, a>, <e2> box [e1] e2] Stream<e2, a>
 
   // Maps each item to a stream, then flattens the result.
-  dec FlatMap : [<e: drop, a> Stream<e, a>, <b> box [a] Stream<e, b>] Stream<e, b>
+  dec FlatMap : [<e, a> Stream<e, a>, <b> box [a] Stream<e, b>] Stream<e, b>
 
   // Flattens a stream of streams into a single stream.
-  dec Flatten : [<e: drop, a> Stream<e, Stream<e, a>>] Stream<e, a>
+  dec Flatten : [<e, a> Stream<e, Stream<e, a>>] Stream<e, a>
 
   // Concatenates a list of streams into a single stream.
-  dec Concat : [<e: drop, a> List<Stream<e, a>>] Stream<e, a>
+  dec Concat : [<e, a> List<Stream<e, a>>] Stream<e, a>
 
   // Keeps the items for which the test function returns `.true!`.
   dec Filter : [<e, a: share> Stream<e, a>, box [a] Bool] Stream<e, a>
 
-  // Yields at most the requested number of items, cancelling the source if
-  // enough items were taken before it ended.
+  // Yields at most the requested number of items, closing the source when
+  // enough items have been taken.
   dec Take : [<e, a> Stream<e, a>, Nat] Stream<e, a>
 
   // Skips the requested number of items and yields the rest.
   dec Drop : [<e, a: drop> Stream<e, a>, Nat] Stream<e, a>
 
-  // Yields items while the test function returns `.true!`, then cancels the source.
+  // Yields items while the test function returns `.true!`, then closes the source.
   dec TakeWhile : [<e, a: share> Stream<e, a>, box [a] Bool] Stream<e, a>
 
   // Skips items while the test function returns `.true!`, then yields the rest.
@@ -75,263 +75,240 @@ export {
   dec ForEach : [<r> r, <e, a> Stream<e, a>, box [r, a] r] (Try<e, !>) r
 
   // Returns `.ok.true!` if the test function holds for every item.
-  // Short-circuits and cancels the source on the first `.false!`.
+  // Short-circuits and closes the source on the first `.false!`.
   dec All : [<e, a> Stream<e, a>, box [a] Bool] Try<e, Bool>
 
   // Returns `.ok.true!` if the test function holds for at least one item.
-  // Short-circuits and cancels the source on the first `.true!`.
+  // Short-circuits and closes the source on the first `.true!`.
   dec Any : [<e, a> Stream<e, a>, box [a] Bool] Try<e, Bool>
 
   // Calculates the sum of all stream items.
   dec Sum : [<e, a: number> Stream<e, a>] Try<e, a>
-
-  // Cancels a stream if it has not already ended, returning any cancellation
-  // or completion error.
-  dec Cancel : [<e, a> Stream<e, a>] Try<e, !>
 }
 
 def ToList = [<e, a: drop> stream]
   let builder = List.Builder(type a) in
-  stream.begin.case {
+  stream.begin.next.case {
     .end result => result.case {
       .ok! => .ok builder.build,
       .err e => let _ = builder.build in .err e,
     },
-    .item stream => do {
-      stream.get[value]
+    .item(value) stream => do {
       builder.add(value)
     } in stream.loop,
   }
 
 def FromList = [<a: drop> list] list.begin.case {
-  .end! => .end.ok!,
-  .item(value) list => .item case {
-    .cancel* => .ok!,
-    .get => (value) list.loop,
+  .end! => case {
+    .close* => !,
+    .next => .end.ok!,
+  },
+  .item(value) list => case {
+    .close* => !,
+    .next => .item(value) list.loop,
   },
 }
 
-def Map = [<e, a> stream, <b> f] stream.begin.case {
-  .end res => .end res,
-  .item stream => .item case {
-    .cancel* => stream.cancel,
-    .get => do { stream.get[value] } in (f(value)) stream.loop,
-  }
+def Map = [<e, a> stream, <b> f] do {
+  stream.begin
+} in case {
+  .close* => stream.close,
+  .next => stream.next.case {
+    .end result => .end result,
+    .item(value) stream => .item(f(value)) stream.loop,
+  },
 }
 
 def Enumerate = [<e, a> stream]
   let index = 0 in
-  stream.begin.case {
-    .end result => .end result,
-    .item stream => .item case {
-      .cancel* => stream.cancel,
-      .get => do {
-        stream.get[value]
+  do { stream.begin } in case {
+    .close* => stream.close,
+    .next => stream.next.case {
+      .end result => .end result,
+      .item(value) stream => do {
         let current = index
         index += 1
-      } in ((current) value) stream.loop,
+      } in .item((current) value) stream.loop,
     },
   }
 
-def MapErr = [<e1, a> stream, <e2> f] stream.begin.case {
-  .end res => .end res->Try.MapErr(f),
-  .item stream => .item case {
-    .cancel* => stream.cancel->Try.MapErr(f),
-    .get => do { stream.get[value] } in (value) stream.loop,
+def MapErr = [<e1, a> stream, <e2> f] do {
+  stream.begin
+} in case {
+  .close* => stream.close,
+  .next => stream.next.case {
+    .end result => .end result->Try.MapErr(f),
+    .item(value) stream => .item(value) stream.loop,
   },
 }
 
-def FlatMap = [<e: drop, a> stream, <b> f] stream->Map(f)->Flatten
+def FlatMap = [<e, a> stream, <b> f] stream->Map(f)->Flatten
 
-def Flatten = [<e: drop, a> streams] streams.begin@outer.case {
-  .end result => .end result,
-  .item streams => do {
-    streams.get[stream]
-  } in stream.begin@inner.case {
-    .end result => result.case {
-      .ok! => streams.loop@outer,
-      .err e => streams->Cancel.case {
-        .ok! => .end.err e,
-        .err _ => .end.err e,
+def Flatten = [<e, a> streams] case {
+  .close* => do {
+    streams.begin
+    streams.close
+  } in !,
+
+  .next => streams.begin@outer.next.case {
+    .end result => .end result,
+    .item(stream) streams => stream.begin@inner.next.case {
+      .end result => result.case {
+        .ok! => streams.loop@outer,
+        .err e => do {
+          streams.begin
+          streams.close
+        } in .end.err e,
+      },
+      .item(value) stream => .item(value) case {
+        .close* => do {
+          stream.begin
+          stream.close
+          streams.begin
+          streams.close
+        } in !,
+        .next => stream.loop@inner,
       },
     },
-    .item stream => .item case {
-      .cancel* => stream.cancel.case {
-        .ok! => streams->Cancel,
-        .err e => streams->Cancel.case {
-          .ok! => .err e,
-          .err _ => .err e,
+  },
+}
+
+def Concat = [<e, a> streams] streams->FromList->Flatten
+
+def Filter = [<e, a: share> stream, predicate] do {
+  stream.begin
+} in case {
+  .close* => stream.close,
+  .next => stream.next.case {
+    .end result => .end result,
+    .item(value) stream => predicate(value).case {
+      .true! => .item(value) stream.loop,
+      .false! => stream.begin@skip.next.case {
+        .end result => .end result,
+        .item(value) stream => predicate(value).case {
+          .true! => .item(value) stream.loop,
+          .false! => stream.loop@skip,
         },
       },
-      .get => do { stream.get[value] } in (value) stream.loop@inner,
     },
-  },
-}
-
-def Concat = [<e: drop, a> streams] streams.begin@outer.case {
-  .end! => .end.ok!,
-  .item(stream) streams => stream.begin@inner.case {
-    .end result => result.case {
-      .ok! => streams.loop@outer,
-      .err e => do {
-        streams.begin@cancel.case {
-          .end! => {},
-          .item(stream) streams => {
-            stream->Cancel.case {
-              .ok! => {},
-              .err err => { let _ = err },
-            }
-            streams.loop@cancel
-          },
-        }
-      } in .end.err e,
-    },
-    .item stream => .item case {
-      .cancel* => stream.cancel.case {
-        .ok! => do {
-          streams.begin@cancel.case {
-            .end! => {},
-            .item(stream) streams => {
-              stream->Cancel.case {
-                .ok! => {},
-                .err err => { let _ = err },
-              }
-              streams.loop@cancel
-            },
-          }
-        } in .ok!,
-        .err e => do {
-          streams.begin@cancel.case {
-            .end! => {},
-            .item(stream) streams => {
-              stream->Cancel.case {
-                .ok! => {},
-                .err err => { let _ = err },
-              }
-              streams.loop@cancel
-            },
-          }
-        } in .err e,
-      },
-      .get => do { stream.get[value] } in (value) stream.loop@inner,
-    },
-  },
-}
-
-def Filter = [<e, a: share> stream, predicate] stream.begin.case {
-  .end result => .end result,
-  .item stream => do {
-    stream.get[value]
-  } in predicate(value).case {
-    .true! => .item case {
-      .cancel* => stream->Cancel,
-      .get => (value) stream.loop,
-    },
-    .false! => stream.loop,
   },
 }
 
 def Take = [<e, a> stream, n]
   Nat.Repeat(n).begin@take.case {
-    .end! => .end stream->Cancel,
-    .step steps => stream.begin.case {
-      .end result => .end result,
-      .item stream => .item case {
-        .cancel* => stream.cancel,
-        .get => do { stream.get[value] } in (value) steps.loop@take,
+    .end! => case {
+      .close* => do {
+        stream.begin
+        stream.close
+      } in !,
+      .next => do {
+        stream.begin
+        stream.close
+      } in .end.ok!,
+    },
+    .step steps => do {
+      stream.begin
+    } in case {
+      .close* => stream.close,
+      .next => stream.next.case {
+        .end result => .end result,
+        .item(value) stream => .item(value) steps.loop@take,
       },
     },
   }
 
-def Drop = [<e, a: drop> stream, n]
-  Nat.Repeat(n).begin@drop.case {
-    .end! => stream,
-    .step steps => stream.begin.case {
+def Drop = [<e, a: drop> stream, n] case {
+  .close* => do {
+    stream.begin
+    stream.close
+  } in !,
+  .next => Nat.Repeat(n).begin@drop.case {
+    .end! => do {
+      stream.begin
+    } in stream.next,
+    .step steps => do {
+      stream.begin
+    } in stream.next.case {
       .end result => .end result,
-      .item stream => do { stream.get[_] } in steps.loop@drop,
+      .item(_) stream => steps.loop@drop,
     },
+  },
+}
+
+def TakeWhile = [<e, a: share> stream, predicate] do {
+  stream.begin
+} in case {
+  .close* => stream.close,
+  .next => stream.next.case {
+    .end result => .end result,
+    .item(value) stream => predicate(value).case {
+      .true! => .item(value) stream.loop,
+      .false! => do {
+        stream.begin
+        stream.close
+      } in .end.ok!,
+    },
+  },
+}
+
+def DropWhile = [<e, a: share> stream, predicate] case {
+  .close* => do {
+    stream.begin
+    stream.close
+  } in !,
+  .next => stream.begin@drop.next.case {
+    .end result => .end result,
+    .item(value) stream => predicate(value).case {
+      .true! => stream.loop@drop,
+      .false! => .item(value) stream,
+    },
+  },
+}
+
+def ForEach = [<r> result, <e, a> stream, f]
+  stream.begin.next.case {
+    .end status => (status) result,
+    .item(value) stream => do {
+      let result = f(result, value)
+    } in stream.loop,
   }
 
-def TakeWhile = [<e, a: share> stream, predicate] stream.begin.case {
-  .end result => .end result,
-  .item stream => do {
-    stream.get[value]
-  } in predicate(value).case {
-    .true! => .item case {
-      .cancel* => stream->Cancel,
-      .get => (value) stream.loop,
-    },
-    .false! => .end stream->Cancel,
-  },
-}
-
-def DropWhile = [<e, a: share> stream, predicate] stream.begin.case {
-  .end result => .end result,
-  .item stream => do {
-    stream.get[value]
-  } in predicate(value).case {
-    .true! => stream.loop,
-    .false! => .item case {
-      .cancel* => stream->Cancel,
-      .get => (value) stream,
-    },
-  },
-}
-
-def ForEach = [<r> result, <e, a> stream, f] stream.begin.case {
-  .end status => (status) result,
-  .item stream => do {
-    stream.get[value]
-    let result = f(result, value)
-  } in stream.loop,
-}
-
-def All = [<e, a> stream, predicate] stream.begin.case {
+def All = [<e, a> stream, predicate] stream.begin.next.case {
   .end result => result.case {
     .ok! => .ok.true!,
     .err e => .err e,
   },
-  .item stream => do {
-    stream.get[value]
-  } in predicate(value).case {
+  .item(value) stream => predicate(value).case {
     .true! => stream.loop,
-    .false! => stream->Cancel.case {
-      .ok! => .ok.false!,
-      .err e => .err e,
-    },
+    .false! => do {
+      stream.begin
+      stream.close
+    } in .ok.false!,
   },
 }
 
-def Any = [<e, a> stream, predicate] stream.begin.case {
+def Any = [<e, a> stream, predicate] stream.begin.next.case {
   .end result => result.case {
     .ok! => .ok.false!,
     .err e => .err e,
   },
-  .item stream => do {
-    stream.get[value]
-  } in predicate(value).case {
-    .true! => stream->Cancel.case {
-      .ok! => .ok.true!,
-      .err e => .err e,
-    },
+  .item(value) stream => predicate(value).case {
+    .true! => do {
+      stream.begin
+      stream.close
+    } in .ok.true!,
     .false! => stream.loop,
   },
 }
 
 def Sum = [<e, a: number> stream] do {
   let sum = Number.Zero(type a)
-} in stream.begin.case {
+} in stream.begin.next.case {
   .end result => result.case {
     .ok! => .ok sum,
     .err e => .err e,
   },
-  .item stream => do {
-    stream.get[value]
+  .item(value) stream => do {
     sum += value
   } in stream.loop,
-}
-
-def Cancel = [<e, a> stream] stream.begin.case {
-  .end result => result,
-  .item stream => stream.cancel,
 }

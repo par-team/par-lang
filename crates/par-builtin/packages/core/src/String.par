@@ -134,13 +134,16 @@ export {
   dec Close : [<e> Parser<e>] Try<e, !>
 
   // Splits a parser's remaining input into lines separated by `\n` or `\r\n`.
-  dec Lines : [<e> Parser<e>] Stream<e, String>
+  // Closing the stream closes the parser and drops any resulting source error.
+  dec Lines : [<e: drop> Parser<e>] Stream<e, String>
 
-  // Splits a parser's remaining input on a string separator.
-  dec SplitBy : [<e> Parser<e>, String] Stream<e, String>
+  // Splits a parser's remaining input on a string separator. Closing the stream
+  // closes the parser and drops any resulting source error.
+  dec SplitBy : [<e: drop> Parser<e>, String] Stream<e, String>
 
-  // Splits a parser's remaining input on a string pattern.
-  dec SplitByPattern : [<e> Parser<e>, Pattern] Stream<e, String>
+  // Splits a parser's remaining input on a string pattern. Closing the stream
+  // closes the parser and drops any resulting source error.
+  dec SplitByPattern : [<e: drop> Parser<e>, Pattern] Stream<e, String>
 
   // Trims whitespace from both ends of a string.
   dec Trim : [String] String
@@ -228,28 +231,30 @@ def Close = [<e> parser] parser.case {
   .ready parser => parser.close,
 }
 
-def Lines = [<e> parser] parser->SplitByPattern(.or *(.str "\r\n", .str "\n"))
+def Lines = [<e: drop> parser] parser->SplitByPattern(.or *(.str "\r\n", .str "\n"))
 
-def SplitBy = [<e> parser, separator] parser->SplitByPattern(.str separator)
+def SplitBy = [<e: drop> parser, separator] parser->SplitByPattern(.str separator)
 
-def SplitByPattern = [<e> parser, separator] parser.begin.case {
-  .empty! => .end.ok!,
-  .ready parser => parser.minMax(.repeat.one.any!, separator).case {
-    .err e => .end.err e,
-    .ok result => result.case {
-      .fail parser => Remainder(.ready parser).case {
-        .err e => .end.err e,
-        .ok chunk => .item case {
-          .cancel* => .ok!,
-          .get => (chunk) .end.ok!,
+def SplitByPattern = [<e: drop> parser, separator] do {
+  parser.begin
+} in case {
+  .close* => parser.case {
+    .empty! => !,
+    .ready parser => let _ = parser.close in !,
+  },
+  .next => parser.case {
+    .empty! => .end.ok!,
+    .ready parser => parser.minMax(.repeat.one.any!, separator).case {
+      .err e => .end.err e,
+      .ok result => result.case {
+        .fail parser => Remainder(.ready parser).case {
+          .err e => .end.err e,
+          .ok chunk => .item(chunk) case {
+            .close* => !,
+            .next => .end.ok!,
+          },
         },
-      },
-      .match(chunk, _) parser => .item case {
-        .cancel* => parser.begin.case {
-          .empty! => .ok!,
-          .ready parser => parser.close,
-        },
-        .get => (chunk) parser.loop,
+        .match(chunk, _) parser => .item(chunk) parser.loop,
       },
     },
   },

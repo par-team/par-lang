@@ -4,8 +4,9 @@ import {
   @core/Bool
   @core/List
   @core/Nat
-  @core/Try
   @core/String
+  @core/Stream
+  @core/Try
   @basic/Console
   @basic/Os
 }
@@ -64,82 +65,16 @@ def TraverseDirectory = [dirPath]
     .dir(_, nested) rest => List.Concat(*(nested.loop, rest.loop)),
   }
 
-dec GrepFile : [String, Os.Reader] Iterator<Os.Error, (Nat) String>
+dec GrepFile : [String, Os.Reader] Stream<Os.Error, (Nat) String>
 def GrepFile = [needle, reader]
   String.ParseReader(reader)
-    ->Lines
-    ->Enumerate1
-    ->Filter(box [(_) line] Contains(needle, line))
+    ->String.Lines
+    ->Stream.Enumerate
+    ->Stream.Map(box [(n) line] (n + 1) line)
+    ->Stream.Filter(box [(_) line] Contains(needle, line))
 
 // ---
 
 dec Contains : [String, String] Bool
 def Contains = [needle, haystack]
   String.Find(haystack, .str needle) is .some _
-
-// ---
-
-type Iterator<e, a> = recursive choice {
-  .close* => Try<e, !>,
-  .next => either {
-    .end Try<e, !>,
-    .item(a) self,
-  }
-}
-
-dec Lines : [<e> String.Parser<e>] Iterator<e, String>
-def Lines = [<e> parser] do { parser.begin } in case {
-  .close* => parser.case {
-    .empty! => .ok!,
-    .ready parser => parser.close,
-  },
-
-  .next => parser.case {
-    .empty! => .end.ok!,
-    .ready parser => parser.minMax(.repeat.one.any!, .str "\n").case {
-      .err e => .end.err e,
-      .ok result => result.case {
-        .fail parser => String.Remainder(.ready parser).case {
-          .err e => .end.err e,
-          .ok line => .item(line) case {
-            .close* => .ok!,
-            .next => .end.ok!,
-          },
-        },
-        .match(line, _) parser => .item(line) parser.loop,
-      },
-    },
-  }
-}
-
-dec Filter : [<e, a> Iterator<e, box a>, box [a] Bool] Iterator<e, a>
-def Filter = [<e, a> iter, predicate] do { iter.begin } in case {
-  .close* => iter.close,
-  .next => iter.next.case {
-    .end result => .end result,
-    .item(value) iter => predicate(value).case {
-      .true! => .item(value) iter.loop,
-      .false! => iter.begin@skip.next.case {
-        .end result => .end result,
-        .item(value) iter => predicate(value).case {
-          .true! => .item(value) iter.loop,
-          .false! => iter.loop@skip,
-        }
-      },
-    }
-  }
-}
-
-dec Enumerate1 : [<e, a> Iterator<e, a>] Iterator<e, (Nat) a>
-def Enumerate1 = [<e, a> iter] do {
-  let index = 1
-  iter.begin
-} in case {
-  .close* => iter.close,
-  .next => iter.next.case {
-    .end result => .end result,
-    .item(value) iter => .item((index) value) do {
-      index += 1
-    } in iter.loop
-  }
-}

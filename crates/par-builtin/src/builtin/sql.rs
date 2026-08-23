@@ -202,7 +202,7 @@ async fn run_execute(pool: &AnyPool, sql: &str, params: &[Data]) -> Result<u64, 
 
 async fn db_query(mut handle: Handle, pool: AnyPool, sql: String, params: Vec<Data>) {
     // Bounded acquire. The stream owns this connection until it is fully drained
-    // or cancelled, at which point the connection returns to the pool.
+    // or closed, at which point the connection returns to the pool.
     let mut conn = match timeout(ACQUIRE_TIMEOUT, pool.acquire()).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(err)) => return query_startup_err(handle, err.to_string()),
@@ -233,6 +233,12 @@ async fn db_query(mut handle: Handle, pool: AnyPool, sql: String, params: Vec<Da
 
     let mut pending = first;
     loop {
+        match handle.case().await.as_str() {
+            "close" | "#close" => return handle.break_(),
+            "next" => {}
+            _ => unreachable!(),
+        }
+
         let next = match pending.take() {
             Some(cells) => Some(Ok(cells)),
             None => match timeout(STEP_TIMEOUT, stream.next()).await {
@@ -256,19 +262,10 @@ async fn db_query(mut handle: Handle, pool: AnyPool, sql: String, params: Vec<Da
                 handle.signal(literal!("err"));
                 return handle.provide_string(ParString::from(err));
             }
-            // One row available: .item choice { .cancel, .get }
+            // One requested row is available: .item(row) self
             Some(Ok(cells)) => {
                 handle.signal(literal!("item"));
-                match handle.case().await.as_str() {
-                    "cancel" | "#close" => {
-                        handle.signal(literal!("ok"));
-                        return handle.break_();
-                    }
-                    "get" => {
-                        provide_row(handle.send(), &cells);
-                    }
-                    _ => unreachable!(),
-                }
+                provide_row(handle.send(), &cells);
             }
         }
     }
