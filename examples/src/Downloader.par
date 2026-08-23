@@ -3,7 +3,6 @@ module Downloader
 import {
   @core/BoxMap
   @core/Bytes
-  @core/Cell
   @core/Int
   @core/List
   @core/Map
@@ -29,7 +28,7 @@ def Main =
   let rootPath = Os.Path(".").append("Downloads") in
   YieldDownloadRequests("127.0.0.1:3000", rootPath)  // : List<(Url, Os.Path)!>
     ->List.Map(box DownloadFile)                     // : List<List<Event>>
-    ->FanIn                                          // : List<Event>
+    ->List.Merge                                     // : List<Event>
     ->ShowDownloadProgress(rootPath)                 // : !
 
 dec YieldDownloadRequests : [String, Os.Path] List<(Url, Os.Path)!>
@@ -219,17 +218,4 @@ def NewProgressTracker: ProgressTracker = do {
       sumDownloaded += size
     } in loop,
   }
-}
-
-// ---
-
-dec FanIn : [<a> List<List<a>>] List<a>
-def FanIn = [<a> lists] chan yield {
-  Cell.Share(yield, lists.begin.case {
-    .end! => .end!,
-    .item(list) lists => .split(list.begin.case {
-      .end! => .end!,
-      .item(value) list => .take[yield] .put(yield.item(value)) list.loop,
-    }) lists.loop
-  }).end!
 }
