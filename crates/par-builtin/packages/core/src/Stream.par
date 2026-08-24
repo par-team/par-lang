@@ -8,8 +8,10 @@ export module Stream
 import {
   Bool
   List
+  Map as CoreMap
   Nat
   Number
+  Option
   Try
 }
 
@@ -28,6 +30,38 @@ export {
       .end Try<e, !>,
       .item(a) self,
     },
+  }
+
+  type Group<e, a> = iterative choice {
+    .end => ?,
+    .spawn(Stream<e, a>) => self,
+    .cancelAll => self,
+  }
+
+  type Registry<id, e, a> = iterative choice {
+    .end => ?,
+    .alloc(id) => either {
+      .taken self,
+      .free choice {
+        .spawn(Stream<e, a>) => self,
+      }
+    }
+    .cancel(id) => (Bool) self,
+    .cancelAll => self,
+  }
+
+  type Events<id, e, a> = recursive either {
+    .end!,
+    .event(id, Event<e, a>) choice {
+      .next => self,
+    }
+  }
+
+  type Event<e, a> = either {
+    .spawned!,
+    .cancelled!,
+    .ended Try<e, !>,
+    .produced a,
   }
 
   // Collects the stream into a list. If the stream fails, the list is discarded and the error is returned.
@@ -87,6 +121,12 @@ export {
 
   // Calculates the sum of all stream items.
   dec Sum : [<e, a: number> Stream<e, a>] Try<e, a>
+
+  dec Group : [<e, a> dual Group<e, a>] Events<Nat, e, a>
+
+  dec Registry : [<id: data, e, a> dual Registry<id, e, a>] Events<id, e, a>
+
+  dec Events : [<id, e, a> Events<id, e, a>] List<(id) Event<e, a>>
 }
 
 def ToList = [<e, a: drop> stream]
@@ -325,4 +365,141 @@ def Sum = [<e, a: number> stream] do {
   .item(value) stream => do {
     sum += value
   } in stream.loop,
+}
+
+def Events = [<id, e, a> events] events.begin.case {
+  .end! => .end!,
+  .event(id, event) events => .item((id) event) events.next.loop,
+}
+
+def Group = [<e, a> ctrl] Registry(chan reg {
+  let idx = 0
+  ctrl.begin.case {
+    .end! => { reg.end! }
+    .spawn(stream) => {
+      reg.alloc(idx).case {
+        .taken => { ctrl.loop }  // impossible
+        .free => { reg.spawn(stream); idx += 1; ctrl.loop }
+      }
+    }
+    .cancelAll => { reg.cancelAll; ctrl.loop }
+  }
+})
+
+def Registry = [<id: data, e, a> ctrl] chan yield {
+  let tracking = CoreMap.New(type id, type Bool)
+
+  poll(RegistryFan(ctrl)) {
+    client => {
+      client.case {
+        .stream(id) => {
+          tracking.entry(id)[default(.false!) flag]
+
+          client.case {
+            .end result => {
+              tracking.delete
+              yield.event(id, .ended result).case { .next => {} }
+              submit()
+            }
+
+            .item(value) => {
+              yield.event(id, .produced value)
+              if flag => {
+                tracking.delete
+                client.close
+                yield.case { .next => {} }
+                yield.event(id, .cancelled!).case { .next => {} }
+                submit()
+              }
+              tracking.put(flag)
+              client.next
+              yield.case { .next => {} }
+              submit(client)
+            }
+          }
+        }
+
+        .registry => {
+          client.case {
+            .end! => { submit() }
+
+            .alloc(id) => {
+              tracking.entry(id)[flag]
+              if flag is .some flag => {
+                tracking.put(flag)
+                client.taken
+                submit(client)
+              }
+
+              tracking.put(.false!)
+              client.free[client1]
+              yield.event(id, .spawned!).case { .next => {} }
+              submit(client, client1)
+            }
+
+            .cancel(id) => {
+              tracking.entry(id)[flag]
+              if flag is .none! => {
+                tracking.delete
+                submit(client(.false!))
+              }
+              tracking.put(.true!)
+              submit(client(.true!))
+            }
+
+            .cancelAll => {
+              tracking.keys[ids]
+              ids.begin.case {
+                .item(id) => { tracking.entry(id)[_].put(.true!); ids.loop }
+                .end! => { submit(client) }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    else => { yield.end! }
+  }
+}
+
+type RegistryFan<id, e, a> = recursive either {
+  .stream(id) either {
+    .end Try<e, !>,
+    .item(a) choice {
+      .close => !,
+      .next => self,
+    },
+  }
+  .registry either {
+    .end!,
+    .alloc(id) choice {
+      .taken => self,
+      .free => (self) self,
+    }
+    .cancel(id) [Bool] self,
+    .cancelAll self,
+  }
+}
+
+dec RegistryFan : [<id: share, e, a> dual Registry<id, e, a>] RegistryFan<id, e, a>
+def RegistryFan = [<id: share, e, a> ctrl] ctrl.begin.case {
+  .end! => .registry.end!,
+
+  .alloc(id) ctrl => .registry.alloc(id) case {
+    .taken => ctrl.taken.loop,
+
+    .free => ctrl.free.case {
+      .spawn(stream) ctrl => (do { stream.begin } in stream.next.case {
+        .end result => .stream(id).end result,
+        .item(value) stream => .stream(id).item(value) case {
+          .close => stream.close,
+          .next => stream.loop,
+        },
+      }) ctrl.loop,
+    }
+  }
+
+  .cancel(id) ctrl => .registry.cancel(id) [flag] ctrl(flag).loop,
+  .cancelAll ctrl => .registry.cancelAll ctrl.loop,
 }
