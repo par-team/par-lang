@@ -126,7 +126,7 @@ export {
 
   dec Registry : [<id: data, e, a> dual Registry<id, e, a>] Events<id, e, a>
 
-  dec Events : [<id, e, a> Events<id, e, a>] List<(id) Event<e, a>>
+  dec EventsToList : [<id, e, a> Events<id, e, a>] List<(id) Event<e, a>>
 }
 
 def ToList = [<e, a: drop> stream]
@@ -367,7 +367,7 @@ def Sum = [<e, a: number> stream] do {
   } in stream.loop,
 }
 
-def Events = [<id, e, a> events] events.begin.case {
+def EventsToList = [<id, e, a> events] events.begin.case {
   .end! => .end!,
   .event(id, event) events => .item((id) event) events.next.loop,
 }
