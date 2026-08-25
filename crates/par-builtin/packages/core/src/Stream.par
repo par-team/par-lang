@@ -199,28 +199,16 @@ def MapErr = [<e1, a> stream, <e2> f] do {
 def FlatMap = [<e, a> stream, <b> f] stream->Map(f)->Flatten
 
 def Flatten = [<e, a> streams] case {
-  .close* => do {
-    streams.begin
-    streams.close
-  } in !,
-
+  .close* => !,
   .next => streams.begin@outer.next.case {
     .end result => .end result,
     .item(stream) streams => stream.begin@inner.next.case {
       .end result => result.case {
         .ok! => streams.loop@outer,
-        .err e => do {
-          streams.begin
-          streams.close
-        } in .end.err e,
+        .err e => .end.err e,
       },
       .item(value) stream => .item(value) case {
-        .close* => do {
-          stream.begin
-          stream.close
-          streams.begin
-          streams.close
-        } in !,
+        .close* => !,
         .next => stream.loop@inner,
       },
     },
@@ -232,7 +220,7 @@ def Concat = [<e, a> streams] streams->FromList->Flatten
 def Filter = [<e, a: share> stream, predicate] do {
   stream.begin
 } in case {
-  .close* => stream.close,
+  .close* => !,
   .next => stream.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
@@ -249,42 +237,27 @@ def Filter = [<e, a: share> stream, predicate] do {
 }
 
 def Take = [<e, a> stream, n]
-  Nat.Repeat(n).begin@take.case {
+  Nat.Repeat(n).begin.case {
     .end! => case {
-      .close* => do {
-        stream.begin
-        stream.close
-      } in !,
-      .next => do {
-        stream.begin
-        stream.close
-      } in .end.ok!,
+      .close* => !,
+      .next => .end.ok!,
     },
-    .step steps => do {
-      stream.begin
-    } in case {
+    .step steps => case {
       .close* => stream.close,
       .next => stream.next.case {
         .end result => .end result,
-        .item(value) stream => .item(value) steps.loop@take,
+        .item(value) stream => .item(value) steps.loop,
       },
     },
   }
 
 def Drop = [<e, a: drop> stream, n] case {
-  .close* => do {
-    stream.begin
-    stream.close
-  } in !,
-  .next => Nat.Repeat(n).begin@drop.case {
-    .end! => do {
-      stream.begin
-    } in stream.next,
-    .step steps => do {
-      stream.begin
-    } in stream.next.case {
+  .close* => !,
+  .next => Nat.Repeat(n).begin.case {
+    .end! => stream.next,
+    .step steps => stream.next.case {
       .end result => .end result,
-      .item(_) stream => steps.loop@drop,
+      .item(_) stream => steps.loop,
     },
   },
 }
@@ -292,28 +265,22 @@ def Drop = [<e, a: drop> stream, n] case {
 def TakeWhile = [<e, a: share> stream, predicate] do {
   stream.begin
 } in case {
-  .close* => stream.close,
+  .close* => !,
   .next => stream.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
       .true! => .item(value) stream.loop,
-      .false! => do {
-        stream.begin
-        stream.close
-      } in .end.ok!,
+      .false! => .end.ok!,
     },
   },
 }
 
 def DropWhile = [<e, a: share> stream, predicate] case {
-  .close* => do {
-    stream.begin
-    stream.close
-  } in !,
-  .next => stream.begin@drop.next.case {
+  .close* => !,
+  .next => stream.begin.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
-      .true! => stream.loop@drop,
+      .true! => stream.loop,
       .false! => .item(value) stream,
     },
   },
@@ -334,10 +301,7 @@ def All = [<e, a> stream, predicate] stream.begin.next.case {
   },
   .item(value) stream => predicate(value).case {
     .true! => stream.loop,
-    .false! => do {
-      stream.begin
-      stream.close
-    } in .ok.false!,
+    .false! => .ok.false!,
   },
 }
 
@@ -347,10 +311,7 @@ def Any = [<e, a> stream, predicate] stream.begin.next.case {
     .err e => .err e,
   },
   .item(value) stream => predicate(value).case {
-    .true! => do {
-      stream.begin
-      stream.close
-    } in .ok.true!,
+    .true! => .ok.true!,
     .false! => stream.loop,
   },
 }
