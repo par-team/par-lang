@@ -8,8 +8,10 @@ export module Stream
 import {
   Bool
   List
+  Map as CoreMap
   Nat
   Number
+  Option
   Try
 }
 
@@ -28,6 +30,80 @@ export {
       .end Try<e, !>,
       .item(a) self,
     },
+  }
+
+  // Controls a dynamic group of concurrently pulled streams.
+  //
+  // - `.spawn(stream)` adds a stream.
+  // - `.cancelAll` requests cooperative cancellation of all currently active streams.
+  // - `.end` stops the controller without cancelling those already active.
+  //
+  // When served by `Group`, streams receive consecutive `Nat` IDs starting at zero.
+  type Group<e, a> = iterative choice {
+    .end => ?,
+    .spawn(Stream<e, a>) => self,
+    .cancelAll => self,
+  }
+
+  // Controls a dynamic registry of concurrently pulled streams identified by `id`.
+  //
+  // - `.alloc(id)` — tries to reserves an ID for a stream, with two possible results:
+  //   - `.free` — obliges the controller to provide its stream with `.spawn`, while
+  //   - `.taken` — means the ID is already in use, and the stream cannot be spawned.
+  // - `.cancel(id)` — requests cooperative cancellation of the stream with the given ID
+  //   and returns `.true!` when such stream is currently active. The ID remains taken
+  //   until its stream cooperatively completes the cancellation.
+  // - `.cancelAll` — requests cooperative cancellation of all currently active streams.
+  // - `.end` — stops the controller without cancelling active streams.
+  type Registry<id, e, a> = iterative choice {
+    .end => ?,
+    .alloc(id) => either {
+      .taken self,
+      .free choice {
+        .spawn(Stream<e, a>) => self,
+      }
+    }
+    .cancel(id) => (Bool) self,
+    .cancelAll => self,
+  }
+
+  // A finite sequence of lifecycle and production events from a stream group.
+  //
+  // Events from different streams are interleaved by readiness. For each ID,
+  // `.spawned!` comes first, produced values remain in stream order, and
+  // `.ended result` or `.cancelled!` terminates its lifecycle before that ID can
+  // be reused.
+  //
+  // After each event, the consumer must select `.next`. This acknowledges event
+  // delivery, but streams are pulled eagerly: the first pull starts when a stream
+  // is spawned, and a subsequent pull may start before the current event is
+  // acknowledged. At most one pull is outstanding per stream.
+  //
+  // Events may be dropped via auto-cleanup (if the items and errors are droppable),
+  // but keep in mind that dropping does not cancel the backing streams in a group or
+  // registry. The events will still be generated and consumed in the background.
+  type Events<id, e, a> = recursive either {
+    .end!,
+    .event(id, Event<e, a>) choice {
+      .next* => self,
+    }
+  }
+
+  // A lifecycle or production event from a registered stream.
+  //
+  // - `.spawned!` — the stream was accepted.
+  // - `.produced value` — the stream produced a value.
+  // - `.ended result` — the stream ended normally or with an error.
+  // - `.cancelled!` — the registry closed the stream after cancellation.
+  //
+  // Cancellation cannot interrupt an outstanding pull. It may therefore be
+  // preceded by one final `.produced value`, or natural `.ended result` may win
+  // instead.
+  type Event<e, a> = either {
+    .spawned!,
+    .cancelled!,
+    .ended Try<e, !>,
+    .produced a,
   }
 
   // Collects the stream into a list. If the stream fails, the list is discarded and the error is returned.
@@ -87,6 +163,36 @@ export {
 
   // Calculates the sum of all stream items.
   dec Sum : [<e, a: number> Stream<e, a>] Try<e, a>
+
+  // Runs a stream group and returns its readiness-ordered events. The event
+  // sequence ends after the controller and all spawned streams have terminated.
+  //
+  // ```par
+  // let events = Stream.Group(chan group {
+  //   group.spawn(firstStream)
+  //   group.spawn(secondStream)
+  //   group.end!
+  // })
+  // ```
+  dec Group : [<e, a> dual Group<e, a>] Events<Nat, e, a>
+
+  // Runs a keyed stream registry and returns its readiness-ordered events. The
+  // event sequence ends after the controller and all registered streams have terminated.
+  //
+  // ```par
+  // let events = Stream.Registry(chan registry {
+  //   registry.alloc(id).case {
+  //     .taken => {}
+  //     .free => { registry.spawn(stream) }
+  //   }
+  //   registry.end!
+  // })
+  // ```
+  dec Registry : [<id: data, e, a> dual Registry<id, e, a>] Events<id, e, a>
+
+  // Converts an event sequence to a list, preserving its order and selecting
+  // `.next` after every event.
+  dec EventsToList : [<id, e, a> Events<id, e, a>] List<(id) Event<e, a>>
 }
 
 def ToList = [<e, a: drop> stream]
@@ -159,28 +265,16 @@ def MapErr = [<e1, a> stream, <e2> f] do {
 def FlatMap = [<e, a> stream, <b> f] stream->Map(f)->Flatten
 
 def Flatten = [<e, a> streams] case {
-  .close* => do {
-    streams.begin
-    streams.close
-  } in !,
-
+  .close* => !,
   .next => streams.begin@outer.next.case {
     .end result => .end result,
     .item(stream) streams => stream.begin@inner.next.case {
       .end result => result.case {
         .ok! => streams.loop@outer,
-        .err e => do {
-          streams.begin
-          streams.close
-        } in .end.err e,
+        .err e => .end.err e,
       },
       .item(value) stream => .item(value) case {
-        .close* => do {
-          stream.begin
-          stream.close
-          streams.begin
-          streams.close
-        } in !,
+        .close* => !,
         .next => stream.loop@inner,
       },
     },
@@ -192,7 +286,7 @@ def Concat = [<e, a> streams] streams->FromList->Flatten
 def Filter = [<e, a: share> stream, predicate] do {
   stream.begin
 } in case {
-  .close* => stream.close,
+  .close* => !,
   .next => stream.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
@@ -209,42 +303,27 @@ def Filter = [<e, a: share> stream, predicate] do {
 }
 
 def Take = [<e, a> stream, n]
-  Nat.Repeat(n).begin@take.case {
+  Nat.Repeat(n).begin.case {
     .end! => case {
-      .close* => do {
-        stream.begin
-        stream.close
-      } in !,
-      .next => do {
-        stream.begin
-        stream.close
-      } in .end.ok!,
+      .close* => !,
+      .next => .end.ok!,
     },
-    .step steps => do {
-      stream.begin
-    } in case {
+    .step steps => case {
       .close* => stream.close,
       .next => stream.next.case {
         .end result => .end result,
-        .item(value) stream => .item(value) steps.loop@take,
+        .item(value) stream => .item(value) steps.loop,
       },
     },
   }
 
 def Drop = [<e, a: drop> stream, n] case {
-  .close* => do {
-    stream.begin
-    stream.close
-  } in !,
-  .next => Nat.Repeat(n).begin@drop.case {
-    .end! => do {
-      stream.begin
-    } in stream.next,
-    .step steps => do {
-      stream.begin
-    } in stream.next.case {
+  .close* => !,
+  .next => Nat.Repeat(n).begin.case {
+    .end! => stream.next,
+    .step steps => stream.next.case {
       .end result => .end result,
-      .item(_) stream => steps.loop@drop,
+      .item(_) stream => steps.loop,
     },
   },
 }
@@ -252,28 +331,22 @@ def Drop = [<e, a: drop> stream, n] case {
 def TakeWhile = [<e, a: share> stream, predicate] do {
   stream.begin
 } in case {
-  .close* => stream.close,
+  .close* => !,
   .next => stream.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
       .true! => .item(value) stream.loop,
-      .false! => do {
-        stream.begin
-        stream.close
-      } in .end.ok!,
+      .false! => .end.ok!,
     },
   },
 }
 
 def DropWhile = [<e, a: share> stream, predicate] case {
-  .close* => do {
-    stream.begin
-    stream.close
-  } in !,
-  .next => stream.begin@drop.next.case {
+  .close* => !,
+  .next => stream.begin.next.case {
     .end result => .end result,
     .item(value) stream => predicate(value).case {
-      .true! => stream.loop@drop,
+      .true! => stream.loop,
       .false! => .item(value) stream,
     },
   },
@@ -294,10 +367,7 @@ def All = [<e, a> stream, predicate] stream.begin.next.case {
   },
   .item(value) stream => predicate(value).case {
     .true! => stream.loop,
-    .false! => do {
-      stream.begin
-      stream.close
-    } in .ok.false!,
+    .false! => .ok.false!,
   },
 }
 
@@ -307,10 +377,7 @@ def Any = [<e, a> stream, predicate] stream.begin.next.case {
     .err e => .err e,
   },
   .item(value) stream => predicate(value).case {
-    .true! => do {
-      stream.begin
-      stream.close
-    } in .ok.true!,
+    .true! => .ok.true!,
     .false! => stream.loop,
   },
 }
@@ -325,4 +392,141 @@ def Sum = [<e, a: number> stream] do {
   .item(value) stream => do {
     sum += value
   } in stream.loop,
+}
+
+def EventsToList = [<id, e, a> events] events.begin.case {
+  .end! => .end!,
+  .event(id, event) events => .item((id) event) events.next.loop,
+}
+
+def Group = [<e, a> ctrl] Registry(chan reg {
+  let idx = 0
+  ctrl.begin.case {
+    .end! => { reg.end! }
+    .spawn(stream) => {
+      reg.alloc(idx).case {
+        .taken => { ctrl.loop }  // impossible
+        .free => { reg.spawn(stream); idx += 1; ctrl.loop }
+      }
+    }
+    .cancelAll => { reg.cancelAll; ctrl.loop }
+  }
+})
+
+def Registry = [<id: data, e, a> ctrl] chan yield {
+  let tracking = CoreMap.New(type id, type Bool)
+
+  poll(RegistryFan(ctrl)) {
+    client => {
+      client.case {
+        .stream(id) => {
+          tracking.entry(id)[default(.false!) flag]
+
+          client.case {
+            .end result => {
+              tracking.delete
+              yield.event(id, .ended result).case { .next* => {} }
+              submit()
+            }
+
+            .item(value) => {
+              yield.event(id, .produced value)
+              if flag => {
+                tracking.delete
+                client.close
+                yield.case { .next* => {} }
+                yield.event(id, .cancelled!).case { .next* => {} }
+                submit()
+              }
+              tracking.put(flag)
+              client.next
+              yield.case { .next* => {} }
+              submit(client)
+            }
+          }
+        }
+
+        .registry => {
+          client.case {
+            .end! => { submit() }
+
+            .alloc(id) => {
+              tracking.entry(id)[flag]
+              if flag is .some flag => {
+                tracking.put(flag)
+                client.taken
+                submit(client)
+              }
+
+              tracking.put(.false!)
+              client.free[client1]
+              yield.event(id, .spawned!).case { .next* => {} }
+              submit(client, client1)
+            }
+
+            .cancel(id) => {
+              tracking.entry(id)[flag]
+              if flag is .none! => {
+                tracking.delete
+                submit(client(.false!))
+              }
+              tracking.put(.true!)
+              submit(client(.true!))
+            }
+
+            .cancelAll => {
+              tracking.keys[ids]
+              ids.begin.case {
+                .item(id) => { tracking.entry(id)[_].put(.true!); ids.loop }
+                .end! => { submit(client) }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    else => { yield.end! }
+  }
+}
+
+type RegistryFan<id, e, a> = recursive either {
+  .stream(id) either {
+    .end Try<e, !>,
+    .item(a) choice {
+      .close => !,
+      .next => self,
+    },
+  }
+  .registry either {
+    .end!,
+    .alloc(id) choice {
+      .taken => self,
+      .free => (self) self,
+    }
+    .cancel(id) [Bool] self,
+    .cancelAll self,
+  }
+}
+
+dec RegistryFan : [<id: share, e, a> dual Registry<id, e, a>] RegistryFan<id, e, a>
+def RegistryFan = [<id: share, e, a> ctrl] ctrl.begin.case {
+  .end! => .registry.end!,
+
+  .alloc(id) ctrl => .registry.alloc(id) case {
+    .taken => ctrl.taken.loop,
+
+    .free => ctrl.free.case {
+      .spawn(stream) ctrl => (do { stream.begin } in stream.next.case {
+        .end result => .stream(id).end result,
+        .item(value) stream => .stream(id).item(value) case {
+          .close => stream.close,
+          .next => stream.loop,
+        },
+      }) ctrl.loop,
+    }
+  }
+
+  .cancel(id) ctrl => .registry.cancel(id) [flag] ctrl(flag).loop,
+  .cancelAll ctrl => .registry.cancelAll ctrl.loop,
 }

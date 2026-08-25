@@ -141,6 +141,12 @@ export {
 
   // Calculates the sum of all elements in a list.
   dec Sum : [<a: number> List<a>] a
+
+  // Nondeterministically merges lists into a single list. The order of elements is determined by readiness. Items of a single
+  // list are yielded in order, but items from different lists may be interleaved depending on which list is ready to yield next.
+  //
+  // This is an implementation of a fan-in pattern, where a single consumer receives items from multiple producers.
+  dec Merge : [<a> List<List<a>>] List<a>
 }
 
 def Builder = [type a]
@@ -348,4 +354,24 @@ def Sum = [<a: number> list] do {
 } in list.begin.case {
   .end! => sum,
   .item(x) xs => do { sum += x } in xs.loop,
+}
+
+def Merge = [<a> lists] do {
+  let fan : ListFan<a> = lists.begin.case {
+    .end! => .end!,
+    .item(list) lists => .spawn(list) lists.loop,
+  }
+} in poll(fan) {
+  client => client.case {
+    .end! => submit(),
+    .spawn(left) right => submit(left, right),
+    .item(x) fan => .item(x) submit(fan),
+  }
+  else => .end!,
+}
+
+type ListFan<a> = recursive either {
+  .end!,
+  .spawn(self) self,
+  .item(a) self,
 }

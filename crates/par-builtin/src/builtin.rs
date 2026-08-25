@@ -107,10 +107,6 @@ const CORE_SOURCE_FILES: &[BuiltinSourceFile] = &[
         source: include_str!("../packages/core/src/Float.par"),
     },
     BuiltinSourceFile {
-        relative_path_from_src: "Cell.par",
-        source: include_str!("../packages/core/src/Cell.par"),
-    },
-    BuiltinSourceFile {
         relative_path_from_src: "Char.par",
         source: include_str!("../packages/core/src/Char.par"),
     },
