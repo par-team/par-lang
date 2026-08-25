@@ -32,12 +32,29 @@ export {
     },
   }
 
+  // Controls a dynamic group of concurrently pulled streams.
+  //
+  // - `.spawn(stream)` adds a stream.
+  // - `.cancelAll` requests cooperative cancellation of all currently active streams.
+  // - `.end` stops the controller without cancelling those already active.
+  //
+  // When served by `Group`, streams receive consecutive `Nat` IDs starting at zero.
   type Group<e, a> = iterative choice {
     .end => ?,
     .spawn(Stream<e, a>) => self,
     .cancelAll => self,
   }
 
+  // Controls a dynamic registry of concurrently pulled streams identified by `id`.
+  //
+  // - `.alloc(id)` — tries to reserves an ID for a stream, with two possible results:
+  //   - `.free` — obliges the controller to provide its stream with `.spawn`, while
+  //   - `.taken` — means the ID is already in use, and the stream cannot be spawned.
+  // - `.cancel(id)` — requests cooperative cancellation of the stream with the given ID
+  //   and returns `.true!` when such stream is currently active. The ID remains taken
+  //   until its stream cooperatively completes the cancellation.
+  // - `.cancelAll` — requests cooperative cancellation of all currently active streams.
+  // - `.end` — stops the controller without cancelling active streams.
   type Registry<id, e, a> = iterative choice {
     .end => ?,
     .alloc(id) => either {
@@ -50,13 +67,38 @@ export {
     .cancelAll => self,
   }
 
+  // A finite sequence of lifecycle and production events from a stream group.
+  //
+  // Events from different streams are interleaved by readiness. For each ID,
+  // `.spawned!` comes first, produced values remain in stream order, and
+  // `.ended result` or `.cancelled!` terminates its lifecycle before that ID can
+  // be reused.
+  //
+  // After each event, the consumer must select `.next`. This acknowledges event
+  // delivery, but streams are pulled eagerly: the first pull starts when a stream
+  // is spawned, and a subsequent pull may start before the current event is
+  // acknowledged. At most one pull is outstanding per stream.
+  //
+  // Events may be dropped via auto-cleanup (if the items and errors are droppable),
+  // but keep in mind that dropping does not cancel the backing streams in a group or
+  // registry. The events will still be generated and consumed in the background.
   type Events<id, e, a> = recursive either {
     .end!,
     .event(id, Event<e, a>) choice {
-      .next => self,
+      .next* => self,
     }
   }
 
+  // A lifecycle or production event from a registered stream.
+  //
+  // - `.spawned!` — the stream was accepted.
+  // - `.produced value` — the stream produced a value.
+  // - `.ended result` — the stream ended normally or with an error.
+  // - `.cancelled!` — the registry closed the stream after cancellation.
+  //
+  // Cancellation cannot interrupt an outstanding pull. It may therefore be
+  // preceded by one final `.produced value`, or natural `.ended result` may win
+  // instead.
   type Event<e, a> = either {
     .spawned!,
     .cancelled!,
@@ -122,10 +164,34 @@ export {
   // Calculates the sum of all stream items.
   dec Sum : [<e, a: number> Stream<e, a>] Try<e, a>
 
+  // Runs a stream group and returns its readiness-ordered events. The event
+  // sequence ends after the controller and all spawned streams have terminated.
+  //
+  // ```par
+  // let events = Stream.Group(chan group {
+  //   group.spawn(firstStream)
+  //   group.spawn(secondStream)
+  //   group.end!
+  // })
+  // ```
   dec Group : [<e, a> dual Group<e, a>] Events<Nat, e, a>
 
+  // Runs a keyed stream registry and returns its readiness-ordered events. The
+  // event sequence ends after the controller and all registered streams have terminated.
+  //
+  // ```par
+  // let events = Stream.Registry(chan registry {
+  //   registry.alloc(id).case {
+  //     .taken => {}
+  //     .free => { registry.spawn(stream) }
+  //   }
+  //   registry.end!
+  // })
+  // ```
   dec Registry : [<id: data, e, a> dual Registry<id, e, a>] Events<id, e, a>
 
+  // Converts an event sequence to a list, preserving its order and selecting
+  // `.next` after every event.
   dec EventsToList : [<id, e, a> Events<id, e, a>] List<(id) Event<e, a>>
 }
 
@@ -359,7 +425,7 @@ def Registry = [<id: data, e, a> ctrl] chan yield {
           client.case {
             .end result => {
               tracking.delete
-              yield.event(id, .ended result).case { .next => {} }
+              yield.event(id, .ended result).case { .next* => {} }
               submit()
             }
 
@@ -368,13 +434,13 @@ def Registry = [<id: data, e, a> ctrl] chan yield {
               if flag => {
                 tracking.delete
                 client.close
-                yield.case { .next => {} }
-                yield.event(id, .cancelled!).case { .next => {} }
+                yield.case { .next* => {} }
+                yield.event(id, .cancelled!).case { .next* => {} }
                 submit()
               }
               tracking.put(flag)
               client.next
-              yield.case { .next => {} }
+              yield.case { .next* => {} }
               submit(client)
             }
           }
@@ -394,7 +460,7 @@ def Registry = [<id: data, e, a> ctrl] chan yield {
 
               tracking.put(.false!)
               client.free[client1]
-              yield.event(id, .spawned!).case { .next => {} }
+              yield.event(id, .spawned!).case { .next* => {} }
               submit(client, client1)
             }
 
