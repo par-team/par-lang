@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
+use crate::frontend::CheckedModule;
 use crate::frontend_impl::process::CLEANUP_BRANCH;
 use crate::frontend_impl::types::{Type, TypeDefs, TypeError, visit};
+use crate::runtime::RuntimeCompilerError;
 
 use std::sync::OnceLock;
 
@@ -82,10 +84,10 @@ impl<Ext: Clone> Display for Transpiled<Ext> {
 }
 
 impl Transpiled<Unlinked> {
-    pub fn transpile(ic_compiled: IcCompiled, type_defs: TypeDefs<Universal>) -> Self {
+    pub fn transpile(ic_compiled: IcCompiled, module: &CheckedModule<Universal>) -> Self {
         let this: ProgramTranspiler = ProgramTranspiler::transpile_program(&ic_compiled);
         let mut arena = this.dest;
-        let mut closure = |ty: &Type<Universal>| {
+        let mut intern_type = |ty: &Type<Universal>| {
             fn helper(
                 ty: &Type<Universal>,
                 defs: &TypeDefs<Universal>,
@@ -101,15 +103,18 @@ impl Transpiled<Unlinked> {
                 }
                 visit::continue_deref(&ty, defs, |ty: &Type<Universal>| helper(ty, &defs, arena))
             }
-            helper(ty, &type_defs, &mut arena)
+            helper(ty, &module.type_defs, &mut arena)
         };
-        for (_, _, ty) in type_defs.clone().globals.values() {
-            closure(ty).unwrap();
+        for (_, _, ty) in module.type_defs.globals.values() {
+            intern_type(ty).unwrap();
+        }
+        for dec in module.declarations.values() {
+            intern_type(&dec.typ).unwrap();
         }
 
         Self {
             arena: Arc::new(arena),
-            type_defs,
+            type_defs: module.type_defs.clone(),
             name_to_package: ic_compiled
                 .name_to_id
                 .iter()
@@ -125,13 +130,11 @@ impl Transpiled<Unlinked> {
     }
 
     pub fn compile_file(
-        module: &crate::frontend_impl::program::CheckedModule<Universal>,
+        module: &CheckedModule<Universal>,
         max_interactions: u32,
-    ) -> Result<Self, crate::runtime_impl::RuntimeCompilerError> {
-        let type_defs = module.type_defs.clone();
-        let ic_compiled =
-            crate::backend::tree::compiler::IcCompiled::compile_file(module, max_interactions)?;
-        let transpiled = Self::transpile(ic_compiled, type_defs);
+    ) -> Result<Self, RuntimeCompilerError> {
+        let ic_compiled = IcCompiled::compile_file(module, max_interactions)?;
+        let transpiled = Self::transpile(ic_compiled, module);
         Ok(transpiled)
     }
 }
