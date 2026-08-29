@@ -32,8 +32,8 @@ export {
   dec New : [type k: data, type v] Map<k, v>
 
   // Builds a `Map` from `(key) value` pairs.
-  // If a key appears more than once, the last pair wins.
-  dec FromList : [type v: drop, <k: data> List<(k) v>] Map<k, v>
+  // If a key appears more than once, the last pair wins, and the previous values are dropped.
+  dec FromList : [<k: data, v: drop> List<(k) v>] Map<k, v>
 }
 
 def New = external

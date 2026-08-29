@@ -340,7 +340,7 @@ def TestTextCasingAndTrimming : [Test] ! = [test] do {
 
 def TestMapConstructors : [Test] ! = [test] do {
   let source = *((KeyA) "old", (KeyB) "zero", (KeyA) "new")
-  let map = Map.FromList(type String, source)
+  let map = Map.FromList(source)
   let (entry) entries = MapLookupThenList(map, KeyA)
 
   let empty = Map.New(type Key, type String)
