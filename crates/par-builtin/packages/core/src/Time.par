@@ -165,6 +165,39 @@ export {
   // Parses a civil date-time using a strftime-style layout:
   // `text->Parse(layout, zone)`. Returns `.none!` if the text does not match.
   dec Parse : [String, String, Zone] Option<Zoned>
+
+  // Sleeps for the given duration before resolving as `.elapsed!`. If the duration is negative or zero, resolves immediately.
+  //
+  // Keep in mind that expressions evaluate concurrently in Par, so the following will NOT delay the printing of "Done":
+  //
+  // ```par
+  // let _ = Time.Sleep(Time.Second)
+  // Debug.Log("Done")  // executes immediately, does not wait
+  // ```
+  //
+  // To delay subsequent code/computation, it is necessary to tie it to the resolution of `.elapsed!` via `.case`:
+  //
+  // ```par
+  // Time.Sleep(Time.Second).case {
+  //   .elapsed! => { Debug.Log("Done") }  // waits for 1 second
+  // }
+  // ```
+  //
+  // Or without nesting:
+  //
+  // ```par
+  // Time.Sleep(Time.Second).case { .elapsed! => {} }
+  // Debug.Log("Done")
+  // ```
+  //
+  // Or in an expression:
+  //
+  // ```par
+  // // "Done" printed after one second
+  // let ! = do { Time.Sleep(Time.Second).case { .elapsed! => {} } } in Debug.Log("Done")
+  // // but this code here executes immediately, does not wait
+  // ```
+  dec Sleep : [Duration] either { .elapsed! }
 }
 
 // Internal externals (not exported)
@@ -225,3 +258,7 @@ def Zone   = external
 def InZone = external
 def At     = external
 def Parse  = external
+
+// Sleep
+
+def Sleep = external

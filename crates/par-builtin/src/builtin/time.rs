@@ -25,6 +25,7 @@ external_def! {
         InZone => time_in_zone,
         At => time_at,
         Parse => time_parse,
+        Sleep => time_sleep,
     }
 }
 
@@ -413,4 +414,14 @@ async fn time_parse(mut handle: Handle) {
             provide_none(handle);
         }
     }
+}
+
+async fn time_sleep(mut handle: Handle) {
+    let nanos = handle.receive().int().await;
+    let duration = signed_duration_from_nanos(bigint_to_i128_sat(&nanos));
+    if duration.is_positive() {
+        tokio::time::sleep(duration.unsigned_abs()).await;
+    }
+    handle.signal(literal!("elapsed"));
+    handle.break_();
 }
