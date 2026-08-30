@@ -327,6 +327,7 @@ impl CaptureAnalysis {
     ) -> (Command<Typ, S>, Captures) {
         match command {
             Command::Noop => (Command::Noop, caps),
+            Command::Unbox => (Command::Unbox, caps),
             Command::Close => (Command::Close, caps),
             Command::Send(argument) => {
                 let (argument, caps1) = self.fix_expression(argument, env, &caps);
@@ -626,6 +627,7 @@ impl<Typ, S> BlockEnvAnalyzer<Typ, S> {
         match command {
             Command::Send(argument) => self.visit_expression(argument, env),
             Command::Noop
+            | Command::Unbox
             | Command::Close
             | Command::Receive(..)
             | Command::Signal(_)
@@ -886,6 +888,7 @@ impl<'a> CaptureCollector<'a> {
     ) -> Captures {
         match command {
             Command::Noop
+            | Command::Unbox
             | Command::Close
             | Command::Signal(_)
             | Command::Continue

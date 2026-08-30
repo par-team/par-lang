@@ -769,6 +769,7 @@ impl Compiler {
     ) -> Result<()> {
         match cmd {
             Command::Noop => {}
+            Command::Unbox => self.compile_command_unbox(name, usage)?,
             Command::Close => self.compile_command_close(&name, usage)?,
             // types get erased.
             Command::SendType(_argument) => self.compile_command_send_type(name, usage)?,
@@ -1054,6 +1055,15 @@ impl Compiler {
     fn compile_command_close(&mut self, name: &LocalName, usage: &VariableUsage) -> Result<()> {
         let subject = self.use_variable(name, usage, true)?;
         self.net.link(subject.tree, Tree::Close);
+        Ok(())
+    }
+
+    fn compile_command_unbox(&mut self, name: LocalName, usage: &VariableUsage) -> Result<()> {
+        let subject = self.use_variable(&name, usage, true)?;
+        let (result, continuation) = self.create_typed_wire();
+        self.net
+            .link(subject.tree, Tree::Unbox(Box::new(continuation.tree)));
+        self.bind_variable(name, result)?;
         Ok(())
     }
 

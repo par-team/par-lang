@@ -516,6 +516,7 @@ pub struct Apply<S> {
 
 #[derive(Clone, Debug)]
 pub enum ApplyStep<S> {
+    Unbox(Span),
     Send(Span, Box<Expression<S>>),
     Signal(Span, LocalName),
     SendType(Span, Type<S>),
@@ -549,6 +550,7 @@ pub struct ApplyBranch<S> {
 
 #[derive(Clone, Debug)]
 pub enum ApplyBranchStep<S> {
+    Unbox(Span),
     Receive(Span, Pattern<S>, Vec<TypeParameter>),
     ReceiveType(Span, TypeParameter),
     Try(Span, Option<LocalName>),
@@ -645,6 +647,7 @@ pub struct Command<S> {
 
 #[derive(Clone, Debug)]
 pub enum CommandStep<S> {
+    Unbox(Span),
     Send(Span, Expression<S>),
     Receive(Span, Pattern<S>, Vec<TypeParameter>),
     Signal(Span, LocalName),
@@ -684,6 +687,7 @@ pub struct CommandBranch<S> {
 
 #[derive(Clone, Debug)]
 pub enum CommandBranchStep<S> {
+    Unbox(Span),
     Receive(Span, Pattern<S>, Vec<TypeParameter>),
     ReceiveType(Span, TypeParameter),
     Try(Span, Option<LocalName>),
@@ -2681,6 +2685,14 @@ impl Context {
         };
         for step in apply.steps.iter().rev() {
             process = match step {
+                ApplyStep::Unbox(span) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Unbox,
+                    process,
+                ),
                 ApplyStep::Send(span, expression) => process::Process::do_step(
                     span.clone(),
                     LocalName::object(),
@@ -2769,6 +2781,14 @@ impl Context {
         };
         for step in branch.steps.iter().rev() {
             process = match step {
+                ApplyBranchStep::Unbox(span) => process::Process::do_step(
+                    span.clone(),
+                    LocalName::object(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Unbox,
+                    process,
+                ),
                 ApplyBranchStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
                     pattern,
                     0,
@@ -3153,6 +3173,15 @@ impl Context {
         let mut frames = Vec::with_capacity(steps.len());
         for step in steps {
             match step {
+                CommandStep::Unbox(span) => {
+                    frames.push(CommandLoweringFrame::Step(process::Step::Do {
+                        span: span.clone(),
+                        name: object_name.clone(),
+                        usage: VariableUsage::Unknown,
+                        typ: (),
+                        command: process::Command::Unbox,
+                    }));
+                }
                 CommandStep::Send(span, argument) => {
                     self.disable_catches(CatchDisabledReason::DifferentProcess);
                     let argument = self.compile_expression(argument)?;
@@ -3481,6 +3510,14 @@ impl Context {
         };
         for step in branch.steps.iter().rev() {
             process = match step {
+                CommandBranchStep::Unbox(span) => process::Process::do_step(
+                    span.clone(),
+                    object_name.clone(),
+                    VariableUsage::Unknown,
+                    (),
+                    process::Command::Unbox,
+                    process,
+                ),
                 CommandBranchStep::Receive(span, pattern, vars) => self.compile_pattern_receive(
                     pattern,
                     0,
@@ -4018,7 +4055,8 @@ impl<S> Spanning for Apply<S> {
 impl<S> Spanning for ApplyStep<S> {
     fn span(&self) -> Span {
         match self {
-            Self::Send(span, _)
+            Self::Unbox(span)
+            | Self::Send(span, _)
             | Self::Signal(span, _)
             | Self::SendType(span, _)
             | Self::Try(span, _)
@@ -4051,7 +4089,8 @@ impl<S> Spanning for ApplyBranch<S> {
 impl<S> Spanning for ApplyBranchStep<S> {
     fn span(&self) -> Span {
         match self {
-            Self::Receive(span, _, _)
+            Self::Unbox(span)
+            | Self::Receive(span, _, _)
             | Self::ReceiveType(span, _)
             | Self::Try(span, _)
             | Self::Default(span, _) => span.clone(),
@@ -4137,7 +4176,8 @@ impl<S> Spanning for Command<S> {
 impl<S> Spanning for CommandStep<S> {
     fn span(&self) -> Span {
         match self {
-            Self::Send(span, _)
+            Self::Unbox(span)
+            | Self::Send(span, _)
             | Self::Receive(span, _, _)
             | Self::Signal(span, _)
             | Self::Continue(span)
@@ -4162,7 +4202,8 @@ impl<S> Spanning for CommandBranch<S> {
 impl<S> Spanning for CommandBranchStep<S> {
     fn span(&self) -> Span {
         match self {
-            Self::Receive(span, _, _)
+            Self::Unbox(span)
+            | Self::Receive(span, _, _)
             | Self::ReceiveType(span, _)
             | Self::Try(span, _)
             | Self::Default(span, _) => span.clone(),

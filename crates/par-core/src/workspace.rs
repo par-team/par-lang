@@ -2595,8 +2595,7 @@ fn write_type_parameters(f: &mut impl Write, params: &[TypeParameter]) -> fmt::R
 mod tests {
     use super::*;
     use crate::frontend_impl::language::TypeConstraint;
-    use crate::frontend_impl::program::DefinitionBody;
-    use crate::frontend_impl::types::Visibility;
+    use crate::frontend_impl::types::{Operation, Visibility};
     use arcstr::literal;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2681,14 +2680,6 @@ mod tests {
                 fs::create_dir_all(parent).expect("failed to create parent directory");
             }
             fs::write(path, source).expect("failed to write source file");
-        }
-    }
-
-    fn workspace_error_from_package(root: &Path) -> WorkspaceError {
-        let packages = discover_workspace_packages_from_path(root, None).unwrap();
-        match assemble_workspace(packages) {
-            Ok(_) => panic!("expected workspace assembly to fail"),
-            Err(error) => error,
         }
     }
 
@@ -2917,6 +2908,99 @@ def Bad = UseShare(type [!] !)
             TypeError::TypeDoesNotSatisfyConstraint(_, name, _, TypeConstraint::Share)
                 if name.string.as_str() == "a"
         )));
+    }
+
+    #[test]
+    fn explicit_unbox_is_required_at_type_boundaries() {
+        let source = "\
+module Main
+
+dec Pass : [!] !
+def Pass = [x] x
+
+def Suspended : box ! = box !
+def Bad : ! = Pass(Suspended)
+";
+        let errors = workspace_type_errors(vec![WorkspacePackage::new(
+            test_package_id(),
+            parsed_package_from_files("local", &[("Main.par", source)]),
+        )]);
+
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TypeError::CannotAssignFromTo(_, Type::Box(..), Type::Break(..), _)
+        )));
+    }
+
+    #[test]
+    fn explicit_unbox_removes_one_layer_and_boxed_operations_remain_implicit() {
+        checked_workspace_from_source(
+            "\
+module Main
+
+dec Pass : [!] !
+def Pass = [x] x
+
+def Suspended : box ! = box !
+def Passed : ! = Pass(Suspended.unbox)
+
+def Nested : box box ! = box box !
+def OneLayer : box ! = Nested.unbox
+
+def Identity : box [!] ! = box [value] value
+def Answer : ! = Identity(!)
+",
+        );
+    }
+
+    #[test]
+    fn unbox_rejects_an_unboxed_subject() {
+        let source = "\
+module Main
+
+def Bad : ! = let value = ! in value.unbox
+";
+        let errors = workspace_type_errors(vec![WorkspacePackage::new(
+            test_package_id(),
+            parsed_package_from_files("local", &[("Main.par", source)]),
+        )]);
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| matches!(error, TypeError::InvalidOperation(_, Operation::Unbox, _)))
+        );
+    }
+
+    #[test]
+    fn explicit_unbox_executes_through_the_flat_runtime() {
+        let checked = checked_workspace_from_source(
+            "\
+module Main
+
+def Result : ! = let value = box ! in value.unbox
+",
+        );
+        let compiled = crate::runtime::Compiled::compile_file(checked.checked_module(), 100_000)
+            .unwrap()
+            .link()
+            .unwrap();
+        let result_name = compiled
+            .name_to_ty
+            .keys()
+            .find(|name| name.primary == "Result")
+            .unwrap();
+        let package = match compiled.code.name_to_package.get(result_name).unwrap() {
+            crate::runtime::TranspiledGlobal::Package(package) => *package,
+            crate::runtime::TranspiledGlobal::Unimplemented => panic!("unexpected todo"),
+        };
+        let pool = std::sync::Arc::new(futures::executor::ThreadPool::new().unwrap());
+        let (handle, reducer) =
+            par_runtime::start_and_instantiate(pool, compiled.code.arena.clone(), package);
+        futures::executor::block_on(async move {
+            handle.continue_();
+            reducer.await;
+        });
     }
 
     #[test]

@@ -30,9 +30,9 @@ def ListMap = [type a, type b, list, f] list.begin.case {
   .item(x) list => .item(f(x)) list.loop,
 }
 
-dec ListMapTry : [type a, type e, type b, List<box a>, box [a] Try<e, box b>] Try<e, List<b>>
-def ListMapTry = [type a, type e, type b, list, f]
-  let builder: List.Builder<box b> = List.Builder(type box b) in
+dec ListMapTry : [type a: drop, type e, type b: drop, List<a>, box [a] Try<e, b>] Try<e, List<b>>
+def ListMapTry = [type a: drop, type e, type b: drop, list, f]
+  let builder: List.Builder<b> = List.Builder(type b) in
   list.begin.case {
     .end! => .ok builder.build,
     .item(x) list =>

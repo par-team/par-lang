@@ -2342,6 +2342,7 @@ fn apply(input: &mut Input) -> Result<Option<(Span, Apply<Unresolved>)>> {
             apply_begin,
             apply_unfounded,
             apply_loop,
+            apply_unbox,
             apply_signal,
             apply_case,
             apply_send,
@@ -2420,6 +2421,15 @@ fn apply_signal(input: &mut Input) -> Result<ApplyPiece> {
                 short_span.clone(),
                 vec![ApplyStep::Signal(short_span, chosen)],
             )
+        })
+        .parse_next(input)
+}
+
+fn apply_unbox(input: &mut Input) -> Result<ApplyPiece> {
+    (t(TokenKind::Dot), t(TokenKind::Unbox))
+        .map(|(dot, keyword)| {
+            let span = dot.span.join(keyword.span());
+            ApplyPiece::Steps(span.clone(), vec![ApplyStep::Unbox(span)])
         })
         .parse_next(input)
 }
@@ -2565,6 +2575,7 @@ fn apply_branch(input: &mut Input) -> Result<ApplyBranch<Unresolved>> {
             apply_branch_then,
             apply_branch_receive,
             apply_branch_continue,
+            apply_branch_unbox,
             apply_branch_try,
             apply_branch_default,
         ))
@@ -2648,6 +2659,14 @@ fn apply_branch_try(input: &mut Input) -> Result<ApplyBranchPiece> {
                 None => kw.span(),
             };
             ApplyBranchPiece::Steps(vec![ApplyBranchStep::Try(span, label)])
+        })
+        .parse_next(input)
+}
+
+fn apply_branch_unbox(input: &mut Input) -> Result<ApplyBranchPiece> {
+    (t(TokenKind::Dot), t(TokenKind::Unbox))
+        .map(|(dot, keyword)| {
+            ApplyBranchPiece::Steps(vec![ApplyBranchStep::Unbox(dot.span.join(keyword.span()))])
         })
         .parse_next(input)
 }
@@ -3311,6 +3330,7 @@ fn cmd(input: &mut Input) -> Result<Option<(Span, Command<Unresolved>)>> {
             cmd_begin,
             cmd_unfounded,
             cmd_loop,
+            cmd_unbox,
             cmd_signal,
             cmd_continue,
             cmd_send,
@@ -3442,6 +3462,15 @@ fn cmd_signal(input: &mut Input) -> Result<CommandPiece> {
                 short_span.clone(),
                 vec![CommandStep::Signal(short_span, name)],
             )
+        })
+        .parse_next(input)
+}
+
+fn cmd_unbox(input: &mut Input) -> Result<CommandPiece> {
+    (t(TokenKind::Dot), t(TokenKind::Unbox))
+        .map(|(dot, keyword)| {
+            let span = dot.span.join(keyword.span());
+            CommandPiece::Steps(span.clone(), vec![CommandStep::Unbox(span)])
         })
         .parse_next(input)
 }
@@ -3600,6 +3629,7 @@ fn cmd_branch(input: &mut Input) -> Result<CommandBranch<Unresolved>> {
             cmd_branch_bind_then,
             cmd_branch_continue,
             cmd_branch_receive,
+            cmd_branch_unbox,
             cmd_branch_try,
             cmd_branch_default,
         ))
@@ -3714,6 +3744,16 @@ fn cmd_branch_try(input: &mut Input) -> Result<CommandBranchPiece> {
                 None => kw.span(),
             };
             CommandBranchPiece::Steps(vec![CommandBranchStep::Try(span, label)])
+        })
+        .parse_next(input)
+}
+
+fn cmd_branch_unbox(input: &mut Input) -> Result<CommandBranchPiece> {
+    (t(TokenKind::Dot), t(TokenKind::Unbox))
+        .map(|(dot, keyword)| {
+            CommandBranchPiece::Steps(vec![CommandBranchStep::Unbox(
+                dot.span.join(keyword.span()),
+            )])
         })
         .parse_next(input)
 }
@@ -4083,6 +4123,19 @@ def Value = include("html\u{2f}index.html")->Use
             *included,
             Expression::Include { ref path, .. } if path.as_str() == "html/index.html"
         ));
+    }
+
+    #[test]
+    fn test_parse_explicit_unbox_in_expression_command_and_branches() {
+        let source = "\
+module Main
+
+def Expression = [x] x.unbox
+def Command = [x] do { x.unbox } in x
+def ExpressionBranch = [x] x.case { .value .unbox y => y }
+def CommandBranch = [x] do { x.case { .value .unbox => {} } } in !
+";
+        assert!(parse_module(source, "main.par".into()).is_ok());
     }
 
     #[test]

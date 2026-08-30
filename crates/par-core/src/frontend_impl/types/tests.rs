@@ -382,36 +382,68 @@ mod tests {
     }
 
     #[test]
-    fn test_box_modality_subtyping() {
+    fn test_box_modality_is_distinct_and_structural() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let span = Span::None;
         let shared = Type::string();
         let strict = Type::choice(vec![("use", Type::break_())]);
         let boxed_strict = Type::box_(strict.clone());
         let nested_boxed_strict = Type::box_(boxed_strict.clone());
 
         assert!(
-            shared
+            !shared
                 .is_definitely_assignable_to(&Type::box_(shared.clone()), &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         assert!(
-            !strict
-                .is_definitely_assignable_to(&Type::box_(strict.clone()), &type_defs)
+            !Type::box_(shared.clone())
+                .is_definitely_assignable_to(&shared, &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         assert!(
-            boxed_strict
+            !boxed_strict
+                .is_definitely_assignable_to(&strict, &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            !boxed_strict
                 .is_definitely_assignable_to(&nested_boxed_strict, &type_defs)
                 .unwrap()
                 .is_assignable()
         );
         assert!(
-            nested_boxed_strict
+            !nested_boxed_strict
                 .is_definitely_assignable_to(&boxed_strict, &type_defs)
                 .unwrap()
                 .is_assignable()
+        );
+        assert!(
+            Type::box_(Type::nat())
+                .is_definitely_assignable_to(&Type::box_(Type::int()), &type_defs)
+                .unwrap()
+                .is_assignable()
+        );
+        assert!(
+            Type::box_(Type::int())
+                .satisfies_constraint(TypeConstraint::Share, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::box_(Type::int())
+                .satisfies_constraint(TypeConstraint::Data, &type_defs)
+                .unwrap()
+        );
+        assert!(
+            !Type::box_(Type::int())
+                .satisfies_constraint(TypeConstraint::Number, &type_defs)
+                .unwrap()
+        );
+        assert!(union_types(&type_defs, &span, &Type::box_(Type::int()), &Type::int()).is_err());
+        assert!(
+            intersect_types(&type_defs, &span, &Type::box_(Type::int()), &Type::int()).is_err()
         );
     }
 
