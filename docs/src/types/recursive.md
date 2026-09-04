@@ -249,23 +249,23 @@ Let's see it in practice. Suppose we want to add up a list of integers.
    ```
 1. We apply `.begin` to it:
    ```par
-                        list.begin
+   list.begin
    ```
 2. We match on the possible variants:
    ```par
-                                  .case {
+   .case {
      .end!       => 0,
      .item(x) xs =>
    ```
    If the list is empty, the result is `0`. Otherwise, we need to add the number `x`
    ```par
-                    x +
+   x +
    ```
    to the sum of the rest of the list: `xs`.
-4. Since `xs` is a _descendant_ of the original `list` that we applied the `.begin` to, and is again a
+3. Since `xs` is a _descendant_ of the original `list` that we applied the `.begin` to, and is again a
    `List<Int>`, we can recursively obtain its sum using `.loop`:
    ```par
-                               xs.loop
+   xs.loop
    ```
    And close the braces.
    ```par
