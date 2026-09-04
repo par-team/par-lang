@@ -1,191 +1,136 @@
 # Box
 
-Par has a **linear type system.** By default, values must be used **exactly once.**
+A plain [function](./function.md) in Par is linear: if we store it in a local variable, we must
+call it exactly once. But what if we want to call it for every element in a list?
 
-But not all values need that kind of discipline. Sometimes, you want to:
-- Pass a function around multiple times.
-- Discard an unused value.
-- Compose higher-order utilities freely.
+For that, we can use a box. A box holds a suspended computation. Each time we unbox it, we start
+a new instance of that computation, producing a new value.
 
-That’s where **box types** come in.
-
-## Shareable types — even without `box`
-
-Even without box types, some types in Par are already **shareable.** These include the data types:
-- [Unit](./unit.md)
-- [Either](./either.md)
-- [Pair](./pair.md)
-- [Recursive](./recursive.md)
-- All the [primitives](../structure/primitive_types.md): `Int`, `Nat`, `Float`, `String`, `Char`, `Byte`, `Bytes`.
-
-Any combination of these is shareable when all of its parts are shareable — it can be copied and
-discarded freely.
-
-But types that contain [**functions,**](./function.md) [**choices,**](./choice.md) and other non-data types
-are linear — no matter how deeply nested. Some linear choices can be dropped through
-[auto-cleanup](./auto_cleanup.md), which significantly improves ergonomics, see that chapter later.
-
-Now, consider this: what if you want to **apply a function to each element in a list?**
-
-A plain function in Par is linear — it can only be used once. So applying it repeatedly requires a workaround.
-
-## Reusable functions, the hard way
-
-Without `box`, we can build reusable functions by encoding a usage protocol manually:
+The type is spelled `box T`, where `T` is the type of value the computation produces:
 
 ```par
-type Mapper<a, b> = iterative choice {
-  .close => !,
-  .apply(a) => (b) self,
-}
+type IntCalculation = box Int
+type ReusableFunction = box [Int] String
 ```
 
-This protocol gives us:
-- `.apply` to use the function.
-- `.close` to clean up.
+Every box is [shareable](../types_and_expressions.md#linearity), regardless of its contents.
+We can copy it, unbox it any number of times, or leave it unused.
 
-Here's a `Map` function that uses it:
+## Construction
 
-```par
-dec Map : [type a, type b, List<a>, Mapper<a, b>] List<b>
-def Map = [type a, type b, list, mapper] list.begin.case {
-  .end! => let ! = mapper.close in .end!,
-  .item(x) xs => let (x1) mapper = mapper.apply(x) in .item(x1) xs.loop,
-}
-```
-
-And using it:
-
-```par
-def NumberStrings = Map(type Int, type String, Int.Range(1, 100), begin case {
-  .close => !,
-  .apply(n) => (`#{n}`) loop,
-})
-```
-
-This works — but it’s verbose.
-
-Every reusable function needs to be manually encoded with a protocol like `Mapper`.
-Copying, closing, and chaining all become manual work.
-
-## Box types to the rescue
-
-Instead of encoding reusability into the type manually, Par lets you `box` a value.
-
-A `box T` is a shareable version of **any** type `T`. You can:
-
-- **Copy** a `box T`.
-- **Drop** a `box T`.
-- Pass it around freely.
-
-You can construct boxed values using:
-
-```par
-box <expression>
-```
-
-This constructs a value of type `box T`, where `T` is the type of the expression.
-
-The only rule is: **You can only capture shareable variables in a `box` expression.**
-
-That includes:
-- Data types (`Int`, `String`, `List<Int>`, etc.)
-- Other `box` values.
-
-The word _**capture**_ here refers to _using local variables_ inside the expression that were
-_created outside of that expression._
-
-## A better `Map`
-
-With `box`, we can rewrite the `Map` function much more cleanly:
-
-```par
-module Main
-
-import @core/List
-
-dec Map : [<a> List<a>, <b> box [a] b] List<b>
-def Map = [<a> list, <b> f] list.begin.case {
-  .end! => .end!,
-  .item(x) xs => .item(f(x)) xs.loop,
-}
-```
-
-Let’s try it out:
-
-```par
-def NumberStrings = Map(Int.Range(1, 100), box [n] `#{n}`)
-```
-
-No wrappers, no manual protocols. The boxed function can be used freely, because the `box` type makes
-it shareable. This is exactly what `box` was made for.
-
-## Subtyping
-
-Boxed types fit naturally into Par's subtyping.
-
-**A `box T` can be used anywhere a `T` is expected.**
-
-```par
-def BoxInt: box Int = 42       // OK: Int is shareable
-def UseInt: Int = BoxInt       // OK: box Int can be used as Int
-```
-
-And **if `T` is already shareable, then `T` can be used anywhere a `box T` is expected.**
-
-```par
-def Boxes: List<box Int> = *(1, 2, 3)
-def Ints: List<Int> = Boxes
-```
-
-**For already shareable types, `T` and `box T` are effectively interchangeable.**
-
-## Another example: Filtering a list
-
-Let’s write a function that filters a list using a boxed predicate.
-
-This example uses a `share` type constraint, written `a: share`. The next chapter covers constraints
-properly; for now, read it as saying: "the element type must be shareable."
+A box is constructed by putting `box` before an expression:
 
 ```par
 module Main
 
 import {
-  @core/Bool
   @core/Int
   @core/List
+  @core/String
 }
 
-dec Filter : [<a: share> List<a>, box [a] Bool] List<a>
-
-def Filter = [<a: share> list, predicate] list.begin.case {
-  .end! => .end!,
-  .item(x) xs => predicate(x).case {
-    .true! => .item(x) xs.loop,
-    .false! => xs.loop,
-  }
-}
+def Sum : box Int = box Int.Range(0, 1_000_000)->List.Sum
 ```
 
-Note the types:
-- We accept a `List<a>`.
-- The constraint `a: share` says elements may be copied and discarded.
-- The result is still a `List<a>`.
+Without `box`, the expression computes the sum of a million integers. With `box`, we get a
+**suspended computation** instead. We haven't added up any numbers yet!
 
-Let’s try it out:
+A box can also use local variables defined outside its body:
 
 ```par
-def Evens = Filter(Int.Range(1, 100), box [n] {Int.Mod(n, 2) == 0})
+dec MakeAdder : [Int] box [Int] Int
+def MakeAdder = [amount] box [n] n + amount
 ```
 
-Here:
-- `Int.Range(1, 100)` gives a `List<Int>`.
-- `Int` satisfies the `share` constraint, because integers are shareable.
-- The result is inferred as `List<Int>`.
+Here, the box _captures_ `amount`. It contains both the suspended computation and its captured
+variables. Each new computation gets its own copies of the captured variables.
 
-Why does `Filter` need `share`, rather than merely `drop`? Calling `predicate(x)` is one use
-of `x`, while the `.true!` branch also keeps `x` for the result. This implementation needs to copy
-the value, not merely discard it.
+That's why **all captured variables must be shareable.** An integer like `amount` is fine,
+and so is another box. A plain linear function wouldn't be: capturing it would let us call
+that same function repeatedly!
 
-This keeps the list type clear. The constraint says what the implementation needs, without
-wrapping every element in a redundant `box`.
+## Destruction
+
+To start the computation, apply `.unbox`:
+
+```par
+def Total : Int = Sum.unbox
+```
+
+That's how we turn a `box Int` into an `Int`. In general, `.unbox` turns a `box T` into a `T`.
+We call this _instantiating_ the box.
+
+Suppose we want to use the sum twice:
+
+```par
+dec Add : [Int, Int] Int
+def Add = [x, y] x + y
+
+def Twice : Int =
+  let n = box Int.Range(0, 1_000_000)->List.Sum
+  in Add(n.unbox, n.unbox)
+```
+
+How many times do we add up the million integers? **Twice.** Each `.unbox` starts a new computation.
+The box doesn't remember the result of an earlier use.
+
+To compute the sum once, we can unbox it and give the result a name:
+
+```par
+def Once : Int =
+  let n = box Int.Range(0, 1_000_000)->List.Sum
+  in let value = n.unbox
+  in Add(value, value)
+```
+
+Now we share the integer result of a single computation. Before, we copied the box; now, we copy
+its result.
+
+> Unboxing doesn't wait for the computation to finish. As usual in Par, the computation runs
+> concurrently with the code using its result.
+
+Could we skip the `.unbox` and just write `Add(n, n)`? No: **`box T` and `T` are distinct types.**
+Neither is a subtype of the other, even when `T` is already shareable. `Add` expects integers,
+so it can copy its arguments without accidentally repeating a computation. A function that
+wants a repeatable computation can ask for `box Int` instead.
+
+## Reusable functions
+
+Let's use `MakeAdder`:
+
+```par
+def Explicit : Int =
+  let addTen = MakeAdder(10)
+  in Add(addTen.unbox(1), addTen.unbox(2))  // = 23
+```
+
+Each `.unbox` produces a fresh function, and each function is called once. But writing `.unbox`
+before every call would get tedious, so Par lets us leave it out:
+
+```par
+def Implicit : Int =
+  let addTen = MakeAdder(10)
+  in Add(addTen(1), addTen(2))  // = 23, just like above
+```
+
+**Operations on the contents of a box automatically unbox it first.** Calling a boxed function
+is one example. Selecting a branch on a boxed [choice](./choice.md), or matching a boxed
+[either](./either.md) with `.case`, works the same way.
+
+Passing a box as an argument doesn't operate on its contents, which is why `Add(n, n)` is
+invalid. Calling `addTen(1)` does: it instantiates the boxed function and calls it.
+
+Now we can write the list-mapping function we wanted at the start:
+
+```par
+dec Map : [<a> List<a>, <b> box [a] b] List<b>
+def Map = [<a> list, <b> f] list.begin.case {
+  .end! => .end!,
+  .item(x) xs => .item(f(x)) xs.loop,
+}
+
+def NumberStrings = Map(Int.Range(1, 100), box [n] `#{n}`)
+```
+
+Each `f(x)` instantiates a function and calls it on the next element. When we reach the end of the
+list, we can simply leave `f` unused, because it's a box.

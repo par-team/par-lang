@@ -109,16 +109,16 @@ def TestListConstraintsAndEquality : [Test] ! = [test] do {
     .assert("List.Any accepts a box-constrained element type", values->List.Any(box [n] n == 3))
     .assert("List.Take accepts a box-constrained element type", firstTwo == {*(1, 2)})
     .assert("List.Drop accepts a box-constrained element type", withoutTwo == {*(3, 4)})
-    .assert("List.TakeWhile keeps the matching prefix", takeUnderThree == {*(1, 2)})
-    .assert("List.DropWhile skips the matching prefix", dropUnderThree == {*(3, 4)})
+    .assert("List.TakeWhile keeps the matching prefix", takeUnderThree == *(1, 2))
+    .assert("List.DropWhile skips the matching prefix", dropUnderThree == *(3, 4))
     .assert("List.Min returns the smallest element", values->List.Min is .some n and n == 1)
     .assert("List.Max returns the largest element", values->List.Max is .some n and n == 4)
     .assert("List.Min returns none for an empty list", empty->List.Min is .none!)
-    .assert("List.Reverse reverses list order", reversed == {*(4, 3, 2, 1)})
+    .assert("List.Reverse reverses list order", reversed == *(4, 3, 2, 1))
     .assert("List.Find returns the first matching element", found is .some n and n == 3)
-    .assert("List.Enumerate pairs values with indices", enumerated == {*((0) 1, (1) 2, (2) 3, (3) 4)})
+    .assert("List.Enumerate pairs values with indices", enumerated == *((0) 1, (1) 2, (2) 3, (3) 4))
     .assert("List.ForEach works in expression syntax", sum == 10)
-    .assert("List.ForEach works in process syntax", doubled == {*(2, 4, 6, 8)})
+    .assert("List.ForEach works in process syntax", doubled == *(2, 4, 6, 8))
 } in !
 
 def TestListSorting : [Test] ! = [test] do {
@@ -135,8 +135,8 @@ def TestListSorting : [Test] ! = [test] do {
   )
 
   test
-    .assert("List.Sort orders data ascending", numbers->List.Sort == {*(1, 1, 2, 3)})
-    .assert("List.SortDesc orders data descending", numbers->List.SortDesc == {*(3, 2, 1, 1)})
+    .assert("List.Sort orders data ascending", numbers->List.Sort == *(1, 1, 2, 3))
+    .assert("List.SortDesc orders data descending", numbers->List.SortDesc == *(3, 2, 1, 1))
     .assert(
       "List.SortBy is stable for equal keys",
       sortedTagged == {*((0) "zero", (1) "one", (2) "first-two", (2) "second-two")},
@@ -202,13 +202,13 @@ def TestStreamCombinators : [Test] ! = [test] do {
   )
 
   test
-    .assert("Stream.Map and Stream.Filter compose", transformed == {*(6, 8)})
+    .assert("Stream.Map and Stream.Filter compose", transformed == *(6, 8))
     .assert("Stream.Take limits a stream", firstTwo == {*(1, 2)})
     .assert("Stream.Take(0) yields no items", firstNone == {*()})
     .assert("Stream.Drop skips a prefix", withoutTwo == {*(3, 4)})
-    .assert("Stream.Enumerate pairs values with indices", enumerated == {*((0) 1, (1) 2, (2) 3, (3) 4)})
-    .assert("Stream.TakeWhile keeps the matching prefix", takeUnderThree == {*(1, 2)})
-    .assert("Stream.DropWhile skips the matching prefix", dropUnderThree == {*(3, 4)})
+    .assert("Stream.Enumerate pairs values with indices", enumerated == *((0) 1, (1) 2, (2) 3, (3) 4))
+    .assert("Stream.TakeWhile keeps the matching prefix", takeUnderThree == *(1, 2))
+    .assert("Stream.DropWhile skips the matching prefix", dropUnderThree == *(3, 4))
     .assert("Stream.ForEach folds while preserving status", status is .ok! and total == 10)
     .assert("Stream.All checks every item", numbers->Stream.FromList->Stream.All(box [n] n > 0)->Try.Ok)
     .assert("Stream.Any short-circuits on a match", numbers->Stream.FromList->Stream.Any(box [n] n == 3)->Try.Ok)
@@ -243,9 +243,9 @@ def TestStreamFlattening : [Test] ! = [test] do {
     ->RecoverNatStream
 
   test
-    .assert("Stream.Concat joins a list of streams", concatenated == {*(1, 2, 3, 4, 5)})
-    .assert("Stream.FlatMap maps and flattens streams", flatMapped == {*(1, 10, 2, 20, 3, 30)})
-    .assert("Stream.Flatten joins a stream of streams", flattened == {*(6, 7, 8)})
+    .assert("Stream.Concat joins a list of streams", concatenated == *(1, 2, 3, 4, 5))
+    .assert("Stream.FlatMap maps and flattens streams", flatMapped == *(1, 10, 2, 20, 3, 30))
+    .assert("Stream.Flatten joins a stream of streams", flattened == *(6, 7, 8))
 } in !
 
 def TestStreamSplitting : [Test] ! = [test] do {
@@ -281,13 +281,13 @@ def TestStreamSplitting : [Test] ! = [test] do {
     ->Try.Ok
 
   test
-    .assert("String.Lines returns a stream of lines", lines == {*("alpha", "beta", "gamma")})
+    .assert("String.Lines returns a stream of lines", lines == *("alpha", "beta", "gamma"))
     .assert("String.Lines accepts Windows line separators", windowsLines == {*("alpha", "beta", "gamma")})
-    .assert("String.SplitBy splits by string separators", stringParts == {*("red", "green", "blue")})
+    .assert("String.SplitBy splits by string separators", stringParts == *("red", "green", "blue"))
     .assert("String.Remainder returns unparsed input", remainder == "remaining")
     .assert("Bytes.Remainder returns unparsed input", String.FromBytes(bytesRemainder) == "bytes")
-    .assert("Bytes.SplitBy splits byte streams", bytesParts == {*("a", "b", "c")})
-    .assert("Bytes.Chunks streams one byte at a time", byteChunks == {*("a", "b", "c")})
+    .assert("Bytes.SplitBy splits byte streams", bytesParts == *("a", "b", "c"))
+    .assert("Bytes.Chunks streams one byte at a time", byteChunks == *("a", "b", "c"))
 } in !
 
 def TestTextCasingAndTrimming : [Test] ! = [test] do {
@@ -348,9 +348,9 @@ def TestMapConstructors : [Test] ! = [test] do {
 
   test
     .assert("Map.FromList keeps the last duplicate key", entry is .some value and value == "new")
-    .assert("Map.FromList lists entries in data-key order", entries == {*((KeyB) "zero")})
-    .assert("Map.New starts empty", emptySize == 0 and emptyEntries == {*()})
-    .assert("Map.entry can insert into a new map", MapPutList(!) == {*((KeyA) "one")})
+    .assert("Map.FromList lists entries in data-key order", entries == *((KeyB) "zero"))
+    .assert("Map.New starts empty", emptySize == 0 and emptyEntries == *())
+    .assert("Map.entry can insert into a new map", MapPutList(!) == *((KeyA) "one"))
 } in !
 
 def TestBoxMapConstructors : [Test] ! = [test] do {
@@ -363,8 +363,8 @@ def TestBoxMapConstructors : [Test] ! = [test] do {
   test
     .assert("BoxMap.FromList keeps the last duplicate key", map.get(KeyA) is .some value and value == "new")
     .assert("BoxMap.FromList exposes plain values from get", map.get(KeyB) is .some value and value == "zero")
-    .assert("BoxMap.FromList lists entries in data-key order", map.list == {*((KeyB) "zero", (KeyA) "new")})
-    .assert("BoxMap.New starts empty", empty.size == 0 and empty.list == {*()})
+    .assert("BoxMap.FromList lists entries in data-key order", map.list == *((KeyB) "zero", (KeyA) "new"))
+    .assert("BoxMap.New starts empty", empty.size == 0 and empty.list == *())
     .assert("BoxMap.put returns an updated map", inserted.get(KeyC) is .some value and value == "two")
     .assert("BoxMap.delete returns an updated map", deleted.get(KeyB) is .none!)
 } in !
