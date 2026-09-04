@@ -308,7 +308,13 @@ impl CheckedWorkspace {
                     candidates,
                 );
             }
-            Type::Box(_, inner) | Type::DualBox(_, inner) => {
+            Type::Box(_, inner) => {
+                candidates.push(CompletionCandidate {
+                    label: "unbox".to_string(),
+                    insert_text: "unbox".to_string(),
+                    detail: "instantiate one box layer".to_string(),
+                    kind: CompletionCandidateKind::Keyword,
+                });
                 self.push_type_completion_candidates(
                     inner,
                     context,
@@ -316,6 +322,7 @@ impl CheckedWorkspace {
                     candidates,
                 );
             }
+            Type::DualBox(..) => {}
             Type::Name(..) | Type::DualName(..) => {
                 if let Ok(expanded) = typ.expand_definition(&self.checked.type_defs) {
                     self.push_type_completion_candidates(
@@ -842,6 +849,28 @@ def ClientValue : Client = external
                 &[],
             );
         }
+    }
+
+    #[test]
+    fn dot_completion_for_box_offers_explicit_unbox_and_inner_operations() {
+        let source = "\
+module Main
+
+type Client = box choice {
+    .close => !,
+}
+
+def ClientValue : Client = external
+def Main : Client = ClientValue
+";
+        let live_source = source.replace("ClientValue\n", "ClientValue.\n");
+        assert_source_dot_completion_labels(
+            source,
+            &live_source,
+            "ClientValue.",
+            &["unbox", "close"],
+            &[],
+        );
     }
 
     #[test]

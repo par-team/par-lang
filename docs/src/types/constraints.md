@@ -191,14 +191,16 @@ Types that satisfy `data` include:
 - recursive types whose bodies are data
 - type variables with a `data`, `number`, or `signed` constraint
 
-Boxing a non-data type does not make it data:
+A box is shareable, but does not satisfy `data`, even if its contents do:
 
 ```par
 box [Int] Int  // share, but not data
+box Int        // also share, but not data
 ```
 
-If `T` is already data, then `box T` is data, because boxed data can be used as
-the data value inside.
+A box holds a suspended computation. Use [`.unbox`](./box.md#destruction) to instantiate it
+and obtain the value inside before using data operations. Boxes do not satisfy `number` or
+`signed` either.
 
 ## The `number` Constraint
 

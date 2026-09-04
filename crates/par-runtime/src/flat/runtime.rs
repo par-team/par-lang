@@ -322,6 +322,8 @@ pub enum GlobalCont<Ext: Clone> {
     Par(GlobalPtr<Ext>, GlobalPtr<Ext>),
     /// The choice node; created in case commands (`value.case { ... }`)
     Choice(GlobalPtr<Ext>, Index<Ext, [(Str<Ext>, PackageBody<Ext>)]>),
+    /// Instantiate exactly one reusable box and continue with the resulting value.
+    Unbox(GlobalPtr<Ext>),
 }
 
 #[derive(Debug)]
@@ -885,6 +887,46 @@ impl Runtime {
                 self.rewrites.ext_send += 1;
             }
             sym!(
+                NodeRef::Global(
+                    package_instance,
+                    _,
+                    Global::Package(package, captures_in, FanBehavior::Propagate)
+                ),
+                NodeRef::Global(
+                    unbox_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Unbox(continuation))
+                )
+            ) => {
+                let package = *package;
+                let captures_in = *captures_in;
+                let continuation = *continuation;
+                self.rewrites.instantiate += 1;
+                let root = self.instantiate_package_captures(
+                    package,
+                    Node::Global(package_instance, captures_in),
+                );
+                self.link(root, Node::Global(unbox_instance, continuation));
+            }
+            sym!(
+                NodeRef::Shared(Shared::Sync(shared)),
+                NodeRef::Global(
+                    unbox_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Unbox(continuation))
+                )
+            ) if matches!(shared.as_ref(), SyncShared::Package(..)) => {
+                let SyncShared::Package(package, captures_in) = shared.as_ref() else {
+                    unreachable!()
+                };
+                let package = *package;
+                let captures_in = captures_in.clone();
+                let continuation = *continuation;
+                self.rewrites.instantiate += 1;
+                let root = self.instantiate_package_captures(package, Node::Shared(captures_in));
+                self.link(root, Node::Global(unbox_instance, continuation));
+            }
+            sym!(
                 NodeRef::Global(instance, _, Global::Package(package, captures_in, _)),
                 other
             ) => {
@@ -1012,6 +1054,54 @@ impl Runtime {
                 self.rewrites.ext_call += 1;
                 return Some((UserData::ExternalFn(*ext), other.into_node()));
             }
+            sym!(
+                NodeRef::Linear(Linear::Value(value)),
+                NodeRef::Global(
+                    unbox_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Unbox(continuation))
+                )
+            ) if matches!(value.as_ref(), Value::ExternalArc(_)) => {
+                let Value::ExternalArc(ext) = *value else {
+                    unreachable!()
+                };
+                self.rewrites.ext_call += 1;
+                return Some((
+                    UserData::ExternalArc(ext),
+                    Node::Global(unbox_instance, *continuation),
+                ));
+            }
+            sym!(
+                NodeRef::Global(_, _, Global::Value(Value::ExternalArc(ext))),
+                NodeRef::Global(
+                    unbox_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Unbox(continuation))
+                )
+            ) => {
+                self.rewrites.ext_call += 1;
+                return Some((
+                    UserData::ExternalArc(ext.clone()),
+                    Node::Global(unbox_instance, *continuation),
+                ));
+            }
+            sym!(
+                NodeRef::Shared(Shared::Sync(shared)),
+                NodeRef::Global(
+                    unbox_instance,
+                    _,
+                    Global::Destruct(GlobalCont::Unbox(continuation))
+                )
+            ) if matches!(shared.as_ref(), SyncShared::Value(Value::ExternalArc(_))) => {
+                let SyncShared::Value(Value::ExternalArc(ext)) = shared.as_ref() else {
+                    unreachable!()
+                };
+                self.rewrites.ext_call += 1;
+                return Some((
+                    UserData::ExternalArc(ext.clone()),
+                    Node::Global(unbox_instance, *continuation),
+                ));
+            }
             sym!(NodeRef::Linear(Linear::Value(value)), other)
                 if matches!(value.as_ref(), Value::ExternalArc(_)) =>
             {
@@ -1110,6 +1200,9 @@ impl Runtime {
                                 root,
                             );
                         }
+                    }
+                    (_, GlobalCont::Unbox(_)) => {
+                        unreachable!("unbox must interact with a box representation")
                     }
                     (a, b) => {
                         panic!("Unimplemented destruction between: {:?} {:?}", a, b)
@@ -1255,6 +1348,8 @@ impl<Ext: Clone> GlobalCont<Ext> {
             GlobalCont::Par(_a, _b) => "Par".into(),
 
             GlobalCont::Choice(_ptr, ..) => "Choice".into(),
+
+            GlobalCont::Unbox(_continuation) => "Unbox".into(),
         }
     }
 }

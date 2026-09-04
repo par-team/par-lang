@@ -6,31 +6,29 @@ import {
   @core/List
 }
 
-type Eq<a> = box [a, a] Bool
-
-type SetModule<a> = (type set) box choice {
-  .empty => box set,
-  .insert(a, box set) => box set,
-  .contains(a, box set) => Bool,
+type SetModule<a> = (type set: share) box choice {
+  .empty => set,
+  .insert(a, set) => set,
+  .contains(a, set) => Bool,
 }
 
-dec ListSet : [type a, Eq<box a>] SetModule<box a>
-def ListSet = [type a, eq] (type List<box a>) box case {
+dec ListSet : [type a: data] SetModule<a>
+def ListSet = [type a: data] (type List<a>) box case {
   .empty => .end!,
 
   .insert(x, set) => .item(x) set,
 
   .contains(y, set) => set.begin.case {
     .end! => .false!,
-    .item(x) xs => eq(x, y).case {
+    .item(x) xs => {x == y}.case {
       .true! => .true!,
       .false! => xs.loop,
     },
   },
 }
 
-dec Deduplicate : [type a, SetModule<a>, List<box a>] List<box a>
-def Deduplicate = [type a, (type set) mSet, list]
+dec Deduplicate : [type a: data, SetModule<a>, List<a>] List<a>
+def Deduplicate = [type a: data, (type set: share) mSet, list]
   let visited = mSet.empty
   in list.begin.case {
     .end! => .end!,
@@ -48,7 +46,7 @@ def Map = [type a, type b, f, list] list.begin.case {
   .item(x) xs => .item(f(x)) xs.loop,
 }
 
-def IntListSet = ListSet(type Int, box [x, y] x == y)
+def IntListSet = ListSet(type Int)
 
 def TestDedup =
   Deduplicate(type Int, IntListSet)

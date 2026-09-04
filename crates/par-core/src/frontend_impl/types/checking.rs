@@ -1,4 +1,4 @@
-use super::super::language::{LocalName, TypeConstraint, TypeParameter};
+use super::super::language::{LocalName, TypeParameter};
 use super::super::process::{
     Captures, CaseBranch, Command, Expression, PollKind, Process, Step, TerminalCommand,
     Terminator, VariableUsage,
@@ -55,6 +55,12 @@ enum InferenceFrame<S> {
         usage: VariableUsage,
     },
     Noop {
+        index: usize,
+        span: Span,
+        name: LocalName,
+        usage: VariableUsage,
+    },
+    Unbox {
         index: usize,
         span: Span,
         name: LocalName,
@@ -971,13 +977,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 Type::Name(_, name, args) => self.type_defs.get(span, name, args),
                 Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
                 Type::Box(_, inner) => Ok((**inner).clone()),
-                Type::DualBox(_, inner)
-                    if inner
-                        .satisfies_constraint(TypeConstraint::Share, &self.type_defs)
-                        .unwrap_or(false) =>
-                {
-                    Ok(inner.clone().dual(Span::None))
-                }
                 Type::Iterative {
                     asc,
                     label,
@@ -1010,6 +1009,57 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         typ
     }
 
+    fn explicit_unbox_type(
+        &self,
+        span: &Span,
+        typ: &Type<S>,
+        emit: &mut impl FnMut(TypeError<S>),
+    ) -> Type<S> {
+        let mut expanded = typ.clone();
+        loop {
+            let next = match &expanded {
+                Type::Name(_, name, args) => self.type_defs.get(span, name, args),
+                Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
+                Type::Box(_, inner) => return (**inner).clone(),
+                Type::Iterative {
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                    ..
+                } => Type::expand_iterative(span, asc, label, body, display_hint.0.as_ref()),
+                Type::Recursive {
+                    asc,
+                    label,
+                    body,
+                    display_hint,
+                    ..
+                } => Type::expand_recursive(asc, label, body, display_hint.0.as_ref()),
+                _ => {
+                    emit(TypeError::InvalidOperation(
+                        span.clone(),
+                        Operation::Unbox,
+                        typ.clone(),
+                    ));
+                    return Type::Fail(span.clone());
+                }
+            }
+            .unwrap_or_else(|error| {
+                emit(error);
+                Type::Fail(span.clone())
+            });
+            if next == expanded {
+                emit(TypeError::InvalidOperation(
+                    span.clone(),
+                    Operation::Unbox,
+                    typ.clone(),
+                ));
+                return Type::Fail(span.clone());
+            }
+            expanded = next;
+        }
+    }
+
     fn check_step_command(
         &mut self,
         span: &Span,
@@ -1018,12 +1068,18 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         command: &Command<(), S>,
         emit: &mut impl FnMut(TypeError<S>),
     ) -> Command<Type<S>, S> {
+        if matches!(command, Command::Noop) {
+            self.put(span, object.clone(), typ.clone()).ok();
+            return Command::Noop;
+        }
+        if matches!(command, Command::Unbox) {
+            let inner = self.explicit_unbox_type(span, typ, emit);
+            self.put(span, object.clone(), inner).ok();
+            return Command::Unbox;
+        }
         let typ = self.normalize_command_type(span, typ, true, true, emit);
         match command {
-            Command::Noop => {
-                self.put(span, object.clone(), typ).ok();
-                Command::Noop
-            }
+            Command::Noop | Command::Unbox => unreachable!(),
             Command::Close => Command::Close,
             Command::Send(argument) => {
                 let (argument_type, then_type, vars) = match &typ {
@@ -1832,6 +1888,12 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         name: name.clone(),
                         usage: usage.clone(),
                     }),
+                    Command::Unbox => frames.push(InferenceFrame::Unbox {
+                        index,
+                        span: span.clone(),
+                        name: name.clone(),
+                        usage: usage.clone(),
+                    }),
                     Command::Close => {
                         unreachable!("Close commands are inserted only after type checking")
                     }
@@ -1993,6 +2055,21 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         usage,
                         typ: inferred_type.clone(),
                         command: Command::Noop,
+                    });
+                }
+                InferenceFrame::Unbox {
+                    index,
+                    span,
+                    name,
+                    usage,
+                } => {
+                    inferred_type = Type::Box(span.clone(), Box::new(inferred_type));
+                    typed_steps[index] = Some(Step::Do {
+                        span,
+                        name,
+                        usage,
+                        typ: inferred_type.clone(),
+                        command: Command::Unbox,
                     });
                 }
                 InferenceFrame::Send {
@@ -3160,15 +3237,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
         ) {
             emit(e);
         }
-        let mut target_inner_type = target_type.clone();
-        loop {
-            match target_inner_type
+        let mut expanded_target = target_type.clone();
+        let target_inner_type = loop {
+            match expanded_target
                 .expand_definition(&self.type_defs)
                 .unwrap_or_else(|e| {
                     emit(e);
                     Type::Fail(span.clone())
                 }) {
-                Type::Box(_, inner) => target_inner_type = *inner,
+                Type::Box(_, inner) => break Some(*inner),
                 Type::Recursive {
                     span: _,
                     asc,
@@ -3176,7 +3253,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     body,
                     display_hint,
                 } => {
-                    target_inner_type =
+                    expanded_target =
                         Type::expand_recursive(&asc, &label, &body, display_hint.0.as_ref())
                             .unwrap_or_else(|e| {
                                 emit(e);
@@ -3190,7 +3267,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     body,
                     display_hint,
                 } => {
-                    target_inner_type = Type::expand_iterative(
+                    expanded_target = Type::expand_iterative(
                         &iter_span,
                         &asc,
                         &label,
@@ -3202,17 +3279,39 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                         Type::Fail(span.clone())
                     });
                 }
-                _ => break,
+                _ => break None,
+            }
+        };
+        match target_inner_type {
+            Some(target_inner_type) => {
+                let expression = context.check_expression(
+                    inference_subject,
+                    expression,
+                    &target_inner_type,
+                    emit,
+                );
+                Arc::new(Expression::Box(
+                    span.clone(),
+                    captures.clone(),
+                    expression,
+                    target_type.clone(),
+                ))
+            }
+            None => {
+                let (expression, inner_type) =
+                    context.infer_expression(inference_subject, expression, emit);
+                let typ = Type::Box(span.clone(), Box::new(inner_type));
+                if let Err(error) = typ.check_assignable(span, target_type, &self.type_defs) {
+                    emit(error);
+                }
+                Arc::new(Expression::Box(
+                    span.clone(),
+                    captures.clone(),
+                    expression,
+                    typ,
+                ))
             }
         }
-        let expression =
-            context.check_expression(inference_subject, expression, &target_inner_type, emit);
-        Arc::new(Expression::Box(
-            span.clone(),
-            captures.clone(),
-            expression,
-            target_type.clone(),
-        ))
     }
 
     fn check_expression_chan(
@@ -3654,6 +3753,41 @@ mod flat_ir_tests {
                     ..
                 }
             ] if name == &resource
+        ));
+    }
+
+    #[test]
+    fn inferred_unbox_wraps_the_suffix_type_once() {
+        let subject = LocalName::from(arcstr::literal!("subject"));
+        let process = Process::do_step(
+            Span::None,
+            subject.clone(),
+            VariableUsage::Unknown,
+            (),
+            Command::Unbox,
+            Process::do_terminal(
+                Span::None,
+                subject.clone(),
+                VariableUsage::Unknown,
+                (),
+                TerminalCommand::Break,
+            ),
+        );
+        let mut context =
+            Context::<Unresolved>::new(TypeDefs::default(), IndexMap::new(), IndexMap::new());
+        let mut errors = Vec::new();
+        let (checked, inferred) =
+            context.infer_process(&process, &subject, &mut |error| errors.push(error));
+
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(matches!(inferred, Type::Box(_, inner) if matches!(*inner, Type::Continue(_))));
+        assert!(matches!(
+            checked.steps.as_slice(),
+            [Step::Do {
+                typ: Type::Box(_, inner),
+                command: Command::Unbox,
+                ..
+            }] if matches!(inner.as_ref(), Type::Continue(_))
         ));
     }
 }

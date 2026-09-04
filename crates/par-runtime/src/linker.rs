@@ -161,6 +161,7 @@ fn link_global_cont(cont: &GlobalCont<Unlinked>) -> Result<GlobalCont<Linked>, L
         GlobalCont::Continue => GlobalCont::Continue,
         GlobalCont::Par(a, b) => GlobalCont::Par(Index(a.0.clone()), Index(b.0.clone())),
         GlobalCont::Choice(a, b) => GlobalCont::Choice(Index(a.0.clone()), Index(b.0.clone())),
+        GlobalCont::Unbox(continuation) => GlobalCont::Unbox(Index(continuation.0.clone())),
     })
 }
 

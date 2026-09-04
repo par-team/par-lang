@@ -279,6 +279,9 @@ impl ProgramTranspiler {
             },
             Tree::Break => Global::Value(GlobalValue::Break),
             Tree::Continue => Global::Destruct(GlobalCont::Continue),
+            Tree::Unbox(continuation) => Global::Destruct(GlobalCont::Unbox(
+                self.transpile_tree_and_alloc(*continuation),
+            )),
             Tree::Era => Global::Fanout(self.dest.alloc_clone(&[])),
             Tree::Close => {
                 let signal = self.dest.intern(&ArcStr::from(CLEANUP_BRANCH));

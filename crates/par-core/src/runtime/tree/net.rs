@@ -38,6 +38,7 @@ pub(crate) fn number_to_string(mut number: usize) -> String {
 pub enum Tree<Ext> {
     Break,
     Continue,
+    Unbox(Box<Tree<Ext>>),
     Era,
     Close,
     Par(Box<Tree<Ext>>, Box<Tree<Ext>>),
@@ -73,7 +74,7 @@ impl<Ext> Tree<Ext> {
                 a.map_vars(m);
                 b.map_vars(m);
             }
-            Self::Package(_, context, _) => {
+            Self::Package(_, context, _) | Self::Unbox(context) => {
                 context.map_vars(m);
             }
             Self::Signal(_, payload) => {
@@ -108,6 +109,7 @@ impl<Ext> core::fmt::Debug for Tree<Ext> {
             Self::Close => f.debug_tuple("Close").finish(),
             Self::Break => f.debug_tuple("Break").finish(),
             Self::Continue => f.debug_tuple("Continue").finish(),
+            Self::Unbox(continuation) => f.debug_tuple("Unbox").field(continuation).finish(),
             Self::Times(a, b) => f.debug_tuple("Times").field(a).field(b).finish(),
             Self::Par(a, b) => f.debug_tuple("Par").field(a).field(b).finish(),
             Self::Dup(a, b) => f.debug_tuple("Dup").field(a).field(b).finish(),
@@ -147,6 +149,7 @@ impl<Ext: Clone> Clone for Tree<Ext> {
             Self::Close => Self::Close,
             Self::Break => Self::Break,
             Self::Continue => Self::Continue,
+            Self::Unbox(continuation) => Self::Unbox(continuation.clone()),
             Self::Times(a, b) => Self::Times(a.clone(), b.clone()),
             Self::Par(a, b) => Self::Par(a.clone(), b.clone()),
             Self::Dup(a, b) => Self::Dup(a.clone(), b.clone()),
@@ -434,6 +437,12 @@ impl<Ext: Clone> Net<Ext> {
                 self.link(*d1, Package(id, Box::new(b0), FanBehavior::Propagate));
                 self.rewrites.commute += 1;
             }
+            (Package(id, cx, FanBehavior::Propagate), Unbox(continuation))
+            | (Unbox(continuation), Package(id, cx, FanBehavior::Propagate)) => {
+                let root = self.dereference_package(id, *cx);
+                self.link(root, *continuation);
+                self.rewrites.derelict += 1;
+            }
             (Package(id, cx, _), a) | (a, Package(id, cx, _)) => {
                 let b = self.dereference_package(id, *cx);
                 self.interact(a, b);
@@ -463,6 +472,11 @@ impl<Ext: Clone> Net<Ext> {
                 self.link(*a, ExternalBox(Arc::clone(&f)));
                 self.link(*b, ExternalBox(f));
                 self.rewrites.commute += 1;
+            }
+            (ExternalBox(f), Unbox(continuation)) | (Unbox(continuation), ExternalBox(f)) => {
+                self.waiting_for_reducer
+                    .push((ExternalBox(f), *continuation));
+                self.rewrites.derelict += 1;
             }
             (ExternalBox(f), a) | (a, ExternalBox(f)) => {
                 self.waiting_for_reducer.push((ExternalBox(f), a))
@@ -581,7 +595,7 @@ impl<Ext: Clone> Net<Ext> {
                 self.substitute_tree(a);
                 self.substitute_tree(b);
             }
-            Tree::Package(_, context, _) => self.substitute_tree(context),
+            Tree::Package(_, context, _) | Tree::Unbox(context) => self.substitute_tree(context),
             Tree::Signal(_, payload) => self.substitute_tree(payload),
             Tree::Choice(context, _, _) => self.substitute_tree(context),
             Tree::Var(id) => {
@@ -704,6 +718,7 @@ impl<Ext: Clone> Net<Ext> {
             Tree::Close => format!("close"),
             Tree::Break => format!("!"),
             Tree::Continue => format!("?"),
+            Tree::Unbox(continuation) => format!("unbox({})", self.show_tree(continuation)),
             Tree::Par(a, b) => format!("[{}] {}", self.show_tree(b), self.show_tree(a)),
             Tree::Times(a, b) => format!("({}) {}", self.show_tree(b), self.show_tree(a)),
             Tree::Dup(a, b) => format!("{{{} {}}}", self.show_tree(a), self.show_tree(b)),
@@ -755,7 +770,7 @@ impl<Ext: Clone> Net<Ext> {
                 self.assert_tree_not_contains(a, idx);
                 self.assert_tree_not_contains(b, idx);
             }
-            Tree::Package(_, context, _) => {
+            Tree::Package(_, context, _) | Tree::Unbox(context) => {
                 self.assert_tree_not_contains(context, idx);
             }
             Tree::Signal(_, payload) => {
@@ -847,6 +862,7 @@ impl<Ext: Clone> Net<Ext> {
             }
             Tree::Signal(_, payload) => self.assert_tree_valid(payload),
             Tree::Choice(context, _, _) => self.assert_tree_valid(context),
+            Tree::Unbox(continuation) => self.assert_tree_valid(continuation),
             Tree::Era | Tree::Close | Tree::Continue | Tree::Break => {
                 vec![]
             }

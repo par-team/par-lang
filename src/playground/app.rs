@@ -781,6 +781,7 @@ fn par_syntax() -> Syntax {
             "case",
             "begin",
             "unfounded",
+            "unbox",
             "loop",
             "module",
             "include",

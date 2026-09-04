@@ -92,6 +92,8 @@ pub enum Command<Typ, S> {
     /// protocol effect, but preserves linearity diagnostics and hover information for source
     /// command chains of the form `subject; next`.
     Noop,
+    /// Explicitly instantiate one `box` layer before continuing with its result.
+    Unbox,
     /// Compiler-inserted structural disposal for a value satisfying the `drop` constraint.
     Close,
     Send(Arc<Expression<Typ, S>>),
@@ -324,6 +326,7 @@ impl<S: Clone> Process<(), S> {
                     typ: *typ,
                     command: match command {
                         Command::Noop => Command::Noop,
+                        Command::Unbox => Command::Unbox,
                         Command::Close => Command::Close,
                         Command::Send(argument) => Command::Send(argument.optimize()),
                         Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
@@ -568,7 +571,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Process<Type<S>, S> {
 impl<Typ, S> Command<Typ, S> {
     pub fn free_variables(&self) -> IndexSet<LocalName> {
         match self {
-            Command::Noop | Command::Close => IndexSet::new(),
+            Command::Noop | Command::Unbox | Command::Close => IndexSet::new(),
             Command::Send(argument) => argument.free_variables(),
             Command::Receive(..)
             | Command::Signal(_)
@@ -610,7 +613,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Command<Type<S>, S> {
         consume: &mut impl FnMut(Span, HoverInfo<S>),
     ) {
         match self {
-            Self::Noop | Self::Close => {}
+            Self::Noop | Self::Unbox | Self::Close => {}
             Self::Send(argument) => {
                 argument.types_at_spans(program, docs, consume);
             }
@@ -1109,6 +1112,7 @@ impl<S: Clone> Command<Type<S>, S> {
     pub fn map_types(&self, f: &mut impl FnMut(Type<S>) -> Type<S>) -> Self {
         match self {
             Command::Noop => Command::Noop,
+            Command::Unbox => Command::Unbox,
             Command::Close => Command::Close,
             Command::Send(argument) => Command::Send(argument.map_types(f)),
             Command::Receive(parameter, annotation, typ, vars) => Command::Receive(
@@ -1332,6 +1336,7 @@ impl<S: Clone> Command<(), S> {
     ) -> Result<Command<(), T>, E> {
         match self {
             Command::Noop => Ok(Command::Noop),
+            Command::Unbox => Ok(Command::Unbox),
             Command::Close => Ok(Command::Close),
             Command::Send(argument) => Ok(Command::Send(map_arc_expression(argument, f)?)),
             Command::Receive(parameter, annotation, (), vars) => Ok(Command::Receive(
@@ -1725,6 +1730,7 @@ impl<Typ, S: Clone + std::fmt::Display> Command<Typ, S> {
     fn pretty(&self, f: &mut impl Write, indent: usize) -> fmt::Result {
         match self {
             Command::Noop => Ok(()),
+            Command::Unbox => write!(f, ".unbox"),
             Command::Close => write!(f, ".#close"),
             Command::Send(argument) => {
                 write!(f, "(")?;

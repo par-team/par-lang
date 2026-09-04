@@ -11,9 +11,9 @@ type CoList<a> = iterative choice {
 	.item => (a) self,
 }
 
-dec FinFilter : [type a, CoList<box a>, box [box a] Bool, Nat] CoList<box a>
+dec FinFilter : [type a: share, CoList<a>, box [a] Bool, Nat] CoList<a>
 def FinFilter =
-	[type a, xs, f, n]
+	[type a: share, xs, f, n]
 	begin case {
 		.end => xs.end,
 		.item =>
@@ -45,9 +45,9 @@ def NatNotDivides =
 	[x, y]
 	Nat.Mod(x, y) != 0
 
-dec ListEquals : [type a, List<box a>, List<box a>, box [box a, box a] Bool] Bool
+dec ListEquals : [type a: drop, List<a>, List<a>, box [a, a] Bool] Bool
 def ListEquals =
-	[type a, xs, ys, f]
+	[type a: drop, xs, ys, f]
 	xs.begin.case {
 		.end! => ys.case {
 			.end! => .true!,

@@ -68,8 +68,7 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::Name(_, name, args) => defs
                 .get(&self.span(), name, args)
                 .and_then(|typ| typ.satisfies_constraint_with(constraint, defs, fixpoints)),
-            Type::Box(_, typ) => Ok(satisfies_at_least(TypeConstraint::Share)
-                || typ.satisfies_constraint_with(constraint, defs, fixpoints)?),
+            Type::Box(..) => Ok(satisfies_at_least(TypeConstraint::Share)),
             Type::Pair(_, left, right, vars) => {
                 let minimum = if vars.is_empty() {
                     TypeConstraint::Data

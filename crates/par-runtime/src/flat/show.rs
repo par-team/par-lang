@@ -140,6 +140,9 @@ impl<'a, 'b, Ext: Clone> std::fmt::Display for Showable<'a, 'b, &'a Global<Ext>,
                 use crate::flat::runtime::GlobalCont::*;
                 match global_cont {
                     Continue => write!(f, "?")?,
+                    Unbox(continuation) => {
+                        write!(f, ".unbox {}", Showable(continuation, self.1))?;
+                    }
                     Par(a, b) => {
                         write!(f, "[{}] {}", Showable(b, self.1), Showable(a, self.1))?;
                     }

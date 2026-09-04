@@ -138,6 +138,7 @@ pub(crate) fn is_single_char(string: &str) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Operation {
+    Unbox,
     Send,
     Receive {
         #[allow(unused)]
