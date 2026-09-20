@@ -237,7 +237,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
             Self::DependencyCycle(span, deps) => {
                 let labels = labels_from_span(code, span);
                 let mut deps_str = String::new();
-                for (i, dep) in deps.iter().enumerate() {
+                for (i, dep) in deps.iter().chain(deps.first()).enumerate() {
                     if i > 0 {
                         write!(&mut deps_str, " -> ").unwrap();
                     }

@@ -48,7 +48,7 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
             }
         }
 
-        let type_defs = Self {
+        let mut type_defs = Self {
             globals: Arc::new(globals_map),
             vars: Default::default(),
         };
@@ -58,9 +58,20 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
             deps_map.insert(name.clone(), typ.get_dependencies());
         }
 
+        let mut cyclic_names = IndexSet::new();
         for (name, _) in type_defs.globals.iter() {
             if let Err(e) = type_defs.validate_acyclic(name, &Default::default(), &deps_map) {
+                if let TypeError::DependencyCycle(_, names) = &e {
+                    cyclic_names.extend(names.iter().cloned());
+                }
                 errors.insert(e);
+            }
+        }
+
+        let globals = Arc::make_mut(&mut type_defs.globals);
+        for name in cyclic_names {
+            if let Some((span, _, typ)) = globals.get_mut(&name) {
+                *typ = Type::Fail(span.clone());
             }
         }
 
