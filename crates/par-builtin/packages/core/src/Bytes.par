@@ -133,10 +133,6 @@ export {
   // Closes a parser, returning any source error.
   dec Close : [<e> Parser<e>] Try<e, !>
 
-  // Streams a parser's remaining input one byte at a time. Closing the stream
-  // closes the parser and drops any resulting source error.
-  dec Chunks : [<e: drop> Parser<e>] Stream<e, Bytes>
-
   // Splits a parser's remaining input on a byte separator. Closing the stream
   // closes the parser and drops any resulting source error.
   dec SplitBy : [<e: drop> Parser<e>, Bytes] Stream<e, Bytes>
@@ -222,22 +218,6 @@ def Remainder = [<e> parser] parser.case {
 def Close = [<e> parser] parser.case {
   .empty! => .ok!,
   .ready parser => parser.close,
-}
-
-def Chunks = [<e: drop> parser] do {
-  parser.begin
-} in case {
-  .close* => parser.case {
-    .empty! => !,
-    .ready parser => let _ = parser.close in !,
-  },
-  .next => parser.case {
-    .empty! => .end.ok!,
-    .ready parser => parser.byte.case {
-      .err e => .end.err e,
-      .ok(byte) parser => .item(byte) parser.loop,
-    },
-  },
 }
 
 def SplitBy = [<e: drop> parser, separator] parser->SplitByPattern(.bytes separator)

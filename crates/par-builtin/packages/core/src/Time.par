@@ -37,19 +37,6 @@ export {
   // One hour (60 minutes).
   dec Hour        : Duration
 
-  // The whole number of nanoseconds in a duration.
-  dec Nanoseconds  : [Duration] Int
-  // The whole number of microseconds in a duration (truncated toward zero).
-  dec Microseconds : [Duration] Int
-  // The whole number of milliseconds in a duration (truncated toward zero).
-  dec Milliseconds : [Duration] Int
-  // The whole number of seconds in a duration (truncated toward zero).
-  dec Seconds      : [Duration] Int
-  // The whole number of minutes in a duration (truncated toward zero).
-  dec Minutes      : [Duration] Int
-  // The whole number of hours in a duration (truncated toward zero).
-  dec Hours        : [Duration] Int
-
   // A human-readable rendering of a duration, e.g. `"1h30m15s"`, `"-2m"`, `"0s"`.
   dec Show : [Duration] String
 
@@ -216,15 +203,6 @@ def Millisecond = 1_000_000
 def Second      = 1_000_000_000
 def Minute      = 60 * Second
 def Hour        = 60 * Minute
-
-// Duration accessors
-
-def Nanoseconds  = [d] d
-def Microseconds = [d] d / Microsecond
-def Milliseconds = [d] d / Millisecond
-def Seconds      = [d] d / Second
-def Minutes      = [d] d / Minute
-def Hours        = [d] d / Hour
 
 def Show = external
 

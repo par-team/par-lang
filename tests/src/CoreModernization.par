@@ -274,12 +274,6 @@ def TestStreamSplitting : [Test] ! = [test] do {
     ->Stream.ToList
     ->Try.Ok
 
-  let byteChunks = Bytes.Parse("abc")
-    ->Bytes.Chunks
-    ->Stream.Map(box String.FromBytes)
-    ->Stream.ToList
-    ->Try.Ok
-
   test
     .assert("String.Lines returns a stream of lines", lines == *("alpha", "beta", "gamma"))
     .assert("String.Lines accepts Windows line separators", windowsLines == {*("alpha", "beta", "gamma")})
@@ -287,7 +281,6 @@ def TestStreamSplitting : [Test] ! = [test] do {
     .assert("String.Remainder returns unparsed input", remainder == "remaining")
     .assert("Bytes.Remainder returns unparsed input", String.FromBytes(bytesRemainder) == "bytes")
     .assert("Bytes.SplitBy splits byte streams", bytesParts == *("a", "b", "c"))
-    .assert("Bytes.Chunks streams one byte at a time", byteChunks == *("a", "b", "c"))
 } in !
 
 def TestTextCasingAndTrimming : [Test] ! = [test] do {

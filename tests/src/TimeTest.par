@@ -26,11 +26,6 @@ def TestDuration : [Test] ! = [test] do {
   test
     .assert("a minute is 60 seconds", Time.Minute == 60 * Time.Second)
     .assert("an hour is 60 minutes", Time.Hour == 60 * Time.Minute)
-    .assert("a second is a billion nanoseconds", Time.Seconds(Time.Second) == 1)
-    .assert("Hours counts whole hours", Time.Hours(Time.Hour) == 1)
-    .assert("2h30m is 150 minutes", Time.Minutes(2 * Time.Hour + 30 * Time.Minute) == 150)
-    .assert("5s is 5000ms", Time.Milliseconds(5 * Time.Second) == 5000)
-    .assert("durations negate", Time.Minutes(0 - Time.Hour) == -60)
 } in !
 
 def TestDurationShow : [Test] ! = [test] do {
