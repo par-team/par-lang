@@ -10,7 +10,10 @@ mod tests {
     use crate::workspace::render_type_in_scope;
     use arcstr::{ArcStr, literal};
     use par_runtime::pkgid::PackageId;
-    use std::fmt::{self, Write};
+    use std::{
+        collections::BTreeMap,
+        fmt::{self, Write},
+    };
 
     struct TestNameWriter;
 
@@ -51,6 +54,18 @@ mod tests {
         }
     }
 
+    fn test_global_name(name: &str) -> GlobalName<Universal> {
+        GlobalName::new(
+            Span::None,
+            Universal {
+                package: PackageId::Special(literal!("__test__")),
+                directories: vec![],
+                module: "Main".to_string(),
+            },
+            name.to_string(),
+        )
+    }
+
     fn alias_preserving_type_defs() -> (TypeDefs<Universal>, GlobalName<Universal>) {
         let span = Span::None;
         let key = LocalName {
@@ -61,15 +76,7 @@ mod tests {
             span: Span::None,
             string: ArcStr::from("v"),
         };
-        let map_name = GlobalName::new(
-            Span::None,
-            Universal {
-                package: PackageId::Special(literal!("__test__")),
-                directories: vec![],
-                module: "Main".to_string(),
-            },
-            "Map".to_string(),
-        );
+        let map_name = test_global_name("Map");
         let body = Type::iterative(
             None,
             Type::choice(vec![
@@ -90,6 +97,86 @@ mod tests {
             TypeDefs::new_with_validation([(&span, &map_name, &params, &body)].into_iter());
         assert!(errors.is_empty(), "errors: {errors:?}");
         (defs, map_name)
+    }
+
+    #[test]
+    fn test_substitution_avoids_self_capture() {
+        let param = LocalName {
+            span: Span::None,
+            string: ArcStr::from("param"),
+        };
+        let replacement = Type::self_(None);
+        let typ: Type<Universal> = Type::iterative(
+            None,
+            Type::pair(Type::Var(Span::None, param.clone()), Type::self_(None)),
+        );
+
+        let substituted = typ
+            .substitute(BTreeMap::from([(&param, &replacement)]))
+            .unwrap();
+        let Type::Iterative { label, body, .. } = substituted else {
+            panic!("expected iterative type")
+        };
+        let Some(label) = label else {
+            panic!("expected the fixpoint binder to be renamed")
+        };
+        assert_eq!(label.string.as_str(), "self'");
+        let Type::Pair(_, inserted, bound, _) = body.as_ref() else {
+            panic!("expected pair body")
+        };
+
+        assert!(matches!(inserted.as_ref(), Type::Self_(_, None)));
+        assert!(matches!(
+            bound.as_ref(),
+            Type::Self_(_, Some(bound_label)) if bound_label == &label
+        ));
+    }
+
+    #[test]
+    fn test_self_polarity_through_nested_named_fixpoint() {
+        let span = Span::None;
+        let super_param = LocalName {
+            span: Span::None,
+            string: ArcStr::from("super"),
+        };
+        let b_name = test_global_name("B");
+        let b_body = Type::iterative(
+            None,
+            Type::choice(vec![(
+                "continue",
+                Type::Var(Span::None, super_param.clone()),
+            )]),
+        );
+        let a_name = test_global_name("A");
+        let a_body = Type::iterative(
+            None,
+            Type::choice(vec![(
+                "call",
+                Type::function(
+                    Type::Name(Span::None, b_name.clone(), vec![Type::self_(None)]),
+                    Type::break_(),
+                ),
+            )]),
+        );
+
+        let (_, errors) = TypeDefs::new_with_validation(
+            [
+                (&span, &a_name, &vec![], &a_body),
+                (
+                    &span,
+                    &b_name,
+                    &vec![TypeParameter::any(super_param)],
+                    &b_body,
+                ),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+        assert!(matches!(
+            errors.first(),
+            Some(TypeError::SelfUsedInNegativePosition(_))
+        ));
     }
 
     #[test]
