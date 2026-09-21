@@ -3740,9 +3740,24 @@ impl Context {
                 variant,
                 pattern,
             } => {
-                let (subject_name, binding_value) = match value {
-                    Expression::Variable(_, name) => (name.clone(), None),
-                    _ => (LocalName::temp(), Some(self.compile_expression(value)?)),
+                let subject_name = LocalName::temp();
+                let binding_value = self.compile_expression(value)?;
+                let failure = if let Expression::Variable(_, name) = value {
+                    process::Process::let_step(
+                        span.clone(),
+                        name.clone(),
+                        None,
+                        (),
+                        Arc::new(process::Expression::Variable(
+                            span.clone(),
+                            subject_name.clone(),
+                            (),
+                            VariableUsage::Unknown,
+                        )),
+                        failure,
+                    )
+                } else {
+                    failure
                 };
 
                 let success_process =
@@ -3760,17 +3775,14 @@ impl Context {
                     ),
                 );
 
-                match binding_value {
-                    Some(value) => process::Process::let_step(
-                        span.clone(),
-                        subject_name.clone(),
-                        None,
-                        (),
-                        value,
-                        command_process,
-                    ),
-                    None => command_process,
-                }
+                process::Process::let_step(
+                    span.clone(),
+                    subject_name,
+                    None,
+                    (),
+                    binding_value,
+                    command_process,
+                )
             }
             Condition::And(span, left, right) => self.with_fallthrough(failure, |pass| {
                 let left_fallthrough = pass.use_fallthrough(span).unwrap();
