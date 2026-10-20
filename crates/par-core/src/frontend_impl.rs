@@ -1,4 +1,5 @@
 pub(crate) mod captures;
+pub(crate) mod keyword_docs;
 pub(crate) mod language;
 pub(crate) mod lexer;
 pub(crate) mod parse;
