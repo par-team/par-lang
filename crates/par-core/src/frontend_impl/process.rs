@@ -1,6 +1,6 @@
 pub use super::captures::{Captures, VariableUsage};
 use super::{
-    language::{GlobalName, LocalName, TypeParameter},
+    language::{GlobalName, LocalName, TypeConstraint, TypeParameter},
     types::{GlobalNameWriter, Type},
 };
 use crate::{
@@ -141,7 +141,7 @@ pub enum TerminalCommand<Typ, S> {
 pub enum Expression<Typ, S> {
     Global(Span, GlobalName<S>, Typ),
     Variable(Span, LocalName, Typ, VariableUsage),
-    Box(Span, Captures, Arc<Self>, Typ),
+    Box(Span, Option<TypeConstraint>, Captures, Arc<Self>, Typ),
     Chan {
         span: Span,
         captures: Captures,
@@ -666,8 +666,9 @@ impl<S: Clone> Expression<(), S> {
                 typ.clone(),
                 usage.clone(),
             )),
-            Self::Box(span, caps, expression, typ) => Arc::new(Self::Box(
+            Self::Box(span, constraint, caps, expression, typ) => Arc::new(Self::Box(
                 span.clone(),
+                *constraint,
                 caps.clone(),
                 expression.optimize(),
                 typ.clone(),
@@ -968,7 +969,7 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> Expression<Type<S>, S>
             Self::Variable(_, name, typ, _usage) => {
                 consume(name.span(), HoverInfo::named(name, typ.clone()));
             }
-            Self::Box(span, _, expression, typ) => {
+            Self::Box(span, _, _, expression, typ) => {
                 consume(span.clone(), HoverInfo::unnamed(typ.clone()));
                 expression.types_at_spans(program, docs, consume);
             }
@@ -1002,7 +1003,7 @@ impl<Typ: Clone, S> Expression<Typ, S> {
         match self {
             Self::Global(_, _, typ) => typ.clone(),
             Self::Variable(_, _, typ, _usage) => typ.clone(),
-            Self::Box(_, _, _, typ) => typ.clone(),
+            Self::Box(_, _, _, _, typ) => typ.clone(),
             Self::Chan { expr_type, .. } => expr_type.clone(),
             Self::Primitive(_, _, typ) => typ.clone(),
             Self::External(_, typ) => typ.clone(),
@@ -1171,12 +1172,15 @@ impl<S: Clone> Expression<Type<S>, S> {
                 f(typ.clone()),
                 usage.clone(),
             )),
-            Expression::Box(span, captures, expression, typ) => Arc::new(Expression::Box(
-                span.clone(),
-                captures.clone(),
-                expression.map_types(f),
-                f(typ.clone()),
-            )),
+            Expression::Box(span, constraint, captures, expression, typ) => {
+                Arc::new(Expression::Box(
+                    span.clone(),
+                    *constraint,
+                    captures.clone(),
+                    expression.map_types(f),
+                    f(typ.clone()),
+                ))
+            }
             Expression::Chan {
                 span,
                 captures,
@@ -1398,8 +1402,8 @@ impl<S: Clone> Expression<(), S> {
             Expression::Variable(span, name, (), usage) => {
                 Ok(Expression::Variable(span, name, (), usage))
             }
-            Expression::Box(span, captures, expression, ()) => {
-                Self::map_global_names_box(span, captures, expression, f)
+            Expression::Box(span, constraint, captures, expression, ()) => {
+                Self::map_global_names_box(span, constraint, captures, expression, f)
             }
             Expression::Chan {
                 span,
@@ -1422,12 +1426,14 @@ impl<S: Clone> Expression<(), S> {
 
     fn map_global_names_box<T, E>(
         span: Span,
+        constraint: Option<TypeConstraint>,
         captures: Captures,
         expression: Arc<Expression<(), S>>,
         f: &mut impl FnMut(GlobalName<S>) -> Result<GlobalName<T>, E>,
     ) -> Result<Expression<(), T>, E> {
         Ok(Expression::Box(
             span,
+            constraint,
             captures,
             map_arc_expression(expression, f)?,
             (),
@@ -1773,7 +1779,7 @@ impl<Typ, S> Expression<Typ, S> {
                 set.insert(name.clone());
                 set
             }
-            Expression::Box(_, _, expression, _) => expression.free_variables(),
+            Expression::Box(_, _, _, expression, _) => expression.free_variables(),
             Expression::Chan { captures, .. } => captures.names.keys().cloned().collect(),
             Expression::Primitive(_, _, _) => IndexSet::new(),
             Expression::External(_, _) => IndexSet::new(),
@@ -1791,8 +1797,12 @@ impl<Typ, S: Clone + std::fmt::Display> Expression<Typ, S> {
                 write!(f, "{}", name)
             }
 
-            Self::Box(_, _, expression, _) => {
-                write!(f, "box ")?;
+            Self::Box(_, constraint, _, expression, _) => {
+                write!(f, "box")?;
+                if let Some(constraint) = constraint {
+                    write!(f, "<{constraint}>")?;
+                }
+                write!(f, " ")?;
                 expression.pretty(f, indent)
             }
 

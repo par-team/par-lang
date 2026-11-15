@@ -1,4 +1,4 @@
-use crate::frontend_impl::language::{GlobalName, LocalName};
+use crate::frontend_impl::language::{GlobalName, LocalName, TypeConstraint};
 use crate::frontend_impl::process::HoverInfo;
 use crate::frontend_impl::program::Docs;
 use crate::frontend_impl::types::core::{NamedTypeDisplay, TypePath, TypePathSegment};
@@ -171,7 +171,7 @@ impl<S: Clone> Type<S> {
                     arg.types_at_spans(type_defs, docs, consume);
                 }
             }
-            Self::Box(_, body) | Self::DualBox(_, body) => {
+            Self::Box(_, _, body) | Self::DualBox(_, _, body) => {
                 body.types_at_spans(type_defs, docs, consume)
             }
             Self::Pair(_, t, u, _) => {
@@ -211,6 +211,13 @@ impl<S: Clone> Type<S> {
             Type::DualHole(_, _, _) => {}
             Type::Fail(_) => {}
         }
+    }
+}
+
+fn write_box_constraint(f: &mut impl Write, constraint: TypeConstraint) -> fmt::Result {
+    match constraint {
+        TypeConstraint::Share => Ok(()),
+        _ => write!(f, "<{constraint}>"),
     }
 }
 
@@ -263,15 +270,19 @@ fn write_type_with_options<S: Clone, N: GlobalNameWriter<S>>(
             names.write_global_name(f, name)?;
             write_type_args(f, names, args, options, current_path)
         }
-        Type::Box(_, body) => {
-            write!(f, "box ")?;
+        Type::Box(_, constraint, body) => {
+            write!(f, "box")?;
+            write_box_constraint(f, *constraint)?;
+            write!(f, " ")?;
             current_path.push(TypePathSegment::BoxBody);
             let r = write_type_with_options(f, names, body, options, current_path);
             current_path.pop();
             r
         }
-        Type::DualBox(_, body) => {
-            write!(f, "dual box ")?;
+        Type::DualBox(_, constraint, body) => {
+            write!(f, "dual box")?;
+            write_box_constraint(f, *constraint)?;
+            write!(f, " ")?;
             current_path.push(TypePathSegment::BoxBody);
             let r = write_type_with_options(f, names, body, options, current_path);
             current_path.pop();

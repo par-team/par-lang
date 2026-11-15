@@ -319,7 +319,7 @@ fn validate_expression_visibility(
         | process::Expression::Primitive(..)
         | process::Expression::External(..)
         | process::Expression::ToDo(..) => {}
-        process::Expression::Box(_, _, expression, _) => {
+        process::Expression::Box(_, _, _, expression, _) => {
             validate_expression_visibility(current_module, expression, visibility, errors);
         }
         process::Expression::Chan {

@@ -1,0 +1,75 @@
+module BoxConstraints
+
+import {
+  @core/Bool
+  @core/Int
+  @core/List
+  @core/Nat
+  @core/String
+  @core/Test
+}
+
+type Resource = choice {
+  .close* => !,
+  .use => !,
+}
+
+// Checks that it ends up closed (if `closed` is true) or used (if false).
+def NewResource: [Test, String, Bool] Resource = [test, label, closed] case {
+  .close* => do { test.check(label, closed) } in !,
+  .use => do { test.check(label, not closed) } in !,
+}
+
+def Double: [Int] Int = [x] x * 2
+
+def TestDataBoxIsReusable: [Test] ! = [test] do {
+  let n: Int = 21
+  let numbers = *(1, 2, 3)
+  let b: box<data> [Int] Int = box [x] x + n + numbers->List.Length
+  test.check("A `box<data>` can be used many times", b(1) + b(2) == 51)
+} in !
+
+def TestDataBoxIsAShareBox: [Test] ! = [test] do {
+  let n: Int = 5
+  let b: box<data> Int = box n * 2
+  let shared: box Int = b
+  test.check("`box<data>` is a subtype of `box`", shared.unbox + shared.unbox == 20)
+} in !
+
+def TestNoneBoxCallsGlobals: [Test] ! = [test] do {
+  let b: box<none> [Int] Int = box [x] Double(x)
+  test.check("A `box<none>` may still use globals", b(4) == 8)
+} in !
+
+def TestExplicitConstraintSyntax: [Test] ! = [test] do {
+  let n: Nat = 3
+  let b = box<number> n + 1
+  let c: box<data> Nat = b
+  test.check("`box<c> e` infers a `box<c>` type", c.unbox == 4)
+} in !
+
+def TestDropBoxUnboxed: [Test] ! = [test] do {
+  let resource = NewResource(test, "Unboxing a `box<drop>` runs it instead of closing", .false!)
+  let b: box<drop> ! = box do { resource.use } in !
+  let ! = b.unbox
+} in !
+
+def TestDropBoxDropped: [Test] ! = [test] do {
+  let resource = NewResource(test, "Dropping a `box<drop>` closes its captures", .true!)
+  let b: box<drop> ! = box do { resource.use } in !
+} in !
+
+def TestAnyBoxUnboxed: [Test] ! = [test] do {
+  let f: [Int] Int = [x] x + 1
+  let b: box<any> Int = box f(41)
+  test.check("A `box<any>` can capture strictly linear values", b.unbox == 42)
+} in !
+
+def TestDropBoxDroppedAtRuntime: [Test] ! = [test] do {
+  let resource = NewResource(test, "Dropping a `box<drop>` at runtime closes its captures", .true!)
+  let b: box<drop> ! = box do { resource.use } in !
+  let n: Int = 1
+  if n + n == 3 => {
+    let ! = b.unbox
+  }
+} in !

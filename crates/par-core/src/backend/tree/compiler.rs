@@ -609,7 +609,7 @@ impl Compiler {
                 Ok(self.use_variable(name, usage, false)?)
             }
 
-            Expression::Box(span, captures, expression, typ) => {
+            Expression::Box(span, _, captures, expression, typ) => {
                 self.with_captures(captures, |this| {
                     let (context_in, pack_data) = this.context.pack(None, None, &mut this.net);
                     let (package_id, _) =

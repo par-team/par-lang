@@ -68,7 +68,11 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
             Type::Name(_, name, args) => defs
                 .get(&self.span(), name, args)
                 .and_then(|typ| typ.satisfies_constraint_with(constraint, defs, fixpoints)),
-            Type::Box(..) => Ok(satisfies_at_least(TypeConstraint::Share)),
+            // A box is as reusable as its captures, but never more than `share`:
+            // its code can't be compared or displayed.
+            Type::Box(_, captures, _) => {
+                Ok(satisfies_at_least(captures.broader(TypeConstraint::Share)))
+            }
             Type::Pair(_, left, right, vars) => {
                 let minimum = if vars.is_empty() {
                     TypeConstraint::Data

@@ -64,7 +64,7 @@ pub enum TypeError<S> {
     PollVariableNotPreserved(Span, LocalName),
     PollVariableChangedType(Span, LocalName, Type<S>, Type<S>),
     PollBranchMustSubmit(Span),
-    CannotUseLinearVariableInBox(Span, LocalName),
+    CannotCaptureInBox(Span, LocalName, Type<S>, TypeConstraint),
     NonExhaustiveIf(Span),
     Todo(Span),
 }
@@ -382,6 +382,21 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                             from_type_str,
                         )
                     }
+                    SubtypeMismatchKind::BoxConstraintMismatch {
+                        dual,
+                        provided,
+                        expected,
+                    } => {
+                        let dual = if *dual { "dual " } else { "" };
+                        let expected = format_box_with_constraint(*expected);
+                        let provided = format_box_with_constraint(*provided);
+                        miette::miette!(
+                            labels = labels,
+                            "This type was required:\n\n  {}\n\nBut an incompatible type was provided:\n\n  {}\n\nExpected `{dual}{expected}`, got `{dual}{provided}`.\n",
+                            to_type_str,
+                            from_type_str,
+                        )
+                    }
                     SubtypeMismatchKind::ConstructorMismatch(diff) => {
                         miette::miette!(
                             labels = labels,
@@ -671,9 +686,26 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                     "This branch must end by calling `submit(...)` or `repoll(...)` exactly once.",
                 )
             }
-            Self::CannotUseLinearVariableInBox(span, name) => {
+            Self::CannotCaptureInBox(span, name, typ, constraint) => {
                 let labels = labels_from_span(code, span);
-                miette::miette!(labels = labels, "Cannot use linear variable `{}` in a `box` expression.", name)
+                let typ_str = render_type(typ, 1);
+                if *constraint == TypeConstraint::Share {
+                    miette::miette!(
+                        labels = labels,
+                        "Cannot use linear variable `{}` in a `box` expression. Its type is:\n\n  {}\n",
+                        name,
+                        typ_str,
+                    )
+                } else {
+                    miette::miette!(
+                        labels = labels,
+                        "Cannot use variable `{}` in a `box<{}>` expression, because its type doesn't satisfy the `{}` constraint:\n\n  {}\n",
+                        name,
+                        constraint,
+                        constraint,
+                        typ_str,
+                    )
+                }
             }
             Self::NonExhaustiveIf(span) => {
                 let labels = labels_from_span(code, span);
@@ -772,13 +804,20 @@ impl<S: Clone + Eq + std::hash::Hash> TypeError<S> {
             | Self::PollVariableNotPreserved(span, _)
             | Self::PollVariableChangedType(span, _, _, _)
             | Self::PollBranchMustSubmit(span)
-            | Self::CannotUseLinearVariableInBox(span, _)
+            | Self::CannotCaptureInBox(span, _, _, _)
             | Self::NonExhaustiveIf(span)
             | Self::Todo(span)
             | Self::CannotUnrollAscendantIterative(span, _) => (span.clone(), None),
 
             Self::TypesCannotBeUnified(span, _typ1, _typ2) => (span.clone(), None),
         }
+    }
+}
+
+fn format_box_with_constraint(constraint: TypeConstraint) -> String {
+    match constraint {
+        TypeConstraint::Share => String::from("box"),
+        _ => format!("box<{constraint}>"),
     }
 }
 
@@ -790,5 +829,6 @@ fn format_constraint_desc(constraint: TypeConstraint) -> &'static str {
         TypeConstraint::Data => "a `data` constraint",
         TypeConstraint::Number => "a `number` constraint",
         TypeConstraint::Signed => "a `signed` constraint",
+        TypeConstraint::None => "a `none` constraint",
     }
 }

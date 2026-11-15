@@ -120,7 +120,7 @@ impl<S> Type<S> {
             Type::Primitive(_, p) | Type::DualPrimitive(_, p) => TypeConstructor::Primitive(*p),
             Type::Var(_, _) | Type::DualVar(_, _) => TypeConstructor::Var,
             Type::Name(_, _, _) | Type::DualName(_, _, _) => TypeConstructor::Name,
-            Type::Box(_, _) | Type::DualBox(_, _) => TypeConstructor::Box,
+            Type::Box(_, _, _) | Type::DualBox(_, _, _) => TypeConstructor::Box,
             Type::Pair(_, _, _, _) => TypeConstructor::Pair,
             Type::Function(_, _, _, _) => TypeConstructor::Function,
             Type::Either(_, _) => TypeConstructor::Either,
@@ -157,6 +157,11 @@ pub(crate) enum SubtypeMismatchKind {
     },
     TypeParameterConstraintMismatch {
         param_name: LocalName,
+        provided: TypeConstraint,
+        expected: TypeConstraint,
+    },
+    BoxConstraintMismatch {
+        dual: bool,
         provided: TypeConstraint,
         expected: TypeConstraint,
     },
@@ -761,7 +766,18 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
         ctx: SubtypeContext<S>,
     ) -> Result<SubtypeResult<S>, TypeError<S>> {
         match (type1, type2) {
-            (Self::Box(_, t1), Self::Box(_, t2)) => {
+            (Self::Box(_, c1, t1), Self::Box(_, c2, t2)) => {
+                if !c2.is_broader_or_equal_than(c1) {
+                    return Ok(incompatible(
+                        path1,
+                        path2,
+                        SubtypeMismatchKind::BoxConstraintMismatch {
+                            dual: false,
+                            provided: c1,
+                            expected: c2,
+                        },
+                    ));
+                }
                 path1.push(TypePathSegment::BoxBody);
                 path2.push(TypePathSegment::BoxBody);
                 let res = Type::is_subtype_helper(
@@ -775,7 +791,18 @@ impl<S: Clone + Eq + std::hash::Hash> Type<S> {
                 path2.pop();
                 res
             }
-            (Self::DualBox(_, t1), Self::DualBox(_, t2)) => {
+            (Self::DualBox(_, c1, t1), Self::DualBox(_, c2, t2)) => {
+                if !c1.is_broader_or_equal_than(c2) {
+                    return Ok(incompatible(
+                        path1,
+                        path2,
+                        SubtypeMismatchKind::BoxConstraintMismatch {
+                            dual: true,
+                            provided: c1,
+                            expected: c2,
+                        },
+                    ));
+                }
                 let t1 = t1.as_ref().clone().dual(Span::None);
                 let t2 = t2.as_ref().clone().dual(Span::None);
                 path1.push(TypePathSegment::BoxBody);

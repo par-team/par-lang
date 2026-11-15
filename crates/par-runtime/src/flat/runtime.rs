@@ -1205,7 +1205,7 @@ impl Runtime {
                 }
             }
             sym!(
-                NodeRef::Global(close_instance, _, Global::Close { erase, .. }),
+                NodeRef::Global(close_instance, close_index, Global::Close { .. }),
                 NodeRef::Global(
                     value_instance,
                     _,
@@ -1213,11 +1213,11 @@ impl Runtime {
                 )
             ) => {
                 self.rewrites.fanout += 1;
-                let (captures, erase) = (*captures, *erase);
+                let captures = *captures;
                 for capture in captures {
                     self.link(
                         Node::Global(value_instance.clone(), capture),
-                        Node::Global(close_instance.clone(), erase),
+                        Node::Global(close_instance.clone(), close_index),
                     );
                 }
             }
