@@ -22,7 +22,7 @@ par-runtime = { path = "crates/par-runtime" }
 par-doc = { path = "crates/par-doc" }
 futures = { version = "0.3.34", features = ["executor", "thread-pool"] }
 eframe = { version = "0.36.2", features = ["default", "__screenshot"], optional = true }
-egui_code_editor = { version = "0.4.2", optional = true }
+egui_code_editor = { version = "=0.4.2", optional = true }
 indexmap = "2.14.2"
 rfd = { version = "0.17.2", optional = true }
 winnow = { version = "1.0.4", features = [
