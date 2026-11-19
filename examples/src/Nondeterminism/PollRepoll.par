@@ -1,0 +1,52 @@
+module PollRepoll
+
+import {
+  @basic/Console
+  @core/List
+  @core/Nat
+}
+
+// A Job is a pollable client. `.work` exposes one value and a smaller Job,
+// `.stop` changes the polling mode, and `.done` removes the client.
+type Job = recursive either {
+  .done!,
+  .work(Nat) self,
+  .stop self,
+}
+
+// Poll two jobs until one reaches `.stop`.
+//
+// In the first handler, `submit(next)` returns a smaller Job to the pool.
+// When a Job reaches `.stop`, `repoll(next)` adds its remainder to the same
+// pool and replaces the handler. The new handler drains every remaining Job
+// without producing more values. Its `else` runs only after `submit()` has
+// removed every client from the pool.
+dec CollectUntilStop : [Job, Job] List<Nat>
+def CollectUntilStop = [first, second] poll(first, second) {
+  job => job.case {
+    .done! => submit(),
+    .work(value) next => .item(value) submit(next),
+
+    .stop next => repoll(next) {
+      remaining => remaining.case {
+        .done! => submit(),
+        .work(_) next => submit(next),
+        .stop next => submit(next),
+      }
+      else => .end!,
+    },
+  }
+  else => .end!,
+}
+
+// `1` may be collected before the second Job
+// switches to drain mode; `99` is always discarded by the repoll handler.
+dec Demo : List<Nat>
+def Demo = CollectUntilStop(
+  .work(1) .done!,
+  .stop .work(99) .done!,
+)
+
+def Main: ! = Console.Open
+  .print(`Values collected before stop: #{Demo}`)
+  .close
