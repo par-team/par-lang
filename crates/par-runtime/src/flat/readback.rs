@@ -1,6 +1,6 @@
 use super::reducer::{NetHandle, ReducerMessage};
 use super::runtime::{
-    Captures, ExternalFn, Global, GlobalCont, Linear, Node, PackagePtr, Slot, Value,
+    Captures, ExternalFn, Global, GlobalCont, Instance, Linear, Node, PackagePtr, Slot, Value,
 };
 use crate::data::Data;
 use crate::flat::arena::{Arena, Index};
@@ -278,9 +278,11 @@ impl Handle {
         }
     }
 
-    pub fn erase(mut self) -> () {
-        let (other, _) = self.linker.create_share_hole();
-        self.linker.link(self.node, other)
+    /// Disposes of a value satisfying the `drop` constraint, running its cleanup branches,
+    /// just like the compiler's automatic cleanup does.
+    pub fn close(mut self) {
+        let close = Node::Global(Instance::new(0), self.linker.arena_ref().close_node());
+        self.linker.link(self.node, close)
     }
 
     pub fn duplicate(&mut self) -> Handle {

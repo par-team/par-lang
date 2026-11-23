@@ -145,7 +145,7 @@ async fn zone_to_timezone(mut zone: Handle, reference: Timestamp) -> TimeZone {
     zone.signal(literal!("name"));
     let name = zone.string().await;
     if let Ok(tz) = TimeZone::get(name.as_str()) {
-        zone_offset.erase();
+        zone_offset.close();
         tz
     } else {
         zone_offset.signal(literal!("offsetAt"));
@@ -393,7 +393,7 @@ async fn time_at(mut handle: Handle) {
     match civil_from_fields(&year, &month, &day, &hour, &minute, &second) {
         Some(datetime) => zoned_from_civil(handle, zone, datetime).await,
         None => {
-            zone.erase();
+            zone.close();
             provide_none(handle);
         }
     }
@@ -406,7 +406,7 @@ async fn time_parse(mut handle: Handle) {
     match DateTime::strptime(layout.as_str(), text.as_str()) {
         Ok(datetime) => zoned_from_civil(handle, zone, datetime).await,
         Err(_) => {
-            zone.erase();
+            zone.close();
             provide_none(handle);
         }
     }

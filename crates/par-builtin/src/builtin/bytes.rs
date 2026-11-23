@@ -177,7 +177,9 @@ impl PipeReaderState {
                 Some(err)
             }
         } {
-            err.erase();
+            // Unreachable: the writer's result arrives once. If it weren't, closing
+            // an unconstrained `e` wouldn't be sound.
+            err.close();
         }
         self.result_ready.store(true, AtomicOrdering::SeqCst);
         self.notify.notify_waiters();

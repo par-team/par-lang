@@ -28,13 +28,13 @@ async fn boxmap_from_list(mut handle: Handle) {
     })
     .await;
 
-    // Earlier values of repeated keys are erased as they're replaced.
+    // Earlier values of repeated keys are closed as they're replaced.
     let map: OrdMap<Data, Arc<Stored>> = entries.into_iter().collect();
     provide_boxmap(handle, map);
 }
 
 /// A value stored in a map. All versions of a map share their stored values, so a value
-/// is erased once the last version holding it is gone.
+/// is closed once the last version holding it is gone.
 struct Stored(Mutex<Option<Handle>>);
 
 impl Stored {
@@ -55,7 +55,7 @@ impl Stored {
 impl Drop for Stored {
     fn drop(&mut self) {
         if let Some(handle) = self.0.get_mut().take() {
-            handle.erase();
+            handle.close();
         }
     }
 }

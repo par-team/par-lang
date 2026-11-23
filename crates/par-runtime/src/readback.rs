@@ -19,8 +19,9 @@ impl From<super::flat::readback::Handle> for Handle {
 }
 
 impl Handle {
-    pub fn erase(self) {
-        self.handle.erase()
+    /// Disposes of a value satisfying the `drop` constraint, running its cleanup branches.
+    pub fn close(self) {
+        self.handle.close()
     }
 
     pub fn break_(self) {

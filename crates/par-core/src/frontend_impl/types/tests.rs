@@ -193,6 +193,36 @@ mod tests {
     }
 
     #[test]
+    fn test_self_polarity_after_implicit_generic_function() {
+        let span = Span::None;
+        let b = LocalName {
+            span: Span::None,
+            string: ArcStr::from("b"),
+        };
+        let validate = |result: Type<Universal>| {
+            let function = Type::Function(
+                Span::None,
+                Box::new(Type::Var(Span::None, b.clone())),
+                Box::new(result),
+                vec![TypeParameter::any(b.clone())],
+            );
+            let name = test_global_name("A");
+            let body = Type::iterative(None, Type::choice(vec![("method", function)]));
+            TypeDefs::new_with_validation([(&span, &name, &vec![], &body)].into_iter()).1
+        };
+
+        let errors = validate(Type::self_(None));
+        assert!(errors.is_empty(), "errors: {errors:?}");
+
+        let errors = validate(Type::function(Type::self_(None), Type::break_()));
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+        assert!(matches!(
+            errors.first(),
+            Some(TypeError::SelfUsedInNegativePosition(_))
+        ));
+    }
+
+    #[test]
     fn test_self_polarity_through_nested_named_fixpoint() {
         let span = Span::None;
         let super_param = LocalName {

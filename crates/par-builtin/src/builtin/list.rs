@@ -57,7 +57,7 @@ async fn list_sort_by(mut handle: Handle, descending: bool) {
         keyed.push((key, item));
     }
 
-    key_fn.erase();
+    key_fn.close();
     sort_by_key(&mut keyed, descending, |(key, _)| key);
     provide_handle_list(handle, keyed.into_iter().map(|(_, item)| item));
 }
@@ -74,7 +74,7 @@ async fn list_sort_linear_by(mut handle: Handle, descending: bool) {
         keyed.push((key, f));
     }
 
-    key_fn.erase();
+    key_fn.close();
     sort_by_key(&mut keyed, descending, |(key, _)| key);
     provide_handle_list(handle, keyed.into_iter().map(|(_, item)| item));
 }

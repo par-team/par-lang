@@ -111,7 +111,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    fn new(num_vars: usize) -> Self {
+    pub(crate) fn new(num_vars: usize) -> Self {
         Instance {
             vars: Arc::new(InstanceInner((0..num_vars).map(|_| Slot::new()).collect())),
         }
