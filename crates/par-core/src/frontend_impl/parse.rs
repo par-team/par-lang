@@ -972,9 +972,25 @@ fn typ_name(input: &mut Input) -> Result<Type<Unresolved>> {
 fn typ_box(input: &mut Input) -> Result<Type<Unresolved>> {
     commit_after(
         t(TokenKind::Box),
-        typ.context(StrContext::Label("box type")),
+        (box_constraint, typ.context(StrContext::Label("box type"))),
     )
-    .map(|(pre, typ)| Type::Box(pre.span.join(typ.span()), Box::new(typ)))
+    .map(|(pre, (constraint, typ))| {
+        Type::Box(
+            pre.span.join(typ.span()),
+            constraint.unwrap_or(TypeConstraint::Share),
+            Box::new(typ),
+        )
+    })
+    .parse_next(input)
+}
+
+/// The optional `<constraint>` after `box`, restricting what the box may capture.
+/// Requires a constraint name right after `<`, so `box <<1, 2>>` still boxes a bytes literal.
+fn box_constraint(input: &mut Input) -> Result<Option<TypeConstraint>> {
+    opt(terminated(
+        preceded(t(TokenKind::Lt), type_constraint),
+        cut_err(t(TokenKind::Gt)),
+    ))
     .parse_next(input)
 }
 
@@ -1053,11 +1069,13 @@ fn type_constraint(input: &mut Input) -> Result<TypeConstraint> {
         .context(StrContext::Label("type constraint"))
         .parse_next(input)?;
     match name.string.as_str() {
+        "any" => Ok(TypeConstraint::Any),
         "drop" => Ok(TypeConstraint::Drop),
         "share" => Ok(TypeConstraint::Share),
         "data" => Ok(TypeConstraint::Data),
         "number" => Ok(TypeConstraint::Number),
         "signed" => Ok(TypeConstraint::Signed),
+        "none" => Ok(TypeConstraint::None),
         _ => Err(ErrMode::Backtrack(ParseContextError::from_input(input))),
     }
 }
@@ -1984,9 +2002,13 @@ fn expr_do(input: &mut Input) -> Result<Expression<Unresolved>> {
 }
 
 fn expr_box(input: &mut Input) -> Result<Expression<Unresolved>> {
-    commit_after(t(TokenKind::Box), expression)
-        .map(|(pre, expression)| {
-            Expression::Box(pre.span.join(expression.span()), Box::new(expression))
+    commit_after(t(TokenKind::Box), (box_constraint, expression))
+        .map(|(pre, (constraint, expression))| {
+            Expression::Box(
+                pre.span.join(expression.span()),
+                constraint,
+                Box::new(expression),
+            )
         })
         .parse_next(input)
 }

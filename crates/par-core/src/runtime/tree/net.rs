@@ -426,7 +426,7 @@ impl<Ext: Clone> Net<Ext> {
             (Package(_, c, FanBehavior::Propagate), Close)
             | (Close, Package(_, c, FanBehavior::Propagate)) => {
                 self.rewrites.era += 1;
-                self.link(*c, Tree::Era);
+                self.link(*c, Tree::Close);
             }
             (Package(id, cx, FanBehavior::Propagate), Dup(d0, d1))
             | (Dup(d0, d1), Package(id, cx, FanBehavior::Propagate)) => {

@@ -16,8 +16,8 @@ impl<S> Type<S> {
             Self::Name(span, name, args) => Self::DualName(span0.join(span), name, args),
             Self::DualName(span, name, args) => Self::Name(span0.join(span), name, args),
 
-            Self::Box(span, body) => Self::DualBox(span0.join(span), body),
-            Self::DualBox(span, body) => Self::Box(span0.join(span), body),
+            Self::Box(span, constraint, body) => Self::DualBox(span0.join(span), constraint, body),
+            Self::DualBox(span, constraint, body) => Self::Box(span0.join(span), constraint, body),
 
             Self::Pair(span, t, u, vars) => {
                 Self::Function(span0.join(span), t, Box::new(u.dual(Span::None)), vars)

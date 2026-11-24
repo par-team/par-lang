@@ -38,6 +38,7 @@ pub enum TypeConstraint {
     Data,
     Number,
     Signed,
+    None,
 }
 
 impl TypeConstraint {
@@ -69,6 +70,7 @@ impl TypeConstraint {
             TypeConstraint::Data => 3,
             TypeConstraint::Number => 4,
             TypeConstraint::Signed => 5,
+            TypeConstraint::None => 6,
         }
     }
 }
@@ -76,12 +78,13 @@ impl TypeConstraint {
 impl Display for TypeConstraint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeConstraint::Any => Ok(()),
+            TypeConstraint::Any => write!(f, "any"),
             TypeConstraint::Drop => write!(f, "drop"),
             TypeConstraint::Share => write!(f, "share"),
             TypeConstraint::Data => write!(f, "data"),
             TypeConstraint::Number => write!(f, "number"),
             TypeConstraint::Signed => write!(f, "signed"),
+            TypeConstraint::None => write!(f, "none"),
         }
     }
 }
@@ -425,7 +428,7 @@ pub enum Expression<S> {
         process: Box<Process<S>>,
         then: Box<Self>,
     },
-    Box(Span, Box<Self>),
+    Box(Span, Option<TypeConstraint>, Box<Self>),
     Chan {
         span: Span,
         pattern: Pattern<S>,
@@ -2226,10 +2229,11 @@ impl Context {
                 })
             }
 
-            Expression::Box(span, expression) => {
+            Expression::Box(span, constraint, expression) => {
                 let expression = self.compile_expression(expression)?;
                 Arc::new(process::Expression::Box(
                     span.clone(),
+                    *constraint,
                     Captures::new(),
                     expression,
                     (),
@@ -3984,7 +3988,7 @@ impl<S> Spanning for Expression<S> {
             | Self::Throw(span, _, _)
             | Self::If { span, .. }
             | Self::Do { span, .. }
-            | Self::Box(span, _)
+            | Self::Box(span, _, _)
             | Self::Chan { span, .. }
             | Self::Arithmetic { span, .. }
             | Self::Neg { span, .. }

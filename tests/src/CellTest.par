@@ -1,0 +1,83 @@
+module CellTest
+
+import {
+  @core/Cell
+  @core/List
+  @core/Nat
+  @core/Option
+  @core/String
+  @core/Test
+}
+
+type Resource = choice {
+  .close* => !,
+}
+
+def NewResource: [Test, String] Resource = [test, label] case {
+  .close* => do { test.check(label, .true!) } in !,
+}
+
+def QuietResource: Resource = case {
+  .close* => !,
+}
+
+// Inside `do`, `cell->Cell.Set(...)` and `cell.access(...)[result]` continue with the
+// returned cell, so the accesses below happen in the order they're written.
+
+def TestGetAndSet: [Test] ! = [test] do {
+  test.check("`Get` gets the initial value", Cell(1)->Cell.Get == 1)
+  let cell = Cell(1)
+  cell->Cell.Set(2)
+  test.check("`Set` replaces the value", cell->Cell.Get == 2)
+} in !
+
+def TestAccess: [Test] ! = [test] do {
+  let cell = Cell(5)
+  cell.access(box [n] (`n was #{n}`) {n * 2})[text]
+  test.check("`.access` returns the function's result", text == "n was 5")
+  test.check("`.access` replaces the value", cell->Cell.Get == 10)
+} in !
+
+def TestUpdate: [Test] ! = [test] do {
+  let cell = Cell(3)
+  cell->Cell.Update(box [n] n * n)
+  cell.access(box [n] (n) n)[squared]
+  test.check("`Update` replaces the value", squared == 9)
+  test.check("`UpdateAndGet` returns the new value", cell->Cell.UpdateAndGet(box [n] n + 1) == 10)
+} in !
+
+def TestAccessesThroughReturnedCellsAreOrdered: [Test] ! = [test] do {
+  let cell = List.ForEach(Cell(0), Nat.Range(1, 6), box [cell, digit]
+    cell->Cell.Update(box [n] n * 10 + digit)
+  )
+  test.check("Accesses through returned cells happen in order", cell->Cell.Get == 12345)
+} in !
+
+def TestConcurrentUpdatesAreAtomic: [Test] ! = [test] do {
+  let cell = Cell(0)
+  let seen = List.Map(Nat.Range(0, 50), box [_] cell->Cell.UpdateAndGet(box [n] n + 1))
+  test.check(
+    "Concurrent updates through copies of a cell each see a distinct value",
+    List.Sort(seen) == Nat.Range(1, 51),
+  )
+} in !
+
+def TestNestedCells: [Test] ! = [test] do {
+  test.check("A cell can hold a cell created before it", Cell(Cell(1))->Cell.Get->Cell.Get == 1)
+  let outer = Cell(Cell(1))
+  outer.access(box [inner] do {
+    inner.access(box [n] (n) {n + 1})[old]
+  } in (old) inner)[old]
+  test.check("A cell's value can be accessed while accessing the cell holding it", old == 1)
+  test.check("That access is visible afterwards", outer->Cell.Get->Cell.Get == 2)
+} in !
+
+def TestDroppingCellClosesValue: [Test] ! = [test] do {
+  let cell = Cell(NewResource(test, "Dropping the last copy of a cell closes its value"))
+  let copy = cell
+} in !
+
+def TestAccessCanDropValue: [Test] ! = [test] do {
+  let cell = Cell(NewResource(test, "A value dropped by `.access` is closed"))
+  let (!) cell = cell.access(box [_] (!) QuietResource)
+} in !

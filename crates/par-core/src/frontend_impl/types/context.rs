@@ -37,7 +37,7 @@ pub(crate) struct BlockScope<S> {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum CapturePolicy {
-    Box,
+    Box(TypeConstraint),
     Linear,
 }
 
@@ -292,11 +292,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let mut capture_error = None;
             if !typ.is_linear(&self.type_defs)? {
                 self.put(span, name.clone(), typ.clone())?;
-            } else if matches!(policy, CapturePolicy::Box) {
-                capture_error = Some(TypeError::CannotUseLinearVariableInBox(
-                    span.clone(),
-                    name.clone(),
-                ));
+            }
+            if let CapturePolicy::Box(constraint) = policy {
+                if !typ.can_be_captured_by_box(constraint, &self.type_defs)? {
+                    capture_error = Some(TypeError::CannotCaptureInBox(
+                        span.clone(),
+                        name.clone(),
+                        typ.clone(),
+                        constraint,
+                    ));
+                }
             }
             target.put(span, name.clone(), typ)?;
             if let Some(error) = capture_error {

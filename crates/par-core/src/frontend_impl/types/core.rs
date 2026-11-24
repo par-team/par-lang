@@ -1,4 +1,4 @@
-use super::super::language::{GlobalName, LocalName, TypeParameter, Unresolved};
+use super::super::language::{GlobalName, LocalName, TypeConstraint, TypeParameter, Unresolved};
 use crate::frontend_impl::types::visit::Polarity;
 use crate::frontend_impl::types::{TypeDefs, TypeError, visit};
 use crate::location::{Span, Spanning};
@@ -243,8 +243,8 @@ pub enum Type<S> {
     DualVar(Span, LocalName),
     Name(Span, GlobalName<S>, Vec<Self>),
     DualName(Span, GlobalName<S>, Vec<Self>),
-    Box(Span, Box<Self>),
-    DualBox(Span, Box<Self>),
+    Box(Span, TypeConstraint, Box<Self>),
+    DualBox(Span, TypeConstraint, Box<Self>),
     Pair(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Function(Span, Box<Self>, Box<Self>, Vec<TypeParameter>),
     Either(Span, BTreeMap<LocalName, TypeBranch<S>>),
@@ -342,8 +342,8 @@ impl<S: Clone> Type<S> {
             Self::Name(_, _, args) | Self::DualName(_, _, args) => {
                 current_depth_from_children(args.iter().map(|arg| arg.current_depth()))
             }
-            Self::Box(_, inner)
-            | Self::DualBox(_, inner)
+            Self::Box(_, _, inner)
+            | Self::DualBox(_, _, inner)
             | Self::Exists(_, _, inner)
             | Self::Forall(_, _, inner) => current_depth_from_children([inner.current_depth()]),
             Self::Pair(_, left, right, _) | Self::Function(_, left, right, _) => {
@@ -374,8 +374,8 @@ impl<S: Clone> Type<S> {
             Self::Name(_, _, args) | Self::DualName(_, _, args) => {
                 flattened_depth_from_side_children(args.iter().map(|arg| arg.flattened_depth()))
             }
-            Self::Box(_, inner)
-            | Self::DualBox(_, inner)
+            Self::Box(_, _, inner)
+            | Self::DualBox(_, _, inner)
             | Self::Exists(_, _, inner)
             | Self::Forall(_, _, inner) => inner.flattened_depth(),
             Self::Pair(_, left, right, _) | Self::Function(_, left, right, _) => {
@@ -437,7 +437,7 @@ impl<S: Clone> Type<S> {
     }
 
     pub fn box_(t: Self) -> Self {
-        Self::Box(Span::None, Box::new(t))
+        Self::Box(Span::None, TypeConstraint::Share, Box::new(t))
     }
 
     pub fn pair(t: Self, u: Self) -> Self {
@@ -627,7 +627,7 @@ impl<S: Clone> Type<S> {
             Self::Var(_, _) | Self::DualVar(_, _) => 1,
             Self::Name(span, name, args) => defs.get(span, name, args)?.size(defs)?,
             Self::DualName(span, name, args) => defs.get_dual(span, name, args)?.size(defs)?,
-            Self::Box(_, inner) | Self::DualBox(_, inner) => 1 + inner.size(defs)?,
+            Self::Box(_, _, inner) | Self::DualBox(_, _, inner) => 1 + inner.size(defs)?,
             Self::Pair(_, left, right, _) => 1 + left.size(defs)? + right.size(defs)?,
             Self::Function(_, input, output, _) => 1 + input.size(defs)? + output.size(defs)?,
             Self::Either(_, branches) | Self::Choice(_, branches) => {
@@ -683,13 +683,13 @@ impl<S: Clone> Type<S> {
                     .collect::<Result<Vec<_>, _>>()?;
                 Type::DualName(span, mapped_name, mapped_args)
             }
-            Self::Box(span, inner) => {
+            Self::Box(span, constraint, inner) => {
                 let mapped_inner = Box::new(inner.map_global_names(f)?);
-                Type::Box(span, mapped_inner)
+                Type::Box(span, constraint, mapped_inner)
             }
-            Self::DualBox(span, inner) => {
+            Self::DualBox(span, constraint, inner) => {
                 let mapped_inner = Box::new(inner.map_global_names(f)?);
-                Type::DualBox(span, mapped_inner)
+                Type::DualBox(span, constraint, mapped_inner)
             }
             Self::Pair(span, left, right, vars) => {
                 let left = Box::new(left.map_global_names(f)?);
@@ -803,8 +803,8 @@ impl<S> Spanning for Type<S> {
             | Self::DualVar(span, _)
             | Self::Name(span, _, _)
             | Self::DualName(span, _, _)
-            | Self::Box(span, _)
-            | Self::DualBox(span, _)
+            | Self::Box(span, _, _)
+            | Self::DualBox(span, _, _)
             | Self::Pair(span, _, _, _)
             | Self::Function(span, _, _, _)
             | Self::Either(span, _)

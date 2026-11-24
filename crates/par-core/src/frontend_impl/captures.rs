@@ -458,7 +458,7 @@ impl CaptureAnalysis {
                     Captures::single(name.clone(), span.clone(), VariableUsage::Unknown),
                 )
             }
-            Expression::Box(span, _caps, expression, typ) => {
+            Expression::Box(span, constraint, _caps, expression, typ) => {
                 let (expression, mut caps) = self.fix_expression(expression, env, later_captures);
                 for (name, (_span, usage)) in caps.names.iter_mut() {
                     if later_captures.contains(name) {
@@ -470,6 +470,7 @@ impl CaptureAnalysis {
                 (
                     Arc::new(Expression::Box(
                         span.clone(),
+                        *constraint,
                         caps.clone(),
                         expression,
                         typ.clone(),
@@ -571,7 +572,7 @@ impl<Typ, S> BlockEnvAnalyzer<Typ, S> {
 
     fn visit_expression(&mut self, expression: &Expression<Typ, S>, env: &LoopEnv) {
         match expression {
-            Expression::Box(_, _, expr, _) => self.visit_expression(expr, env),
+            Expression::Box(_, _, _, expr, _) => self.visit_expression(expr, env),
             Expression::Chan { process, .. } => self.visit_process(process, env),
             Expression::Global(_, _, _)
             | Expression::Variable(_, _, _, _)
@@ -778,7 +779,7 @@ impl<'a> CaptureCollector<'a> {
             Expression::Variable(span, name, _, _) => {
                 Captures::single(name.clone(), span.clone(), VariableUsage::Unknown)
             }
-            Expression::Box(_, _, expression, _) => self.expression_captures(expression, env),
+            Expression::Box(_, _, _, expression, _) => self.expression_captures(expression, env),
             Expression::Chan {
                 chan_name, process, ..
             } => {

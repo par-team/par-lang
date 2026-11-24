@@ -56,14 +56,26 @@ where
         .collect())
 }
 
+/// The signal selecting a cleanup branch, which `Close` sends to choices.
+pub const CLEANUP_SIGNAL: &str = "#close";
+
 impl<Ext: Clone> Default for Arena<Ext> {
     fn default() -> Self {
         Self {
-            nodes: vec![],
+            // Node 1 is a `Close`, so external handles can dispose of values (see
+            // `Arena::close_node`). Node 0 is the empty fanout it erases into.
+            nodes: vec![
+                Global::Fanout(Index((0, 0))),
+                Global::Close {
+                    signal: Index(1),
+                    erase: Index(0),
+                },
+            ],
             // Index 0 is the sentinel used for `else` case branches. Reserve it so
-            // the first real signal cannot alias the sentinel.
-            strings: vec![ArcStr::from("")],
-            string_to_location: BTreeMap::new(),
+            // the first real signal cannot alias the sentinel. Index 1 is the cleanup
+            // signal of the `Close` node above.
+            strings: vec![ArcStr::from(""), ArcStr::from(CLEANUP_SIGNAL)],
+            string_to_location: BTreeMap::from([(CLEANUP_SIGNAL.to_string(), Index(1))]),
             case_branches: vec![],
             packages: vec![],
             redexes: vec![],
@@ -91,6 +103,9 @@ impl<Ext: Clone> Arena<Ext> {
     }
     pub fn empty_string(&self) -> Index<Ext, str> {
         Index(0)
+    }
+    pub fn close_node(&self) -> Index<Ext, Global<Ext>> {
+        Index(1)
     }
     pub fn intern(&mut self, s: &ArcStr) -> Index<Ext, str> {
         if s.is_empty() {

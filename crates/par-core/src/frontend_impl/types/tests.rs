@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(params.len(), 1);
         let bound = params[0].name.string.as_str();
         assert_eq!(bound, "b'");
-        let Type::Box(_, inner) = arg.as_ref() else {
+        let Type::Box(_, _, inner) = arg.as_ref() else {
             panic!("expected box argument")
         };
         let Type::Function(_, inner_arg, inner_ret, _) = inner.as_ref() else {
@@ -190,6 +190,36 @@ mod tests {
         assert_eq!(bound, "b'");
         assert!(is_var(&left, bound));
         assert!(is_var(&right, "b"));
+    }
+
+    #[test]
+    fn test_self_polarity_after_implicit_generic_function() {
+        let span = Span::None;
+        let b = LocalName {
+            span: Span::None,
+            string: ArcStr::from("b"),
+        };
+        let validate = |result: Type<Universal>| {
+            let function = Type::Function(
+                Span::None,
+                Box::new(Type::Var(Span::None, b.clone())),
+                Box::new(result),
+                vec![TypeParameter::any(b.clone())],
+            );
+            let name = test_global_name("A");
+            let body = Type::iterative(None, Type::choice(vec![("method", function)]));
+            TypeDefs::new_with_validation([(&span, &name, &vec![], &body)].into_iter()).1
+        };
+
+        let errors = validate(Type::self_(None));
+        assert!(errors.is_empty(), "errors: {errors:?}");
+
+        let errors = validate(Type::function(Type::self_(None), Type::break_()));
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+        assert!(matches!(
+            errors.first(),
+            Some(TypeError::SelfUsedInNegativePosition(_))
+        ));
     }
 
     #[test]
@@ -251,7 +281,7 @@ mod tests {
 
         match typ {
             Type::Iterative { body, .. } => match body.as_ref() {
-                Type::Box(_, inner) => match inner.as_ref() {
+                Type::Box(_, _, inner) => match inner.as_ref() {
                     Type::Choice(_, branches) => {
                         assert_eq!(branches.len(), 2);
                         assert!(branches.contains_key(
@@ -291,7 +321,7 @@ mod tests {
                 assert_eq!(label.unwrap().string.as_str(), "my_label");
 
                 match body.as_ref() {
-                    Type::Box(_, inner) => match inner.as_ref() {
+                    Type::Box(_, _, inner) => match inner.as_ref() {
                         Type::Choice(_, branches) => {
                             assert_eq!(branches.len(), 1);
                         }
@@ -317,7 +347,7 @@ mod tests {
         match (manual, helper) {
             (Type::Iterative { body: body1, .. }, Type::Iterative { body: body2, .. }) => {
                 match (body1.as_ref(), body2.as_ref()) {
-                    (Type::Box(_, inner1), Type::Box(_, inner2)) => {
+                    (Type::Box(_, _, inner1), Type::Box(_, _, inner2)) => {
                         match (inner1.as_ref(), inner2.as_ref()) {
                             (Type::Choice(_, branches1), Type::Choice(_, branches2)) => {
                                 assert_eq!(branches1.len(), branches2.len());
@@ -591,6 +621,131 @@ mod tests {
         assert!(union_types(&type_defs, &span, &Type::box_(Type::int()), &Type::int()).is_err());
         assert!(
             intersect_types(&type_defs, &span, &Type::box_(Type::int()), &Type::int()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_box_data_captures_compose() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let boxed = |c| Type::Box(Span::None, c, Box::new(Type::<Universal>::int()));
+        let captured_by =
+            |typ: &Type<Universal>, c| typ.can_be_captured_by_box(c, &type_defs).unwrap();
+        let a = LocalName {
+            span: Span::None,
+            string: ArcStr::from("a"),
+        };
+        let packed = |constraint, body| {
+            Type::Exists(
+                Span::None,
+                TypeParameter {
+                    name: a.clone(),
+                    constraint,
+                },
+                Box::new(body),
+            )
+        };
+        let data = TypeConstraint::Data;
+
+        assert!(captured_by(&boxed(data), data));
+        assert!(captured_by(&boxed(TypeConstraint::None), data));
+        assert!(captured_by(&Type::pair(Type::int(), boxed(data)), data));
+        assert!(captured_by(&packed(data, Type::var("a")), data));
+        assert!(!captured_by(&boxed(TypeConstraint::Share), data));
+        assert!(!captured_by(
+            &Type::pair(boxed(data), boxed(TypeConstraint::Share)),
+            data
+        ));
+        assert!(!captured_by(
+            &packed(TypeConstraint::Share, Type::var("a")),
+            data
+        ));
+        assert!(!captured_by(&boxed(data), TypeConstraint::Number));
+
+        // Only captures see through boxes: a `box<data>` is still not `data`.
+        assert!(!boxed(data).satisfies_constraint(data, &type_defs).unwrap());
+        assert!(
+            !packed(data, Type::var("a"))
+                .satisfies_constraint(data, &type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_box_constraint_subtyping_and_lattice() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let span = Span::None;
+        let boxed = |c| Type::Box(Span::None, c, Box::new(Type::<Universal>::int()));
+        let assignable = |from: &Type<Universal>, to: &Type<Universal>| {
+            from.is_definitely_assignable_to(to, &type_defs)
+                .unwrap()
+                .is_assignable()
+        };
+
+        assert!(assignable(
+            &boxed(TypeConstraint::None),
+            &boxed(TypeConstraint::Data)
+        ));
+        assert!(assignable(
+            &boxed(TypeConstraint::Data),
+            &boxed(TypeConstraint::Share)
+        ));
+        assert!(assignable(
+            &boxed(TypeConstraint::Share),
+            &boxed(TypeConstraint::Drop)
+        ));
+        assert!(assignable(
+            &boxed(TypeConstraint::Drop),
+            &boxed(TypeConstraint::Any)
+        ));
+        assert!(!assignable(
+            &boxed(TypeConstraint::Share),
+            &boxed(TypeConstraint::Data)
+        ));
+        assert!(!assignable(
+            &boxed(TypeConstraint::Any),
+            &boxed(TypeConstraint::Drop)
+        ));
+
+        let dual = |c| boxed(c).dual(Span::None);
+        assert!(assignable(
+            &dual(TypeConstraint::Any),
+            &dual(TypeConstraint::None)
+        ));
+        assert!(!assignable(
+            &dual(TypeConstraint::Data),
+            &dual(TypeConstraint::Share)
+        ));
+        assert!(matches!(
+            Type::DualBox(
+                Span::None,
+                TypeConstraint::Data,
+                Box::new(Type::<Universal>::int())
+            )
+            .dual(Span::None),
+            Type::Box(_, TypeConstraint::Data, _)
+        ));
+
+        let constraint_of = |typ: Type<Universal>| match typ {
+            Type::Box(_, c, _) | Type::DualBox(_, c, _) => c,
+            _ => panic!("expected a box"),
+        };
+        let (data, drop) = (boxed(TypeConstraint::Data), boxed(TypeConstraint::Drop));
+        assert_eq!(
+            constraint_of(union_types(&type_defs, &span, &data, &drop).unwrap()),
+            TypeConstraint::Drop
+        );
+        assert_eq!(
+            constraint_of(intersect_types(&type_defs, &span, &data, &drop).unwrap()),
+            TypeConstraint::Data
+        );
+        let (dual_data, dual_drop) = (dual(TypeConstraint::Data), dual(TypeConstraint::Drop));
+        assert_eq!(
+            constraint_of(union_types(&type_defs, &span, &dual_data, &dual_drop).unwrap()),
+            TypeConstraint::Data
+        );
+        assert_eq!(
+            constraint_of(intersect_types(&type_defs, &span, &dual_data, &dual_drop).unwrap()),
+            TypeConstraint::Drop
         );
     }
 

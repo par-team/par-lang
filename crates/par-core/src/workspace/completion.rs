@@ -308,7 +308,7 @@ impl CheckedWorkspace {
                     candidates,
                 );
             }
-            Type::Box(_, inner) => {
+            Type::Box(_, _, inner) => {
                 candidates.push(CompletionCandidate {
                     label: "unbox".to_string(),
                     insert_text: "unbox".to_string(),

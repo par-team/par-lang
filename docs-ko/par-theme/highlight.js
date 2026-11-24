@@ -56,25 +56,45 @@ hljs.registerLanguage("x86asm",function(){"use strict";return function(s){return
 // Start of modification
 
 hljs.registerLanguage("par", function(hljs) {
+  // Constraint names aren't keywords, so they're only highlighted where a constraint
+  // is expected: `type a: data`, `<a: drop>`, `, b: share`, and `box<none>`.
+  var CONSTRAINT = "(?:any|none|drop|share|data|number|signed)\\b";
   return {
       name: "Par",
       aliases: ["par"],
       keywords: {
-          keyword: "dec def type chan dual let do in case begin unfounded unbox loop module include import as export either choice recursive iterative self box data number signed catch try throw default else if is and or not neg poll repoll submit external",
+          keyword: "dec def type chan dual let do in case begin unfounded unbox loop module include import as export either choice recursive iterative self box catch try throw default else if is and or not neg poll repoll submit external todo",
           literal: ""
       },
       illegal: "",
       contains: [
           hljs.C_LINE_COMMENT_MODE,
           hljs.COMMENT(
-              "/\\*", 
-              "\\*/", 
+              "/\\*",
+              "\\*/",
               { contains: ["self"] }
           ),
           {
+              begin: new RegExp(
+                  "(?:\\btype\\s+|[<,]\\s*)[a-z_]\\w*\\s*:\\s*" + CONSTRAINT +
+                  "|\\bbox\\s*<\\s*" + CONSTRAINT
+              ),
+              returnBegin: true,
+              keywords: { keyword: "type box" },
+              // Never reached: the constraint itself ends this mode.
+              end: /[^\s\w:<,]/,
+              contains: [
+                  {
+                      className: "keyword",
+                      begin: new RegExp("\\b" + CONSTRAINT),
+                      endsParent: true
+                  }
+              ]
+          },
+          {
               className: "string",
-              begin: /"(.|\n)*?"/
-          }, 
+              begin: /"(\\[\s\S]|[^"\\])*"/
+          },
           {
               className: "string",
               begin: /`(\\[\s\S]|[^`\\])*`/

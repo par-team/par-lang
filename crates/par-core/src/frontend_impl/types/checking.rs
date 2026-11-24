@@ -1,4 +1,4 @@
-use super::super::language::{LocalName, TypeParameter};
+use super::super::language::{LocalName, TypeConstraint, TypeParameter};
 use super::super::process::{
     Captures, CaseBranch, Command, Expression, PollKind, Process, Step, TerminalCommand,
     Terminator, VariableUsage,
@@ -842,7 +842,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             Type::Name(_, _, args) | Type::DualName(_, _, args) => {
                 args.iter().any(|arg| self.type_has_holes(arg))
             }
-            Type::Box(_, inner) | Type::DualBox(_, inner) => self.type_has_holes(inner),
+            Type::Box(_, _, inner) | Type::DualBox(_, _, inner) => self.type_has_holes(inner),
             Type::Pair(_, left, right, _) | Type::Function(_, left, right, _) => {
                 self.type_has_holes(left) || self.type_has_holes(right)
             }
@@ -991,7 +991,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let next = match &typ {
                 Type::Name(_, name, args) => self.type_defs.get(span, name, args),
                 Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
-                Type::Box(_, inner) => Ok((**inner).clone()),
+                Type::Box(_, _, inner) => Ok((**inner).clone()),
                 Type::Iterative {
                     asc,
                     label,
@@ -1035,7 +1035,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             let next = match &expanded {
                 Type::Name(_, name, args) => self.type_defs.get(span, name, args),
                 Type::DualName(_, name, args) => self.type_defs.get_dual(span, name, args),
-                Type::Box(_, inner) => return (**inner).clone(),
+                Type::Box(_, _, inner) => return (**inner).clone(),
                 Type::Iterative {
                     asc,
                     label,
@@ -2098,7 +2098,8 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     name,
                     usage,
                 } => {
-                    inferred_type = Type::Box(span.clone(), Box::new(inferred_type));
+                    inferred_type =
+                        Type::Box(span.clone(), TypeConstraint::Share, Box::new(inferred_type));
                     typed_steps[index] = Some(Step::Do {
                         span,
                         name,
@@ -3098,14 +3099,16 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 target_type,
                 emit,
             ),
-            Expression::Box(span, captures, expression, ()) => self.check_expression_box(
-                span,
-                captures,
-                expression,
-                inference_subject,
-                target_type,
-                emit,
-            ),
+            Expression::Box(span, constraint, captures, expression, ()) => self
+                .check_expression_box(
+                    span,
+                    *constraint,
+                    captures,
+                    expression,
+                    inference_subject,
+                    target_type,
+                    emit,
+                ),
             Expression::Chan {
                 span,
                 captures,
@@ -3145,9 +3148,15 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             Expression::Variable(span, name, (), usage) => {
                 self.infer_expression_variable(span, name, usage, inference_subject, emit)
             }
-            Expression::Box(span, captures, expression, ()) => {
-                self.infer_expression_box(span, captures, expression, inference_subject, emit)
-            }
+            Expression::Box(span, constraint, captures, expression, ()) => self
+                .infer_expression_box(
+                    span,
+                    *constraint,
+                    captures,
+                    expression,
+                    inference_subject,
+                    emit,
+                ),
             Expression::Chan {
                 span,
                 captures,
@@ -3239,6 +3248,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     fn check_expression_box(
         &mut self,
         span: &Span,
+        constraint: Option<TypeConstraint>,
         captures: &Captures,
         expression: &Arc<Expression<(), S>>,
         inference_subject: Option<&LocalName>,
@@ -3253,6 +3263,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 ));
                 return Arc::new(Expression::Box(
                     span.clone(),
+                    constraint,
                     captures.clone(),
                     Arc::new(Expression::Primitive(
                         span.clone(),
@@ -3263,15 +3274,6 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 ));
             }
         }
-        let mut context = self.split();
-        if let Err(e) = self.capture(
-            inference_subject,
-            captures,
-            CapturePolicy::Box,
-            &mut context,
-        ) {
-            emit(e);
-        }
         let mut expanded_target = target_type.clone();
         let target_inner_type = loop {
             match expanded_target
@@ -3280,7 +3282,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                     emit(e);
                     Type::Fail(span.clone())
                 }) {
-                Type::Box(_, inner) => break Some(*inner),
+                Type::Box(_, target_constraint, inner) => break Some((target_constraint, *inner)),
                 Type::Recursive {
                     span: _,
                     asc,
@@ -3317,8 +3319,30 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 _ => break None,
             }
         };
+        let constraint_or_default = constraint
+            .or(target_inner_type.as_ref().map(|(c, _)| *c))
+            .unwrap_or(TypeConstraint::Share);
+        let mut context = self.split();
+        if let Err(e) = self.capture(
+            inference_subject,
+            captures,
+            CapturePolicy::Box(constraint_or_default),
+            &mut context,
+        ) {
+            emit(e);
+        }
         match target_inner_type {
-            Some(target_inner_type) => {
+            Some((target_constraint, target_inner_type)) => {
+                if !target_constraint.is_broader_or_equal_than(constraint_or_default) {
+                    let typ = Type::Box(
+                        span.clone(),
+                        constraint_or_default,
+                        Box::new(target_inner_type.clone()),
+                    );
+                    if let Err(error) = typ.check_assignable(span, target_type, &self.type_defs) {
+                        emit(error);
+                    }
+                }
                 let expression = context.check_expression(
                     inference_subject,
                     expression,
@@ -3327,6 +3351,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 );
                 Arc::new(Expression::Box(
                     span.clone(),
+                    constraint,
                     captures.clone(),
                     expression,
                     target_type.clone(),
@@ -3335,12 +3360,13 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
             None => {
                 let (expression, inner_type) =
                     context.infer_expression(inference_subject, expression, emit);
-                let typ = Type::Box(span.clone(), Box::new(inner_type));
+                let typ = Type::Box(span.clone(), constraint_or_default, Box::new(inner_type));
                 if let Err(error) = typ.check_assignable(span, target_type, &self.type_defs) {
                     emit(error);
                 }
                 Arc::new(Expression::Box(
                     span.clone(),
+                    constraint,
                     captures.clone(),
                     expression,
                     typ,
@@ -3480,6 +3506,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
     fn infer_expression_box(
         &mut self,
         span: &Span,
+        constraint: Option<TypeConstraint>,
         captures: &Captures,
         expression: &Arc<Expression<(), S>>,
         inference_subject: Option<&LocalName>,
@@ -3494,6 +3521,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 return (
                     Arc::new(Expression::Box(
                         span.clone(),
+                        constraint,
                         captures.clone(),
                         Arc::new(Expression::Primitive(
                             span.clone(),
@@ -3506,20 +3534,22 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 );
             }
         }
+        let constraint_or_default = constraint.unwrap_or(TypeConstraint::Share);
         let mut context = self.split();
         if let Err(e) = self.capture(
             inference_subject,
             captures,
-            CapturePolicy::Box,
+            CapturePolicy::Box(constraint_or_default),
             &mut context,
         ) {
             emit(e);
         }
         let (expression, typ) = context.infer_expression(inference_subject, expression, emit);
-        let typ = Type::Box(span.clone(), Box::new(typ.clone()));
+        let typ = Type::Box(span.clone(), constraint_or_default, Box::new(typ.clone()));
         (
             Arc::new(Expression::Box(
                 span.clone(),
+                constraint,
                 captures.clone(),
                 expression,
                 typ.clone(),
@@ -3623,7 +3653,7 @@ fn free_type_vars<S>(typ: &Type<S>) -> IndexSet<LocalName> {
                     inner(arg, bound, out);
                 }
             }
-            Type::Box(_, body) | Type::DualBox(_, body) => inner(body, bound, out),
+            Type::Box(_, _, body) | Type::DualBox(_, _, body) => inner(body, bound, out),
             Type::Pair(_, left, right, vars) | Type::Function(_, left, right, vars) => {
                 for var in vars {
                     bound.push(var.name.clone());
@@ -3815,11 +3845,11 @@ mod flat_ir_tests {
             context.infer_process(&process, &subject, &mut |error| errors.push(error));
 
         assert!(errors.is_empty(), "{errors:#?}");
-        assert!(matches!(inferred, Type::Box(_, inner) if matches!(*inner, Type::Continue(_))));
+        assert!(matches!(inferred, Type::Box(_, _, inner) if matches!(*inner, Type::Continue(_))));
         assert!(matches!(
             checked.steps.as_slice(),
             [Step::Do {
-                typ: Type::Box(_, inner),
+                typ: Type::Box(_, _, inner),
                 command: Command::Unbox,
                 ..
             }] if matches!(inner.as_ref(), Type::Continue(_))

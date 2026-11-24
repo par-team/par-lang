@@ -1,0 +1,55 @@
+// A shared, mutable cell.
+//
+// A `Cell` is a box, so it can be copied, but all copies access the same place.
+// Every change goes through `.access`, which atomically replaces the value.
+// Only one `.access` runs at a time.
+export module Cell
+
+export {
+  // A shared, mutable cell holding a value of type `a`.
+  //
+  // - `.access(f)` — call `f` on the current value, which returns a result and the
+  //   new value. The method itself returns that result and the cell.
+  //
+  // Accesses through the cell returned by `.access` are guaranteed to happen after
+  // that access. Accesses through different copies of a cell happen in any order.
+  //
+  // The function passed to `.access` is a `box<data>`, so it can only capture `data`
+  // and other `box<data>` values, never a cell. Nothing it can reach leads back to the
+  // cell being accessed, so cells never form a cycle: no cell can be accessed while
+  // it's being accessed.
+  type Cell<a> = iterative box choice {
+    .access(<b> box<data> [a] (b) a) => (b) self,
+  }
+
+  // Creates a cell holding the given value. The value is dropped once the last
+  // copy of the cell is gone.
+  dec Cell : [<a: drop> a] Cell<a>
+
+  // Gets the current value.
+  //
+  // Since the cell isn't returned, nothing orders this before accesses through
+  // other copies of it. To read and then keep using the cell, use `.access`.
+  dec Get : [<a: share> Cell<a>] a
+
+  // Replaces the value. The new value must be `data`, so that it can't contain a cell.
+  dec Set : [<a: data> Cell<a>, a] Cell<a>
+
+  // Replaces the value with `f` applied to it.
+  dec Update : [<a> Cell<a>, box<data> [a] a] Cell<a>
+
+  // Replaces the value with `f` applied to it, and returns the new value.
+  dec UpdateAndGet : [<a: share> Cell<a>, box<data> [a] a] a
+}
+
+def Cell = external
+
+def Get = [<a: share> cell] let (value) _ = cell.access(box [value] (value) value) in value
+
+def Set = [<a: data> cell, value] let (!) cell = cell.access(box [_] (!) value) in cell
+
+def Update = [<a> cell, f] let (!) cell = cell.access(box [value] (!) f(value)) in cell
+
+def UpdateAndGet = [<a: share> cell, f]
+  let (value) _ = cell.access(box [value] let value = f(value) in (value) value)
+  in value

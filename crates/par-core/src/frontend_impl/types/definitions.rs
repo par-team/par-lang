@@ -241,23 +241,13 @@ impl<S: Clone + Eq + std::hash::Hash> TypeDefs<S> {
                 }
                 Type::Function(span, arg, res, vars) if !vars.is_empty() => {
                     ctx.defs.extend_vars(vars.iter().cloned());
-                    visit::continue_deref_polarized(typ, positive, &ctx.defs, |_typ, positive| {
-                        inner(
-                            &Type::Function(span.clone(), arg.clone(), res.clone(), vec![]),
-                            positive,
-                            ctx.clone(),
-                        )
-                    })?;
+                    let typ = Type::Function(span.clone(), arg.clone(), res.clone(), vec![]);
+                    inner(&typ, positive, ctx)?;
                 }
                 Type::Pair(span, arg, res, vars) if !vars.is_empty() => {
                     ctx.defs.extend_vars(vars.iter().cloned());
-                    visit::continue_deref_polarized(typ, positive, &ctx.defs, |_typ, positive| {
-                        inner(
-                            &Type::Pair(span.clone(), arg.clone(), res.clone(), vec![]),
-                            positive,
-                            ctx.clone(),
-                        )
-                    })?;
+                    let typ = Type::Pair(span.clone(), arg.clone(), res.clone(), vec![]);
+                    inner(&typ, positive, ctx)?;
                 }
                 Type::Exists(_span, param, _body) | Type::Forall(_span, param, _body) => {
                     ctx.defs.insert_var(param.clone());

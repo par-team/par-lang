@@ -2,6 +2,7 @@ mod bench;
 mod boxmap;
 mod byte;
 mod bytes;
+mod cell;
 mod char_;
 mod data;
 mod debug;
@@ -92,6 +93,10 @@ const CORE_SOURCE_FILES: &[BuiltinSourceFile] = &[
     BuiltinSourceFile {
         relative_path_from_src: "Bytes.par",
         source: include_str!("../packages/core/src/Bytes.par"),
+    },
+    BuiltinSourceFile {
+        relative_path_from_src: "Cell.par",
+        source: include_str!("../packages/core/src/Cell.par"),
     },
     BuiltinSourceFile {
         relative_path_from_src: "Debug.par",

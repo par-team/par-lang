@@ -73,7 +73,7 @@ async fn poll_token_server(mut handle: crate::readback::Handle) {
 
             "#close" => {
                 // payload: !
-                handle.erase();
+                handle.continue_();
                 break;
             }
 

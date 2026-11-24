@@ -28,7 +28,7 @@ async fn map_from_list(mut handle: Handle) {
     let mut map: BTreeMap<Data, Handle> = BTreeMap::new();
     for (key, value) in entries {
         if let Some(old) = map.insert(key, value) {
-            old.erase();
+            old.close();
         }
     }
     provide_map(handle, map).await;

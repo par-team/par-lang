@@ -112,12 +112,14 @@ fn union_types_atoms<S: Clone + Eq + std::hash::Hash>(
         (Type::DualVar(_, name1), Type::DualVar(_, name2)) if name1 == name2 => {
             Ok(Type::DualVar(span.clone(), name1.clone()))
         }
-        (Type::Box(_, inner1), Type::Box(_, inner2)) => Ok(Type::Box(
+        (Type::Box(_, c1, inner1), Type::Box(_, c2, inner2)) => Ok(Type::Box(
             span.clone(),
+            c1.broader(*c2),
             Box::new(union_types(typedefs, span, inner1, inner2)?),
         )),
-        (Type::DualBox(_, inner1), Type::DualBox(_, inner2)) => Ok(Type::DualBox(
+        (Type::DualBox(_, c1, inner1), Type::DualBox(_, c2, inner2)) => Ok(Type::DualBox(
             span.clone(),
+            c1.narrower(*c2),
             Box::new(intersect_types(typedefs, span, inner1, inner2)?),
         )),
         (Type::Break(_), Type::Break(_)) => Ok(Type::Break(span.clone())),
@@ -309,12 +311,14 @@ fn intersect_types_atoms<S: Clone + Eq + std::hash::Hash>(
         (Type::DualVar(_, name1), Type::DualVar(_, name2)) if name1 == name2 => {
             Ok(Type::DualVar(span.clone(), name1.clone()))
         }
-        (Type::Box(_, inner1), Type::Box(_, inner2)) => Ok(Type::Box(
+        (Type::Box(_, c1, inner1), Type::Box(_, c2, inner2)) => Ok(Type::Box(
             span.clone(),
+            c1.narrower(*c2),
             Box::new(intersect_types(typedefs, span, inner1, inner2)?),
         )),
-        (Type::DualBox(_, inner1), Type::DualBox(_, inner2)) => Ok(Type::DualBox(
+        (Type::DualBox(_, c1, inner1), Type::DualBox(_, c2, inner2)) => Ok(Type::DualBox(
             span.clone(),
+            c1.broader(*c2),
             Box::new(union_types(typedefs, span, inner1, inner2)?),
         )),
         (Type::Break(_), Type::Break(_)) => Ok(Type::Break(span.clone())),
