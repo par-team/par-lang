@@ -7,8 +7,6 @@ use par_runtime::readback::Handle;
 external_def! {
     @core/Cell.{
         Cell => cell_new,
-        Apply => cell_apply,
-        ApplyAndGet => cell_apply_and_get,
     }
 }
 
@@ -17,31 +15,12 @@ async fn cell_new(mut handle: Handle) {
     provide_cell(handle, Arc::new(Held::new(value)));
 }
 
-async fn cell_apply(mut handle: Handle) {
-    let f = handle.receive();
-    provide_applying(handle, f, false);
-}
-
-async fn cell_apply_and_get(mut handle: Handle) {
-    let f = handle.receive();
-    provide_applying(handle, f, true);
-}
-
 /// A value held on the Rust side, closed once it's dropped.
 struct Held(Mutex<Option<Handle>>);
 
 impl Held {
     fn new(handle: Handle) -> Self {
         Self(Mutex::new(Some(handle)))
-    }
-
-    fn duplicate(&self) -> Handle {
-        self.0
-            .lock()
-            .expect("lock failed")
-            .as_mut()
-            .expect("held value is only taken on drop")
-            .duplicate()
     }
 }
 
@@ -76,24 +55,6 @@ fn provide_cell(handle: Handle, value: Arc<Held>) {
                 }
                 _ => unreachable!(),
             }
-        }
-    })
-}
-
-/// Provides a function for `.access`, which replaces the value with `f` applied to it.
-/// Its result is a copy of the new value if `and_get`, otherwise `!`.
-fn provide_applying(handle: Handle, f: Handle, and_get: bool) {
-    let f = Held::new(f);
-    handle.provide_box(move |mut callback| {
-        let mut f = f.duplicate();
-        async move {
-            f.send().link(callback.receive());
-            if and_get {
-                callback.send().link(f.duplicate());
-            } else {
-                callback.send().break_();
-            }
-            callback.link(f);
         }
     })
 }

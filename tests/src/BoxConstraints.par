@@ -73,3 +73,13 @@ def TestDropBoxDroppedAtRuntime: [Test] ! = [test] do {
     let ! = b.unbox
   }
 } in !
+
+def Compose: [box<data> [Int] Int, box<data> [Int] Int] box<data> [Int] Int =
+  [f, g] box [x] g(f(x))
+
+def TestDataBoxesCompose: [Test] ! = [test] do {
+  let twice = Compose(box [x] x * 2, box [x] x + 1)
+  let pair = (twice, Compose(twice, twice))!
+  let both: box<data> [Int] Int = box [x] let (f, g)! = pair in f(x) + g(x)
+  test.check("A `box<data>` can capture `box<data>` values", both(1) == 3 + 7)
+} in !

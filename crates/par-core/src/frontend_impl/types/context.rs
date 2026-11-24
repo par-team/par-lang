@@ -294,7 +294,7 @@ impl<S: Clone + Eq + std::hash::Hash> Context<S> {
                 self.put(span, name.clone(), typ.clone())?;
             }
             if let CapturePolicy::Box(constraint) = policy {
-                if !typ.satisfies_constraint(constraint, &self.type_defs)? {
+                if !typ.can_be_captured_by_box(constraint, &self.type_defs)? {
                     capture_error = Some(TypeError::CannotCaptureInBox(
                         span.clone(),
                         name.clone(),

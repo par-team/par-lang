@@ -625,6 +625,52 @@ mod tests {
     }
 
     #[test]
+    fn test_box_data_captures_compose() {
+        let type_defs: TypeDefs<Universal> = TypeDefs::default();
+        let boxed = |c| Type::Box(Span::None, c, Box::new(Type::<Universal>::int()));
+        let captured_by =
+            |typ: &Type<Universal>, c| typ.can_be_captured_by_box(c, &type_defs).unwrap();
+        let a = LocalName {
+            span: Span::None,
+            string: ArcStr::from("a"),
+        };
+        let packed = |constraint, body| {
+            Type::Exists(
+                Span::None,
+                TypeParameter {
+                    name: a.clone(),
+                    constraint,
+                },
+                Box::new(body),
+            )
+        };
+        let data = TypeConstraint::Data;
+
+        assert!(captured_by(&boxed(data), data));
+        assert!(captured_by(&boxed(TypeConstraint::None), data));
+        assert!(captured_by(&Type::pair(Type::int(), boxed(data)), data));
+        assert!(captured_by(&packed(data, Type::var("a")), data));
+        assert!(!captured_by(&boxed(TypeConstraint::Share), data));
+        assert!(!captured_by(
+            &Type::pair(boxed(data), boxed(TypeConstraint::Share)),
+            data
+        ));
+        assert!(!captured_by(
+            &packed(TypeConstraint::Share, Type::var("a")),
+            data
+        ));
+        assert!(!captured_by(&boxed(data), TypeConstraint::Number));
+
+        // Only captures see through boxes: a `box<data>` is still not `data`.
+        assert!(!boxed(data).satisfies_constraint(data, &type_defs).unwrap());
+        assert!(
+            !packed(data, Type::var("a"))
+                .satisfies_constraint(data, &type_defs)
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_box_constraint_subtyping_and_lattice() {
         let type_defs: TypeDefs<Universal> = TypeDefs::default();
         let span = Span::None;

@@ -14,9 +14,10 @@ export {
   // Accesses through the cell returned by `.access` are guaranteed to happen after
   // that access. Accesses through different copies of a cell happen in any order.
   //
-  // The function passed to `.access` is a `box<data>`, so it can't capture any boxes,
-  // cells included. A cell can therefore only contain cells created before it,
-  // which rules out cycles: no cell can be accessed while it's being accessed.
+  // The function passed to `.access` is a `box<data>`, so it can only capture `data`
+  // and other `box<data>` values, never a cell. Nothing it can reach leads back to the
+  // cell being accessed, so cells never form a cycle: no cell can be accessed while
+  // it's being accessed.
   type Cell<a> = iterative box choice {
     .access(<b> box<data> [a] (b) a) => (b) self,
   }
@@ -31,8 +32,7 @@ export {
   // other copies of it. To read and then keep using the cell, use `.access`.
   dec Get : [<a: share> Cell<a>] a
 
-  // Replaces the value. The new value must be `data`, so that a cell can't come
-  // to contain a cell created after it.
+  // Replaces the value. The new value must be `data`, so that it can't contain a cell.
   dec Set : [<a: data> Cell<a>, a] Cell<a>
 
   // Replaces the value with `f` applied to it.
@@ -48,16 +48,8 @@ def Get = [<a: share> cell] let (value) _ = cell.access(box [value] (value) valu
 
 def Set = [<a: data> cell, value] let (!) cell = cell.access(box [_] (!) value) in cell
 
-def Update = [<a> cell, f] let (!) cell = cell.access(Apply(f)) in cell
+def Update = [<a> cell, f] let (!) cell = cell.access(box [value] (!) f(value)) in cell
 
-def UpdateAndGet = [<a: share> cell, f] let (value) _ = cell.access(ApplyAndGet(f)) in value
-
-// The functions for `.access` in `Update` and `UpdateAndGet` would have to capture `f`.
-// That's not possible in Par, since `f` is a box, so not `data`. These build them in
-// Rust instead, which is sound: like `f`, they can't capture any cells.
-dec Apply : [<a> box<data> [a] a] box<data> [a] (!) a
-dec ApplyAndGet : [<a: share> box<data> [a] a] box<data> [a] (a) a
-
-def Apply = external
-
-def ApplyAndGet = external
+def UpdateAndGet = [<a: share> cell, f]
+  let (value) _ = cell.access(box [value] let value = f(value) in (value) value)
+  in value

@@ -696,6 +696,16 @@ impl<S: Clone + Eq + std::hash::Hash + std::fmt::Display> TypeError<S> {
                         name,
                         typ_str,
                     )
+                } else if TypeConstraint::Data.is_broader_or_equal_than(*constraint) {
+                    miette::miette!(
+                        labels = labels,
+                        "Cannot use variable `{}` in a `box<{}>` expression. Its type must satisfy the `{}` constraint, or be built from `box<{}>` values, but it is:\n\n  {}\n",
+                        name,
+                        constraint,
+                        constraint,
+                        constraint,
+                        typ_str,
+                    )
                 } else {
                     miette::miette!(
                         labels = labels,
